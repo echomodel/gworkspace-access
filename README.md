@@ -212,3 +212,78 @@ All credentials are stored centrally in `~/.config/gworkspace-access/` regardles
 This centralized storage makes it easy to use `gwsa` from any directory on your machine.
 
 ---
+
+## Future Enhancements
+
+While `gwsa` currently functions as a CLI tool, the architecture is designed with a broader vision in mind: **a centralized API service** that can be consumed by any application, not just command-line users.
+
+### The Problem with CLI-Only Access
+
+Projects that need programmatic access to Google Workspace APIs (like a Gmail automation service) currently must:
+- Shell out to CLI commands, which is fragile and inefficient
+- Manage their own OAuth credentials and token refresh logic
+- Handle the complexity of Google's OAuth client verification process
+- Duplicate credential management across multiple deployments
+
+### The API Vision
+
+The goal is to host `gwsa` as a **REST API on Google Cloud Run**, providing:
+
+1. **Centralized Credential Management** - OAuth client credentials and token refresh handled in one place, not scattered across consuming applications
+2. **Simplified Authentication** - Clients authenticate to the API using Google Cloud identity tokens (easily acquired from any GCP environment), not OAuth flows
+3. **No Client Verification Required** - Google's OAuth client verification only applies to the hosted service, not to every consuming application
+4. **User Authentication Without OAuth Complexity** - Consuming apps authenticate users through Cloud Run's built-in IAM/identity mechanisms, entirely under our control
+5. **Full Workspace API Coverage** - Once the pattern is established for Gmail, it extends naturally to Calendar, Drive, Docs, and the entire Google Workspace suite
+
+### Authentication Model
+
+```
+┌─────────────────┐     Google Identity Token      ┌─────────────────┐
+│  Consuming App  │  ─────────────────────────────▶│   gwsa API      │
+│  (gmail-manager)│                                │  (Cloud Run)    │
+└─────────────────┘                                └────────┬────────┘
+                                                           │
+                                                   OAuth 2.0 (managed)
+                                                           │
+                                                           ▼
+                                                   ┌─────────────────┐
+                                                   │  Google APIs    │
+                                                   │  (Gmail, etc.)  │
+                                                   └─────────────────┘
+```
+
+- **Consuming applications** authenticate to the API using Google Cloud identity tokens - no OAuth dance, no client secrets, no token refresh to manage
+- **The API service** handles all OAuth complexity internally - client credentials stored in Secret Manager, automatic token refresh, proper scope management
+- **User context** is derived from the authenticated identity, not from per-app credential storage
+
+### SDK as a Thin Client
+
+With a stable API in place, an SDK becomes a thin HTTP client rather than a credential-management library:
+
+```python
+# Future SDK usage - no credentials to manage
+from gwsa import GwsaClient
+
+client = GwsaClient()  # Auto-discovers identity from environment
+emails = client.mail.search("after:2024-01-01 label:Inbox")
+```
+
+The SDK would:
+- Automatically acquire identity tokens from the runtime environment (Cloud Run, GCE, local `gcloud` auth)
+- Provide typed interfaces to the API
+- Handle retries and error mapping
+- Remain lightweight since all credential complexity lives server-side
+
+### Operational Benefits
+
+Centralizing on a hosted API provides:
+
+- **Single point of credential rotation** - Update OAuth credentials once, not in every deployment
+- **Unified audit logging** - All API access flows through one service
+- **Consistent token refresh** - No more expired token bugs in consuming apps
+- **Easier compliance** - OAuth client verification and consent screens managed centrally
+- **Horizontal scaling** - Cloud Run handles load balancing and scaling automatically
+
+This approach transforms Google Workspace API access from a per-application burden into a shared, managed service.
+
+---
