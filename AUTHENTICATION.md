@@ -204,6 +204,9 @@ Google's [Advanced Protection Program](https://landing.google.com/advancedprotec
 | Create token → Enable APP → Use token | ✓ Works |
 | Enable APP → Create new token | ✗ Blocked |
 | Enable APP → Use gcloud ADC | ✗ Blocked |
+| Disable APP → Create token → Re-enable APP → Use token | ✓ Works |
+
+The last scenario has been tested and confirmed: tokens created while APP is disabled continue to work after re-enabling APP. The refresh token persists and auto-refreshes normally.
 
 ### Workarounds for APP Users
 
@@ -211,9 +214,11 @@ Google's [Advanced Protection Program](https://landing.google.com/advancedprotec
    - Plan ahead: create and store tokens before enrollment
    - Tokens persist indefinitely with auto-refresh
 
-2. **Temporarily disable APP**
-   - Unenroll from APP → Create token → Re-enroll
-   - Note: Some blocking behavior may persist after unenrollment
+2. **Temporarily disable APP to create new tokens**
+   - Unenroll from APP at https://myaccount.google.com/advanced-protection-program
+   - Create token with `gwsa access token` or `gwsa setup`
+   - Re-enroll in APP
+   - **Verified:** The token continues working after re-enrollment - refresh tokens survive APP re-enablement
 
 3. **Use a separate account**
    - Use non-APP account for development/automation
