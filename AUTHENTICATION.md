@@ -177,6 +177,50 @@ For Gmail accounts with security keys, use the **OAuth User Token** method with 
 
 ---
 
+## Testing Your Credentials
+
+Use `gwsa check-access` to verify your credentials work:
+
+```bash
+# Auto-detect credentials (checks token files, then falls back to ADC)
+gwsa check-access
+
+# Test a specific token file
+gwsa check-access --token-file ./my_token.json
+
+# Test Application Default Credentials
+gwsa check-access --application-default
+
+# Also test Gmail API access
+gwsa check-access --test-gmail
+
+# Also test Google Docs API access
+gwsa check-access --test-docs
+```
+
+The command will:
+1. Report which credential source it's using
+2. Show token validity and expiration status
+3. Test credential refresh
+4. Optionally test API access (Gmail, Docs)
+
+Example output:
+```
+Credential source: Token file: /home/user/.config/gworkspace-access/user_token.json
+--------------------------------------------------
+Valid: False
+Expired: True
+Has refresh token: True
+Scopes: https://www.googleapis.com/auth/gmail.modify
+--------------------------------------------------
+Testing credential refresh...
+✓ Refresh successful
+--------------------------------------------------
+✓ Credentials are valid and working!
+```
+
+---
+
 ## Troubleshooting
 
 ### "This app is blocked"

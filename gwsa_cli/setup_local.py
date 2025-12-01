@@ -169,7 +169,7 @@ def ensure_user_token_json(new_user: bool = False):
             except Exception as e:
                 logger.warning(f"Failed to refresh token: {e}. Initiating new authorization flow.")
                 creds = None # Force new auth flow if refresh fails
-        
+
         if not creds: # If refresh failed or creds were never valid
             logger.info("Initiating new user authorization flow via browser.")
             if not os.path.exists(CLIENT_SECRETS_FILE):
@@ -187,14 +187,64 @@ def ensure_user_token_json(new_user: bool = False):
             except Exception as e:
                 logger.error(f"Failed to complete new user authorization flow: {e}")
                 return False
-        
+
         with open(USER_TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
         logger.debug(f"User credentials saved to {USER_TOKEN_FILE}.")
     else:
         logger.info("User credentials are valid.")
-    
+
     return True
+
+
+def create_token_for_scopes(client_creds_path: str, output_path: str, scopes: list[str]) -> bool:
+    """
+    Create a new OAuth token for the specified scopes and save it to the output path.
+
+    This function performs a fresh OAuth flow using the provided client credentials
+    and saves the resulting token to the specified output location. It does NOT
+    touch the gwsa configuration or the standard user_token.json.
+
+    :param client_creds_path: Path to the client_secrets.json (OAuth client credentials)
+    :param output_path: Path where the new user_token.json should be saved
+    :param scopes: List of Google API scopes to request
+    :return: True if successful, False otherwise
+    """
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    if not os.path.exists(client_creds_path):
+        logger.error(f"Error: Client credentials file not found: {client_creds_path}")
+        return False
+
+    if not scopes:
+        logger.error("Error: At least one scope must be specified")
+        return False
+
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        logger.debug(f"Ensured output directory exists: {output_dir}")
+
+    logger.info(f"Creating OAuth token for scopes: {scopes}")
+    logger.info(f"Using client credentials: {client_creds_path}")
+    logger.info(f"Output token file: {output_path}")
+
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            client_creds_path, scopes
+        )
+        creds = flow.run_local_server(port=0)
+        logger.info("User authorization completed via browser.")
+
+        with open(output_path, "w") as token_file:
+            token_file.write(creds.to_json())
+        logger.info(f"Token saved to {output_path}")
+
+        return True
+    except Exception as e:
+        logger.error(f"Failed to complete OAuth flow: {e}")
+        return False
 
 def print_status_table(title: str, status_ok: bool, data: Dict, status_only: bool = False, action_performed: bool = False) -> None:
     """Print a formatted status table with action indicator and unique icons.

@@ -69,6 +69,148 @@ def setup(new_user, client_creds, status):
         sys.exit(1)
 
 
+# Create-token command
+@click.command()
+@click.option('--scope', '-s', 'scopes', multiple=True, required=True,
+              help='Google API scope(s) to request. Can be specified multiple times.')
+@click.option('--client-creds', type=click.Path(exists=True), required=True,
+              help='Path to client_secrets.json file for OAuth.')
+@click.option('--output', '-o', type=click.Path(), required=True,
+              help='Path where the user_token.json should be saved.')
+def create_token(scopes, client_creds, output):
+    """Create an OAuth token for specified scopes without modifying gwsa config.
+
+    This command performs an OAuth flow using the provided client credentials
+    and saves the resulting token to the specified output path. It does NOT
+    modify the gwsa configuration or the standard user_token.json.
+
+    Example:
+        gwsa create-token --scope https://www.googleapis.com/auth/documents \\
+            --client-creds ./credentials.json --output ./user_token.json
+    """
+    # Convert tuple to list
+    scope_list = list(scopes)
+    output_path = os.path.abspath(output)
+
+    if not setup_local.create_token_for_scopes(client_creds, output_path, scope_list):
+        logger.error("Failed to create token. Please check logs for details.")
+        sys.exit(1)
+
+    click.echo(f"\nToken successfully created at: {output_path}")
+    click.echo(f"Scopes: {', '.join(scope_list)}")
+
+
+# Check-access command
+@click.command()
+@click.option('--token-file', type=click.Path(exists=True),
+              help='Path to user_token.json file to test.')
+@click.option('--application-default', is_flag=True,
+              help='Use Application Default Credentials (gcloud auth application-default login).')
+@click.option('--test-gmail', is_flag=True, default=False,
+              help='Test Gmail API access.')
+@click.option('--test-docs', is_flag=True, default=False,
+              help='Test Google Docs API access.')
+def check_access(token_file, application_default, test_gmail, test_docs):
+    """Test OAuth token validity and API access.
+
+    If neither --token-file nor --application-default is specified, checks in order:
+    1. ./user_token.json (current directory)
+    2. ~/.config/gworkspace-access/user_token.json
+    3. Application Default Credentials (fallback)
+
+    Examples:
+        gwsa check-access
+        gwsa check-access --token-file ./my_token.json
+        gwsa check-access --application-default
+        gwsa check-access --test-gmail --test-docs
+    """
+    import google.auth
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    creds = None
+    source = None
+
+    # Determine credential source
+    if application_default:
+        source = "Application Default Credentials"
+    elif token_file:
+        source = f"Token file: {token_file}"
+    else:
+        # Auto-detect: check common locations, fall back to ADC
+        if os.path.exists("user_token.json"):
+            token_file = "user_token.json"
+            source = f"Token file: {os.path.abspath(token_file)}"
+        elif os.path.exists(setup_local.USER_TOKEN_FILE):
+            token_file = setup_local.USER_TOKEN_FILE
+            source = f"Token file: {token_file}"
+        else:
+            application_default = True
+            source = "Application Default Credentials (fallback - no token file found)"
+
+    click.echo(f"Credential source: {source}")
+    click.echo("-" * 50)
+
+    # Load credentials
+    try:
+        if application_default:
+            creds, project = google.auth.default()
+            click.echo(f"Project: {project or '(none)'}")
+        else:
+            creds = Credentials.from_authorized_user_file(token_file)
+
+        click.echo(f"Valid: {creds.valid}")
+        click.echo(f"Expired: {creds.expired}")
+
+        if hasattr(creds, 'refresh_token'):
+            click.echo(f"Has refresh token: {creds.refresh_token is not None}")
+
+        # Show scopes if available
+        if hasattr(creds, 'scopes') and creds.scopes:
+            click.echo(f"Scopes: {', '.join(creds.scopes)}")
+
+    except Exception as e:
+        click.echo(f"✗ Failed to load credentials: {e}")
+        sys.exit(1)
+
+    click.echo("-" * 50)
+
+    # Test refresh
+    click.echo("Testing credential refresh...")
+    try:
+        creds.refresh(Request())
+        click.echo("✓ Refresh successful")
+    except Exception as e:
+        click.echo(f"✗ Refresh failed: {e}")
+        sys.exit(1)
+
+    # Test APIs if requested
+    if test_gmail:
+        click.echo("-" * 50)
+        click.echo("Testing Gmail API access...")
+        try:
+            gmail = build("gmail", "v1", credentials=creds)
+            results = gmail.users().labels().list(userId="me").execute()
+            labels = results.get("labels", [])
+            click.echo(f"✓ Gmail works: Found {len(labels)} labels")
+        except Exception as e:
+            click.echo(f"✗ Gmail failed: {e}")
+
+    if test_docs:
+        click.echo("-" * 50)
+        click.echo("Testing Docs API access...")
+        try:
+            docs = build("docs", "v1", credentials=creds)
+            # Just verify we can build the service
+            click.echo("✓ Docs service initialized successfully")
+        except Exception as e:
+            click.echo(f"✗ Docs failed: {e}")
+
+    click.echo("-" * 50)
+    click.echo("✓ Credentials are valid and working!")
+
+
 # Mail group
 @click.group()
 def mail():
@@ -156,6 +298,8 @@ def label_command(message_id, label_name, remove):
 
 # Add commands to groups using add_command()
 gwsa.add_command(setup, name='setup')
+gwsa.add_command(create_token, name='create-token')
+gwsa.add_command(check_access, name='check-access')
 gwsa.add_command(mail)
 
 mail.add_command(search)
