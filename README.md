@@ -213,6 +213,26 @@ This centralized storage makes it easy to use `gwsa` from any directory on your 
 
 ---
 
+## Authentication & Account Compatibility
+
+Different Google account types have varying compatibility with authentication methods. See **[AUTHENTICATION.md](AUTHENTICATION.md)** for detailed guidance on:
+
+- **Authentication methods**: OAuth User Token, Application Default Credentials (ADC), Service Accounts
+- **Account compatibility**: Workspace, regular Gmail, Gmail with security keys
+- **Advanced Protection Program (APP)**: Limitations and workarounds
+- **Troubleshooting**: Common errors and solutions
+
+**Quick summary:**
+
+| Account Type | Recommended Method |
+|--------------|-------------------|
+| Google Workspace | ADC or OAuth Token |
+| Regular Gmail | Either works |
+| Gmail + security keys | OAuth Token (ADC may be blocked) |
+| Gmail + APP | OAuth Token created *before* enabling APP |
+
+---
+
 ## Future Enhancements
 
 While `gwsa` currently functions as a CLI tool, the architecture is designed with a broader vision in mind: **a centralized API service** that can be consumed by any application, not just command-line users.
