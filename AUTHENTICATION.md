@@ -19,10 +19,13 @@ gwsa access token \
 - Works with most account types
 - Token persists indefinitely (auto-refreshes)
 - You control the OAuth client
+- Compatible with ADC via `GOOGLE_APPLICATION_CREDENTIALS` environment variable
 
 **Cons:**
 - Requires setting up OAuth client in Google Cloud Console
 - Initial setup more complex than ADC
+
+**Note:** Tokens created by `gwsa access token` include `type: authorized_user`, making them compatible with `google.auth.default()` when referenced via `GOOGLE_APPLICATION_CREDENTIALS`.
 
 ### 2. Application Default Credentials (ADC)
 

@@ -188,8 +188,11 @@ def ensure_user_token_json(new_user: bool = False):
                 logger.error(f"Failed to complete new user authorization flow: {e}")
                 return False
 
+        # Save token with type field for ADC compatibility
+        token_data = json.loads(creds.to_json())
+        token_data["type"] = "authorized_user"
         with open(USER_TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
+            json.dump(token_data, token, indent=2)
         logger.debug(f"User credentials saved to {USER_TOKEN_FILE}.")
     else:
         logger.info("User credentials are valid.")
@@ -237,8 +240,11 @@ def create_token_for_scopes(client_creds_path: str, output_path: str, scopes: li
         creds = flow.run_local_server(port=0)
         logger.info("User authorization completed via browser.")
 
+        # Save token with type field for ADC compatibility
+        token_data = json.loads(creds.to_json())
+        token_data["type"] = "authorized_user"
         with open(output_path, "w") as token_file:
-            token_file.write(creds.to_json())
+            json.dump(token_data, token_file, indent=2)
         logger.info(f"Token saved to {output_path}")
 
         return True
