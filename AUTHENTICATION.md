@@ -67,6 +67,88 @@ credentials = service_account.Credentials.from_service_account_file(
 
 ---
 
+## Token File Formats
+
+Different authentication methods produce token files with different fields. Understanding these differences helps when troubleshooting or choosing an approach.
+
+### gcloud ADC Token
+
+Location: `~/.config/gcloud/application_default_credentials.json`
+
+```json
+{
+  "client_id": "GOOGLE_DEFAULT_CLIENT_ID.apps.googleusercontent.com",
+  "client_secret": "GOOGLE_DEFAULT_CLIENT_SECRET",
+  "quota_project_id": "your-gcp-project-id",
+  "refresh_token": "REFRESH_TOKEN_VALUE",
+  "type": "authorized_user",
+  "universe_domain": "googleapis.com"
+}
+```
+
+- Uses Google's default OAuth client ID (shared across all gcloud users)
+- Includes `quota_project_id` from your gcloud config
+- No `scopes` or `expiry` fields
+
+### Google OAuth Library Token
+
+Location: User-specified (e.g., `~/.config/gworkspace-access/user_token.json`)
+
+Created by applications using Google's OAuth library. The typical flow is:
+1. `InstalledAppFlow.from_client_secrets_file()` - initiates browser-based OAuth
+2. `flow.run_local_server()` - user authorizes, returns credentials
+3. `creds.to_json()` - serializes credentials to this format
+
+Tools like `gwsa` use this pattern internally:
+
+```json
+{
+  "token": "ACCESS_TOKEN_VALUE",
+  "refresh_token": "REFRESH_TOKEN_VALUE",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+  "expiry": "2024-01-15T12:00:00.000000Z",
+  "type": "authorized_user"
+}
+```
+
+- Uses your custom OAuth client ID
+- Includes `scopes` and `expiry` fields
+- **No `quota_project_id`** (causes "No project ID" warning - see [QUOTAS.md](QUOTAS.md))
+
+### Service Account Key
+
+```json
+{
+  "type": "service_account",
+  "project_id": "my-project-123",
+  "private_key_id": "...",
+  "private_key": "-----BEGIN PRIVATE KEY-----\n...",
+  "client_email": "my-sa@my-project-123.iam.gserviceaccount.com"
+}
+```
+
+- Contains `project_id` directly
+- Contains private key material - **keep secure**
+
+### Field Comparison
+
+| Field | gcloud ADC | `creds.to_json()` | gwsa | Service Account |
+|-------|------------|-------------------|------|-----------------|
+| `type` | `authorized_user` | ✗ Missing | `authorized_user` | `service_account` |
+| `quota_project_id` | ✓ Present | ✗ Missing | ✗ Missing | N/A |
+| `project_id` | ✗ | ✗ | ✗ | ✓ Present |
+| `scopes` | ✗ | ✓ Present | ✓ Present | ✗ |
+| `expiry` | ✗ | ✓ Present | ✓ Present | ✗ |
+| `token` (access token) | ✗ | ✓ Present | ✓ Present | ✗ |
+| `client_id` origin | Google's | Your OAuth client | Your OAuth client | Service account |
+
+**Note:** The Google OAuth library's `creds.to_json()` does not include the `type` field. gwsa explicitly adds `"type": "authorized_user"` to make tokens compatible with `google.auth.default()` when used via `GOOGLE_APPLICATION_CREDENTIALS`.
+
+---
+
 ## Account Type Compatibility
 
 ### Google Workspace (Corporate/Org-Managed)

@@ -231,6 +231,8 @@ Different Google account types have varying compatibility with authentication me
 | Gmail + security keys | OAuth Token (ADC may be blocked) |
 | Gmail + APP | OAuth Token created *before* enabling APP |
 
+For information about API quotas, billing, and the "No project ID" warning, see **[QUOTAS.md](QUOTAS.md)**.
+
 ---
 
 ## Future Enhancements
