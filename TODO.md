@@ -32,10 +32,23 @@ Google blocks the gcloud OAuth client (`764086051850-6qr4p6gpi6hn506pt8ejuq83di3
 
 This suggests Google applies stricter third-party app policies to consumer Gmail accounts with hardware security keys, separate from the APP enrollment status.
 
-**Workaround:** Users with APP can:
-1. Create token before enabling APP (token persists)
-2. Temporarily disable APP, authenticate, re-enable
-3. Use existing `create-token` flow with their own OAuth client
+### Token Persistence with APP
+
+**Verified behavior:** Tokens created *before* enabling Advanced Protection Program continue to work after APP is enabled.
+
+| Action | Result |
+|--------|--------|
+| Create token → Enable APP → Use token | ✓ Works (Docs and Gmail tested) |
+| Enable APP → Try to create new token | ✗ Blocked (`error 400: policy_enforced`) |
+
+This applies to both:
+- gcloud ADC tokens
+- Custom OAuth client tokens (via `create-token` command)
+
+**Workaround for APP users:**
+1. Create token *before* enabling APP (token persists indefinitely)
+2. Or: Temporarily disable APP → authenticate → re-enable APP
+3. Store token securely - it's your long-term access credential
 
 ### Implementation Plan
 
