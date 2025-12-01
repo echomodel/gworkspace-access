@@ -9,7 +9,7 @@ This guide covers authentication options for Google Workspace APIs, including co
 Create a token using your own OAuth client credentials:
 
 ```bash
-gwsa create-token \
+gwsa access token \
   --scope https://www.googleapis.com/auth/gmail.readonly \
   --client-creds ~/.config/gworkspace-access/client_secrets.json \
   --output user_token.json
@@ -179,30 +179,27 @@ For Gmail accounts with security keys, use the **OAuth User Token** method with 
 
 ## Testing Your Credentials
 
-Use `gwsa check-access` to verify your credentials work:
+Use `gwsa access check` to verify your credentials work:
 
 ```bash
 # Auto-detect credentials (checks token files, then falls back to ADC)
-gwsa check-access
+gwsa access check
 
 # Test a specific token file
-gwsa check-access --token-file ./my_token.json
+gwsa access check --token-file ./my_token.json
 
 # Test Application Default Credentials
-gwsa check-access --application-default
+gwsa access check --application-default
 
-# Also test Gmail API access
-gwsa check-access --test-gmail
-
-# Also test Google Docs API access
-gwsa check-access --test-docs
+# Test only specific APIs
+gwsa access check --only gmail,docs
 ```
 
 The command will:
 1. Report which credential source it's using
 2. Show token validity and expiration status
 3. Test credential refresh
-4. Optionally test API access (Gmail, Docs)
+4. Test API access (Gmail, Docs, Sheets, Drive by default)
 
 Example output:
 ```
@@ -216,7 +213,15 @@ Scopes: https://www.googleapis.com/auth/gmail.modify
 Testing credential refresh...
 ✓ Refresh successful
 --------------------------------------------------
-✓ Credentials are valid and working!
+API Access:
+
+  ✓ gmail      OK (47 labels)
+  ✗ docs       FAILED
+  ✗ sheets     FAILED
+  ✗ drive      FAILED
+
+--------------------------------------------------
+✗ Some checks failed
 ```
 
 ---

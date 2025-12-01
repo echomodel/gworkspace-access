@@ -86,7 +86,7 @@ def create_token(scopes, client_creds, output):
     Use it to create tokens for other projects or specific scope combinations.
 
     Example:
-        gwsa create-token --scope https://www.googleapis.com/auth/documents \\
+        gwsa access token --scope https://www.googleapis.com/auth/documents \\
             --client-creds ./credentials.json --output ./my_token.json
     """
     scope_list = list(scopes)
@@ -120,10 +120,10 @@ def check_access(token_file, application_default, only):
     3. Application Default Credentials (fallback)
 
     Examples:
-        gwsa check-access
-        gwsa check-access --token-file ./my_token.json
-        gwsa check-access --application-default
-        gwsa check-access --only gmail,docs
+        gwsa access check
+        gwsa access check --token-file ./my_token.json
+        gwsa access check --application-default
+        gwsa access check --only gmail,docs
     """
     # Parse and validate --only option
     api_list = None
@@ -285,11 +285,20 @@ def label_command(message_id, label_name, remove):
         sys.exit(1)
 
 
+# Access group
+@click.group()
+def access():
+    """Authentication utilities (standalone, does not affect gwsa config)."""
+    pass
+
+
 # Add commands to groups using add_command()
 gwsa.add_command(setup, name='setup')
-gwsa.add_command(create_token, name='create-token')
-gwsa.add_command(check_access, name='check-access')
+gwsa.add_command(access)
 gwsa.add_command(mail)
+
+access.add_command(create_token, name='token')
+access.add_command(check_access, name='check')
 
 mail.add_command(search)
 mail.add_command(read_command, name='read')

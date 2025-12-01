@@ -103,6 +103,11 @@ def test_gmail_access(creds) -> dict:
     """
     from googleapiclient.discovery import build
 
+    # Suppress expected HTTP error warnings
+    api_logger = logging.getLogger('googleapiclient.http')
+    old_level = api_logger.level
+    api_logger.setLevel(logging.ERROR)
+
     try:
         gmail = build("gmail", "v1", credentials=creds)
         results = gmail.users().labels().list(userId="me").execute()
@@ -110,6 +115,8 @@ def test_gmail_access(creds) -> dict:
         return {"success": True, "label_count": len(labels)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+    finally:
+        api_logger.setLevel(old_level)
 
 
 def test_docs_access(creds) -> dict:
@@ -195,12 +202,19 @@ def test_drive_access(creds) -> dict:
     """
     from googleapiclient.discovery import build
 
+    # Suppress expected HTTP error warnings
+    api_logger = logging.getLogger('googleapiclient.http')
+    old_level = api_logger.level
+    api_logger.setLevel(logging.ERROR)
+
     try:
         drive = build("drive", "v3", credentials=creds)
         drive.files().list(pageSize=1).execute()
         return {"success": True}
     except Exception as e:
         return {"success": False, "error": str(e)}
+    finally:
+        api_logger.setLevel(old_level)
 
 
 # Map of supported API names to test functions
