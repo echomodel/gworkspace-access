@@ -13,6 +13,8 @@ from . import __version__
 from .mail import search as search_module
 from .mail import read as read_module
 from .mail import label as label_module
+from .auth import check_access as check_access_module
+from .auth import create_token as create_token_module
 
 
 # Configure logging at the application level
@@ -76,23 +78,21 @@ def setup(new_user, client_creds, status):
 @click.option('--client-creds', type=click.Path(exists=True), required=True,
               help='Path to client_secrets.json file for OAuth.')
 @click.option('--output', '-o', type=click.Path(), required=True,
-              help='Path where the user_token.json should be saved.')
+              help='Path where the token should be saved.')
 def create_token(scopes, client_creds, output):
-    """Create an OAuth token for specified scopes without modifying gwsa config.
+    """Create an OAuth token for specified scopes.
 
-    This command performs an OAuth flow using the provided client credentials
-    and saves the resulting token to the specified output path. It does NOT
-    modify the gwsa configuration or the standard user_token.json.
+    This is a standalone auth utility that does NOT affect gwsa configuration.
+    Use it to create tokens for other projects or specific scope combinations.
 
     Example:
         gwsa create-token --scope https://www.googleapis.com/auth/documents \\
-            --client-creds ./credentials.json --output ./user_token.json
+            --client-creds ./credentials.json --output ./my_token.json
     """
-    # Convert tuple to list
     scope_list = list(scopes)
     output_path = os.path.abspath(output)
 
-    if not setup_local.create_token_for_scopes(client_creds, output_path, scope_list):
+    if not create_token_module.create_token_for_scopes(client_creds, output_path, scope_list):
         logger.error("Failed to create token. Please check logs for details.")
         sys.exit(1)
 
@@ -103,15 +103,16 @@ def create_token(scopes, client_creds, output):
 # Check-access command
 @click.command()
 @click.option('--token-file', type=click.Path(exists=True),
-              help='Path to user_token.json file to test.')
+              help='Path to token file to test.')
 @click.option('--application-default', is_flag=True,
               help='Use Application Default Credentials (gcloud auth application-default login).')
-@click.option('--test-gmail', is_flag=True, default=False,
-              help='Test Gmail API access.')
-@click.option('--test-docs', is_flag=True, default=False,
-              help='Test Google Docs API access.')
-def check_access(token_file, application_default, test_gmail, test_docs):
+@click.option('--only', default=None,
+              help='Comma-separated list of APIs to test (gmail,docs,sheets,drive). Default: all.')
+def check_access(token_file, application_default, only):
     """Test OAuth token validity and API access.
+
+    This is a standalone auth utility that does NOT affect gwsa configuration.
+    Use it to verify tokens work or diagnose authentication issues.
 
     If neither --token-file nor --application-default is specified, checks in order:
     1. ./user_token.json (current directory)
@@ -122,93 +123,81 @@ def check_access(token_file, application_default, test_gmail, test_docs):
         gwsa check-access
         gwsa check-access --token-file ./my_token.json
         gwsa check-access --application-default
-        gwsa check-access --test-gmail --test-docs
+        gwsa check-access --only gmail,docs
     """
-    import google.auth
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
+    # Parse and validate --only option
+    api_list = None
+    if only:
+        api_list = [a.strip() for a in only.split(',')]
+        invalid = check_access_module.validate_api_names(api_list)
+        if invalid:
+            click.echo(f"✗ Unrecognized API(s): {', '.join(invalid)}")
+            click.echo(f"  Supported: {', '.join(check_access_module.SUPPORTED_APIS.keys())}")
+            sys.exit(1)
 
-    creds = None
-    source = None
-
-    # Determine credential source
-    if application_default:
-        source = "Application Default Credentials"
-    elif token_file:
-        source = f"Token file: {token_file}"
-    else:
-        # Auto-detect: check common locations, fall back to ADC
-        if os.path.exists("user_token.json"):
-            token_file = "user_token.json"
-            source = f"Token file: {os.path.abspath(token_file)}"
-        elif os.path.exists(setup_local.USER_TOKEN_FILE):
-            token_file = setup_local.USER_TOKEN_FILE
-            source = f"Token file: {token_file}"
-        else:
-            application_default = True
-            source = "Application Default Credentials (fallback - no token file found)"
+    # Load credentials using the module
+    try:
+        creds, source = check_access_module.check_credentials(
+            token_file=token_file,
+            use_adc=application_default,
+            config_token_path=setup_local.USER_TOKEN_FILE
+        )
+    except Exception as e:
+        click.echo(f"✗ Failed to load credentials: {e}")
+        sys.exit(1)
 
     click.echo(f"Credential source: {source}")
     click.echo("-" * 50)
 
-    # Load credentials
-    try:
-        if application_default:
-            creds, project = google.auth.default()
-            click.echo(f"Project: {project or '(none)'}")
-        else:
-            creds = Credentials.from_authorized_user_file(token_file)
+    click.echo(f"Valid: {creds.valid}")
+    click.echo(f"Expired: {creds.expired}")
 
-        click.echo(f"Valid: {creds.valid}")
-        click.echo(f"Expired: {creds.expired}")
+    if hasattr(creds, 'refresh_token'):
+        click.echo(f"Has refresh token: {creds.refresh_token is not None}")
 
-        if hasattr(creds, 'refresh_token'):
-            click.echo(f"Has refresh token: {creds.refresh_token is not None}")
-
-        # Show scopes if available
-        if hasattr(creds, 'scopes') and creds.scopes:
-            click.echo(f"Scopes: {', '.join(creds.scopes)}")
-
-    except Exception as e:
-        click.echo(f"✗ Failed to load credentials: {e}")
-        sys.exit(1)
+    if hasattr(creds, 'scopes') and creds.scopes:
+        click.echo(f"Scopes: {', '.join(creds.scopes)}")
 
     click.echo("-" * 50)
 
     # Test refresh
     click.echo("Testing credential refresh...")
     try:
-        creds.refresh(Request())
+        check_access_module.test_refresh(creds)
         click.echo("✓ Refresh successful")
     except Exception as e:
         click.echo(f"✗ Refresh failed: {e}")
         sys.exit(1)
 
-    # Test APIs if requested
-    if test_gmail:
-        click.echo("-" * 50)
-        click.echo("Testing Gmail API access...")
-        try:
-            gmail = build("gmail", "v1", credentials=creds)
-            results = gmail.users().labels().list(userId="me").execute()
-            labels = results.get("labels", [])
-            click.echo(f"✓ Gmail works: Found {len(labels)} labels")
-        except Exception as e:
-            click.echo(f"✗ Gmail failed: {e}")
-
-    if test_docs:
-        click.echo("-" * 50)
-        click.echo("Testing Docs API access...")
-        try:
-            docs = build("docs", "v1", credentials=creds)
-            # Just verify we can build the service
-            click.echo("✓ Docs service initialized successfully")
-        except Exception as e:
-            click.echo(f"✗ Docs failed: {e}")
-
     click.echo("-" * 50)
-    click.echo("✓ Credentials are valid and working!")
+    click.echo("API Access:")
+    click.echo("")
+
+    # Test APIs and display table
+    results = check_access_module.test_apis(creds, api_list)
+
+    all_passed = True
+    for api_name, result in results.items():
+        if result["success"]:
+            icon = "✓"
+            status = "OK"
+            if api_name.lower() == "gmail" and "label_count" in result:
+                status = f"OK ({result['label_count']} labels)"
+        else:
+            icon = "✗"
+            status = "FAILED"
+            all_passed = False
+
+        click.echo(f"  {icon} {api_name:10} {status}")
+
+    click.echo("")
+    click.echo("-" * 50)
+
+    if all_passed:
+        click.echo("✓ All checks passed!")
+    else:
+        click.echo("✗ Some checks failed")
+        sys.exit(1)
 
 
 # Mail group
