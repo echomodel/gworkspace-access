@@ -16,13 +16,21 @@ This would simplify setup - users run one gcloud command instead of managing OAu
 
 | Account Type | ADC Login | Notes |
 |--------------|-----------|-------|
-| Google Workspace (corporate/org-managed) | ✓ Works | Tested with restrictive org policies |
-| Gmail with Advanced Protection Program | ✗ Blocked | Google's own gcloud OAuth client is blocked by APP |
-| Regular Gmail | Expected to work | Not yet tested |
+| Google Workspace (corporate/org-managed) | ✓ Works | Tested with restrictive org policies, 2FA with security keys |
+| Gmail with Advanced Protection Program | ✗ Blocked | Google's gcloud OAuth client blocked by APP |
+| Gmail with 2FA (security keys) | ✗ Blocked | Even without APP enrolled, gcloud client blocked |
+| Regular Gmail (basic or no 2FA) | Unknown | Not yet tested |
 
-### Advanced Protection Program Limitation
+### Gmail Blocking Behavior
 
-Accounts enrolled in Google's [Advanced Protection Program](https://landing.google.com/advancedprotection/) block the gcloud OAuth client (`764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com`) as an untrusted third-party app.
+Google blocks the gcloud OAuth client (`764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com`) for some consumer Gmail accounts, even without Advanced Protection Program enabled.
+
+**Observed pattern:**
+- Workspace accounts with 2FA + security keys: Works
+- Gmail accounts with 2FA + security keys: Blocked
+- Gmail accounts previously enrolled in APP (then unenrolled): Still blocked
+
+This suggests Google applies stricter third-party app policies to consumer Gmail accounts with hardware security keys, separate from the APP enrollment status.
 
 **Workaround:** Users with APP can:
 1. Create token before enabling APP (token persists)
