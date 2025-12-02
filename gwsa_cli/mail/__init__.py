@@ -10,7 +10,11 @@ from googleapiclient.errors import HttpError
 logger = logging.getLogger(__name__)
 
 # If modifying these scopes, the user_token.json file will need to be re-generated.
-SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+# Run: gwsa setup --new-user
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/drive.file",  # Upload files to Drive (devws repo user-archive)
+]
 # Use ~/.config/gworkspace-access for storing credentials
 _CONFIG_DIR = os.path.expanduser("~/.config/gworkspace-access")
 USER_TOKEN_FILE = os.path.join(_CONFIG_DIR, "user_token.json")
