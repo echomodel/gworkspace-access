@@ -118,7 +118,17 @@ def check_access(token_file, application_default):
             use_adc=application_default,
             config_token_path=setup_local.USER_TOKEN_FILE
         )
-        if not setup_local.display_detailed_status(creds, source, deep_check=True):
+        # Get detailed status with deep check (live API calls)
+        report = setup_local._get_detailed_status_data(creds, source, deep_check=True)
+        report["status"] = "CONFIGURED"
+        report["mode"] = "token" if token_file or not application_default else "adc"
+
+        # Determine if ready based on credentials being valid/refreshable
+        is_ready = report.get("creds_valid", False) or report.get("creds_refreshable", False)
+
+        setup_local._display_status_report(report, is_ready=is_ready)
+
+        if not is_ready:
             sys.exit(1)
 
     except Exception as e:

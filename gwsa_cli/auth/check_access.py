@@ -23,22 +23,29 @@ def find_token_file(token_path: str = None, config_token_path: str = None) -> st
     Find token file, checking common locations.
 
     Args:
-        token_path: Explicit path provided by user
+        token_path: Explicit path provided by user (highest priority)
         config_token_path: Path from gwsa config (e.g., setup_local.USER_TOKEN_FILE)
 
     Returns:
         Path to token file, or None if not found
+
+    Search order:
+    1. Explicit token_path (user-provided via --token-file flag)
+    2. Config directory path (when auth.mode is 'token')
+    3. Current directory (fallback for standalone usage)
     """
+    # Explicit user-provided path takes highest priority
     if token_path and os.path.exists(token_path):
         return token_path
 
-    # Check current directory
-    if os.path.exists("user_token.json"):
-        return "user_token.json"
-
-    # Check config directory
+    # Config directory path takes priority over current directory
+    # This ensures `gwsa setup --client-creds` uses the right token after setup
     if config_token_path and os.path.exists(config_token_path):
         return config_token_path
+
+    # Fallback: check current directory (for standalone token usage)
+    if os.path.exists("user_token.json"):
+        return "user_token.json"
 
     return None
 
@@ -82,12 +89,15 @@ def get_active_credentials(
         return creds, source
     
     elif auth_mode == 'token':
-        found_path = find_token_file(config_token_path=config_token_path)
+        # Use the standard config path if not explicitly provided
+        from gwsa_cli.mail import USER_TOKEN_FILE
+        effective_token_path = config_token_path or USER_TOKEN_FILE
+        found_path = find_token_file(config_token_path=effective_token_path)
         if found_path:
             creds = Credentials.from_authorized_user_file(found_path)
             return creds, f"Token file: {os.path.abspath(found_path)}"
         else:
-            raise FileNotFoundError(f"Token file not found at expected path: {config_token_path}")
+            raise FileNotFoundError(f"Token file not found at expected path: {effective_token_path}")
     
     else: # No config or unknown mode
         # This will be caught by the higher-level status check, but raise for safety

@@ -655,14 +655,15 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
              click.echo("✗ User authentication failed. Configuration not saved.")
              return False
 
+        # Set auth.mode FIRST so get_active_credentials() knows where to look
+        set_config_value("auth.mode", "token")
+
         # Post-setup validation and configuration save
         creds, source = get_active_credentials()
         details_report = _get_detailed_status_data(creds, source, deep_check=False)
         report = {"status": "CONFIGURED", "mode": "token"}
         report.update(details_report)
         is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-        
-        set_config_value("auth.mode", "token")
         granted_scopes = set(get_token_scopes(creds))
         set_config_value("auth.validated_scopes", list(granted_scopes))
         set_config_value("auth.last_scope_check", datetime.now().isoformat())
@@ -686,14 +687,15 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
              click.echo("✗ User authentication failed. Configuration not saved.")
              return False
 
+        # Set auth.mode FIRST so get_active_credentials() knows where to look
+        set_config_value("auth.mode", "token")
+
         # Post-setup validation and configuration save
         creds, source = get_active_credentials()
         details_report = _get_detailed_status_data(creds, source, deep_check=False)
         report = {"status": "CONFIGURED", "mode": "token"}
         report.update(details_report)
         is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-
-        set_config_value("auth.mode", "token")
         granted_scopes = set(get_token_scopes(creds))
         set_config_value("auth.validated_scopes", list(granted_scopes))
         set_config_value("auth.last_scope_check", datetime.now().isoformat())
