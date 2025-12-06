@@ -1,0 +1,134 @@
+import os
+from pathlib import Path
+import pytest
+import yaml
+from unittest.mock import MagicMock
+from gwsa_cli.setup_local import _get_status_report
+
+def test_get_status_report_not_configured(tmp_path: Path, monkeypatch):
+    """
+    Verify that _get_status_report correctly identifies a system with no config file.
+    """
+    # Arrange
+    non_existent_config = tmp_path / "config.yaml"
+    monkeypatch.setenv("GWSA_CONFIG_FILE", str(non_existent_config))
+
+    # Action
+    report = _get_status_report()
+
+    # Assertion
+    assert report == {"status": "NOT_CONFIGURED"}
+
+def test_get_status_report_configured_adc_no_creds(tmp_path: Path, monkeypatch):
+    """
+    Verify status report for a system configured for ADC but missing ADC credentials.
+    """
+    # Arrange
+    config_path = tmp_path / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump({"auth": {"mode": "adc"}}, f)
+    monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setattr("google.auth.default", lambda: (_ for _ in ()).throw(Exception("ADC not found")))
+
+    # Action
+    report = _get_status_report()
+
+    # Assertion
+    assert report["status"] == "ERROR"
+    assert report["mode"] == "adc"
+    assert "error_details" in report
+    assert "ADC not found" in report["error_details"]
+
+def test_get_status_report_configured_token_no_token_file(tmp_path: Path, monkeypatch):
+    """
+    Verify status report for a system configured for Token mode but missing the token file.
+    """
+    # Arrange
+    config_path = tmp_path / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump({"auth": {"mode": "token"}}, f)
+    monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
+    non_existent_token = tmp_path / "user_token.json"
+    monkeypatch.setattr("gwsa_cli.mail.USER_TOKEN_FILE", str(non_existent_token))
+    monkeypatch.setattr("gwsa_cli.setup_local.USER_TOKEN_FILE", str(non_existent_token))
+
+    # Action
+    report = _get_status_report()
+
+    # Assertion
+    assert report["status"] == "ERROR"
+    assert report["mode"] == "token"
+    assert "error_details" in report
+    assert "Token file not found" in report["error_details"]
+
+def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatch):
+    """
+    Verify status report for a system configured for ADC with valid credentials.
+    """
+    # Arrange: Config
+    config_path = tmp_path / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump({"auth": {"mode": "adc"}}, f)
+    monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
+
+    # Arrange: Mock Credentials
+    mock_creds = MagicMock()
+    mock_creds.valid = True
+    mock_creds.expired = False
+    mock_creds.refresh_token = "fake-refresh-token"
+    mock_scopes = [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/spreadsheets",
+    ]
+    
+    # Mock the functions that would make network calls
+    monkeypatch.setattr("google.auth.default", lambda: (mock_creds, "mock-project"))
+    monkeypatch.setattr("gwsa_cli.setup_local.get_token_scopes", lambda creds: mock_scopes)
+
+    # Action
+    report = _get_status_report()
+
+    # Assertion
+    assert report["status"] == "CONFIGURED"
+    assert report["mode"] == "adc"
+    assert report["creds_valid"] is True
+    assert report["feature_status"]["mail"] is False # We only have readonly
+    assert report["feature_status"]["sheets"] is True
+    assert report["feature_status"]["docs"] is False
+
+def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypatch):
+    """
+    Verify status report for a system configured for Token mode with a valid token file.
+    """
+    # Arrange: Config
+    config_path = tmp_path / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump({"auth": {"mode": "token"}}, f)
+    monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
+
+    # Arrange: Mock Credentials & Scopes
+    mock_creds = MagicMock()
+    mock_creds.valid = True
+    mock_creds.expired = False
+    mock_creds.refresh_token = "fake-refresh-token"
+    mock_scopes = [
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/documents.readonly",
+    ]
+    
+    # Mock the functions that would make network calls
+    monkeypatch.setattr("gwsa_cli.setup_local.get_active_credentials", lambda: (mock_creds, "mock_token_file"))
+    monkeypatch.setattr("gwsa_cli.setup_local.get_token_scopes", lambda creds: mock_scopes)
+
+    # Action
+    report = _get_status_report()
+
+    # Assertion
+    assert report["status"] == "CONFIGURED"
+    assert report["mode"] == "token"
+    assert report["creds_valid"] is True
+    assert "error_details" not in report
+    assert report["feature_status"]["mail"] is True
+    assert report["feature_status"]["sheets"] is False
+    assert report["feature_status"]["docs"] is False # We only have readonly

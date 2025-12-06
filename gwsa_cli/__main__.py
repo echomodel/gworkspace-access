@@ -13,6 +13,8 @@ from . import __version__
 from .mail import search as search_module
 from .mail import read as read_module
 from .mail import label as label_module
+from .sheets_commands import sheets as sheets_module
+from .config_commands import config_group as config_module
 from .auth import check_access as check_access_module
 from .auth import create_token as create_token_module
 
@@ -29,21 +31,7 @@ logging.getLogger('google_auth_oauthlib.flow').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def check_user_token_exists():
-    """Check if user_token.json exists."""
-    return os.path.exists(setup_local.USER_TOKEN_FILE)
-
-
-def require_user_credentials(f):
-    """Decorator to ensure user credentials exist before running command."""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not check_user_token_exists():
-            logger.error(f"Error: User credentials file '{setup_local.USER_TOKEN_FILE}' not found.")
-            logger.error("Please run 'gwsa setup' to set up your credentials first.")
-            sys.exit(1)
-        return f(*args, **kwargs)
-    return decorated_function
+from .decorators import require_scopes
 
 
 @click.group()
@@ -56,18 +44,31 @@ def gwsa():
 
 
 # Setup command
+from click_option_group import optgroup, MutuallyExclusiveOptionGroup
+
+# ... (other imports)
+
 @click.command()
-@click.option('--new-user', is_flag=True,
-              help='Force a new user authentication flow, ignoring any existing user_token.json.')
-@click.option('--client-creds', type=click.Path(exists=True),
-              help='Path to client_secrets.json file to use for OAuth setup.')
-@click.option('--status', is_flag=True,
-              help='Show configuration status (read-only, no setup).')
-def setup(new_user, client_creds, status):
+@optgroup.group('Configuration Mode', cls=MutuallyExclusiveOptionGroup)
+@optgroup.option('--client-creds', type=click.Path(exists=True), help='Configure using an OAuth client secrets file (implies --new-user).')
+@optgroup.option('--use-adc', is_flag=True, help='Configure to use existing Application Default Credentials.')
+@optgroup.option('--adc-login', is_flag=True, help='Initiate the ADC login flow and configure gwsa.')
+@click.option('--new-user', is_flag=True, help='Force a new user authentication flow for an existing configuration.')
+def setup(client_creds, use_adc, adc_login, new_user):
     """Set up local environment and credentials, or check status."""
-    if not setup_local.run_setup(new_user=new_user, client_creds=client_creds, status_only=status):
-        if not status:
-            logger.error("GWSA setup failed. Please check logs for details.")
+    # Using --client-creds always implies a new user is needed to match the tokens.
+    if client_creds:
+        new_user = True
+
+    status_only = not (client_creds or use_adc or adc_login or new_user)
+
+    if not setup_local.run_setup(
+        new_user=new_user, 
+        client_creds=client_creds, 
+        use_adc=use_adc, 
+        adc_login=adc_login,
+        status_only=status_only
+    ):
         sys.exit(1)
 
 
@@ -106,97 +107,22 @@ def create_token(scopes, client_creds, output):
               help='Path to token file to test.')
 @click.option('--application-default', is_flag=True,
               help='Use Application Default Credentials (gcloud auth application-default login).')
-@click.option('--only', default=None,
-              help='Comma-separated list of APIs to test (gmail,docs,sheets,drive). Default: all.')
-def check_access(token_file, application_default, only):
-    """Test OAuth token validity and API access.
-
-    This is a standalone auth utility that does NOT affect gwsa configuration.
-    Use it to verify tokens work or diagnose authentication issues.
-
-    If neither --token-file nor --application-default is specified, checks in order:
-    1. ./user_token.json (current directory)
-    2. ~/.config/gworkspace-access/user_token.json
-    3. Application Default Credentials (fallback)
-
-    Examples:
-        gwsa access check
-        gwsa access check --token-file ./my_token.json
-        gwsa access check --application-default
-        gwsa access check --only gmail,docs
+def check_access(token_file, application_default):
     """
-    # Parse and validate --only option
-    api_list = None
-    if only:
-        api_list = [a.strip() for a in only.split(',')]
-        invalid = check_access_module.validate_api_names(api_list)
-        if invalid:
-            click.echo(f"✗ Unrecognized API(s): {', '.join(invalid)}")
-            click.echo(f"  Supported: {', '.join(check_access_module.SUPPORTED_APIS.keys())}")
-            sys.exit(1)
-
-    # Load credentials using the module
+    Test OAuth token validity and API access with a deep check.
+    This command runs a full diagnostic, including live API calls.
+    """
     try:
-        creds, source = check_access_module.check_credentials(
+        creds, source = check_access_module.get_active_credentials(
             token_file=token_file,
             use_adc=application_default,
             config_token_path=setup_local.USER_TOKEN_FILE
         )
+        if not setup_local.display_detailed_status(creds, source, deep_check=True):
+            sys.exit(1)
+
     except Exception as e:
-        click.echo(f"✗ Failed to load credentials: {e}")
-        sys.exit(1)
-
-    click.echo(f"Credential source: {source}")
-    click.echo("-" * 50)
-
-    click.echo(f"Valid: {creds.valid}")
-    click.echo(f"Expired: {creds.expired}")
-
-    if hasattr(creds, 'refresh_token'):
-        click.echo(f"Has refresh token: {creds.refresh_token is not None}")
-
-    if hasattr(creds, 'scopes') and creds.scopes:
-        click.echo(f"Scopes: {', '.join(creds.scopes)}")
-
-    click.echo("-" * 50)
-
-    # Test refresh
-    click.echo("Testing credential refresh...")
-    try:
-        check_access_module.test_refresh(creds)
-        click.echo("✓ Refresh successful")
-    except Exception as e:
-        click.echo(f"✗ Refresh failed: {e}")
-        sys.exit(1)
-
-    click.echo("-" * 50)
-    click.echo("API Access:")
-    click.echo("")
-
-    # Test APIs and display table
-    results = check_access_module.test_apis(creds, api_list)
-
-    all_passed = True
-    for api_name, result in results.items():
-        if result["success"]:
-            icon = "✓"
-            status = "OK"
-            if api_name.lower() == "gmail" and "label_count" in result:
-                status = f"OK ({result['label_count']} labels)"
-        else:
-            icon = "✗"
-            status = "FAILED"
-            all_passed = False
-
-        click.echo(f"  {icon} {api_name:10} {status}")
-
-    click.echo("")
-    click.echo("-" * 50)
-
-    if all_passed:
-        click.echo("✓ All checks passed!")
-    else:
-        click.echo("✗ Some checks failed")
+        click.echo(f"✗ Failed to load credentials or run checks: {e}")
         sys.exit(1)
 
 
@@ -216,7 +142,7 @@ def mail():
               help='Maximum number of messages to return (default 25, due to body extraction cost).')
 @click.option('--format', type=click.Choice(['full', 'metadata']), default='full',
               help="'full' includes body and snippet (slower); 'metadata' is fast with headers and labelIds only.")
-@require_user_credentials
+@require_scopes('mail-read')
 def search(query, page_token, max_results, format):
     """Search for emails. Output is in JSON format."""
     try:
@@ -239,7 +165,7 @@ def search(query, page_token, max_results, format):
 # Mail read command
 @click.command()
 @click.argument('message_id')
-@require_user_credentials
+@require_scopes('mail-read')
 def read_command(message_id):
     """Read a specific email by ID."""
     try:
@@ -262,7 +188,7 @@ def read_command(message_id):
 @click.argument('label_name')
 @click.option('--remove', is_flag=True,
               help='Remove the label instead of adding it.')
-@require_user_credentials
+@require_scopes('mail-modify')
 def label_command(message_id, label_name, remove):
     """Add or remove labels from an email."""
     try:
@@ -294,8 +220,10 @@ def access():
 
 # Add commands to groups using add_command()
 gwsa.add_command(setup, name='setup')
+gwsa.add_command(config_module, name='config')
 gwsa.add_command(access)
 gwsa.add_command(mail)
+gwsa.add_command(sheets_module, name='sheets')
 
 access.add_command(create_token, name='token')
 access.add_command(check_access, name='check')

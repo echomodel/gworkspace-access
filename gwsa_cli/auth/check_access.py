@@ -6,6 +6,14 @@ Use it to verify tokens work before deploying them or to diagnose auth issues.
 
 import os
 import logging
+from .. import config
+
+REQUIRED_SCOPES = {
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -35,48 +43,55 @@ def find_token_file(token_path: str = None, config_token_path: str = None) -> st
     return None
 
 
-def check_credentials(
-    token_file: str = None,
-    use_adc: bool = False,
+def get_active_credentials(
+    token_file: str = None, # Allow explicit override for `access check --token-file`
+    use_adc: bool = False,    # Allow explicit override for `access check --application-default`
     config_token_path: str = None
 ) -> tuple[object, str]:
     """
-    Load and validate credentials from token file or ADC.
-
-    Args:
-        token_file: Explicit path to token file
-        use_adc: If True, use Application Default Credentials
-        config_token_path: Fallback path from gwsa config
-
-    Returns:
-        Tuple of (credentials, source_description)
-
-    Raises:
-        Exception if credentials cannot be loaded
+    Load credentials strictly based on the configured auth mode or explicit flags.
+    No fallback behavior.
     """
     import google.auth
     from google.oauth2.credentials import Credentials
 
+    # Explicit flags for `gwsa access check` take highest precedence
     if use_adc:
         creds, project = google.auth.default()
-        source = "Application Default Credentials"
+        source = "Application Default Credentials (from flag)"
         if project:
             source += f" (project: {project})"
         return creds, source
 
-    # Find token file
-    found_path = find_token_file(token_file, config_token_path)
+    if token_file:
+        found_path = find_token_file(token_file)
+        if found_path:
+            creds = Credentials.from_authorized_user_file(found_path)
+            return creds, f"Token file: {os.path.abspath(found_path)}"
+        else:
+            raise FileNotFoundError(f"Specified token file not found: {token_file}")
 
-    if found_path:
-        creds = Credentials.from_authorized_user_file(found_path)
-        return creds, f"Token file: {os.path.abspath(found_path)}"
+    # If no flags, use the mode from config.yaml
+    auth_mode = config.get_config_value("auth.mode")
 
-    # Fall back to ADC
-    creds, project = google.auth.default()
-    source = "Application Default Credentials (fallback - no token file found)"
-    if project:
-        source = f"Application Default Credentials (fallback, project: {project})"
-    return creds, source
+    if auth_mode == 'adc':
+        creds, project = google.auth.default()
+        source = "Application Default Credentials (from config)"
+        if project:
+            source += f" (project: {project})"
+        return creds, source
+    
+    elif auth_mode == 'token':
+        found_path = find_token_file(config_token_path=config_token_path)
+        if found_path:
+            creds = Credentials.from_authorized_user_file(found_path)
+            return creds, f"Token file: {os.path.abspath(found_path)}"
+        else:
+            raise FileNotFoundError(f"Token file not found at expected path: {config_token_path}")
+    
+    else: # No config or unknown mode
+        # This will be caught by the higher-level status check, but raise for safety
+        raise ValueError("No valid auth.mode configured and no credentials specified.")
 
 
 def test_refresh(creds) -> bool:
@@ -225,6 +240,26 @@ SUPPORTED_APIS = {
     "drive": test_drive_access,
 }
 
+# Define scopes required for each major feature
+FEATURE_SCOPES = {
+    "mail": {"https://www.googleapis.com/auth/gmail.modify"},
+    "sheets": {"https://www.googleapis.com/auth/spreadsheets"},
+    "docs": {"https://www.googleapis.com/auth/documents"},
+    "drive": {"https://www.googleapis.com/auth/drive"},
+}
+
+def get_feature_status(granted_scopes: set[str]) -> dict[str, bool]:
+    """
+    Determines if each major gwsa feature is supported by the granted scopes.
+
+    Returns:
+        A dictionary where keys are feature names (e.g., "mail") and values are
+        booleans indicating if all required scopes for that feature are granted.
+    """
+    status = {}
+    for feature, required_scopes in FEATURE_SCOPES.items():
+        status[feature] = required_scopes.issubset(granted_scopes)
+    return status
 
 def test_apis(creds, only: list[str] = None) -> dict:
     """
@@ -259,3 +294,34 @@ def validate_api_names(names: list[str]) -> list[str]:
         List of unrecognized names (empty if all valid)
     """
     return [n for n in names if n.lower() not in SUPPORTED_APIS]
+
+
+def get_token_scopes(creds) -> list[str]:
+    """
+    Use Google's tokeninfo endpoint to get the scopes for a given credential.
+
+    Returns:
+        A list of scope strings.
+
+    Raises:
+        Exception on network error or if token is invalid.
+    """
+    import urllib.request
+    import json
+    from google.auth.transport.requests import Request
+
+    if not creds.valid and creds.refresh_token:
+        creds.refresh(Request())
+
+    access_token = creds.token
+    if not access_token:
+        raise ValueError("Credentials object has no access token.")
+
+    url = f"https://www.googleapis.com/oauth2/v3/tokeninfo?access_token={access_token}"
+    
+    with urllib.request.urlopen(url) as response:
+        if response.status == 200:
+            data = json.loads(response.read().decode())
+            return data.get("scope", "").split(" ")
+        else:
+            raise ConnectionError(f"Tokeninfo endpoint failed with status {response.status}: {response.read().decode()}")

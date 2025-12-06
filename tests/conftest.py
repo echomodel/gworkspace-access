@@ -8,6 +8,7 @@ This module provides:
 - Configuration loading from tests/config.yaml
 """
 
+import sys
 import pytest
 import subprocess
 import json
@@ -45,7 +46,7 @@ def verify_cli_installed():
     """
     try:
         result = subprocess.run(
-            ["python3", "-m", "gwsa_cli", "--help"],
+            [sys.executable, "-m", "gwsa_cli", "--help"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -120,7 +121,7 @@ def cli_runner():
         """Execute a gwsa CLI command and return parsed result."""
         try:
             result = subprocess.run(
-                ["python3", "-m", "gwsa_cli"] + command_args,
+                [sys.executable, "-m", "gwsa_cli"] + command_args,
                 capture_output=True,
                 text=True,
                 timeout=30,

@@ -14,6 +14,8 @@ setup(
         'google-auth-oauthlib',
         'python-dotenv',
         'click>=8.0',
+        'PyYAML',
+        'click_option_group',
     ],
     entry_points={
         'console_scripts': [

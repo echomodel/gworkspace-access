@@ -1,355 +1,193 @@
 # Authentication Guide
 
-This guide covers authentication options for Google Workspace APIs, including compatibility with different account types and security configurations.
+This guide covers the authentication flow for `gwsa`, including the different configuration modes, how to test your setup, and advanced utilities.
 
-## Authentication Methods
+## How `gwsa` Handles Authentication
 
-### 1. OAuth User Token (Recommended)
+`gwsa` can be configured in one of two modes. The chosen mode is stored in the `config.yaml` file (`~/.config/gworkspace-access/config.yaml`) under the `auth.mode` key.
 
-Create a token using your own OAuth client credentials:
+### 1. Token Mode (`auth.mode: token`)
+
+This is the recommended and most robust method. It uses a dedicated `user_token.json` file that is generated specifically for `gwsa` using your own private OAuth Client ID.
+
+- **Pros:** Works with all account types (including personal Gmail with advanced security), gives you full control over the OAuth client, and is self-contained within the `gwsa` configuration directory.
+- **Cons:** Requires you to create an OAuth Client ID in the Google Cloud Console first.
+
+### 2. ADC Mode (`auth.mode: adc`)
+
+This method uses Google's Application Default Credentials (ADC). It's a fast way to get started if you already use the `gcloud` CLI.
+
+- **Pros:** Very simple one-command setup if you already have `gcloud` configured.
+- **Cons:** May be blocked by certain high-security account configurations (like Advanced Protection). It also relies on a global credential that can be affected by other applications.
+
+---
+
+## Initial Setup (`gwsa setup`)
+
+The `gwsa setup` command is the primary way to configure authentication for the tool.
+
+### Configuring for Token Mode
+
+This is the most common setup flow. You will need a `client_secrets.json` file from your Google Cloud project.
+
+1.  **Run the setup command:**
+    ```bash
+    gwsa setup --client-creds /path/to/your/client_secrets.json
+    ```
+2.  **Authorize in Browser:** Your web browser will open, asking you to grant permission for your application.
+3.  **Completion:** Upon success, the tool will create a `user_token.json` file, set `auth.mode: token` in `config.yaml`, and cache the validated scopes.
+
+This process is **atomic**. If the browser authentication is cancelled or fails, your previous configuration (if any) will be left untouched.
+
+### Configuring for ADC Mode
+
+If you have already logged in with the `gcloud` CLI, you can configure `gwsa` to use those credentials.
+
+1.  **Log in with `gcloud`:** Make sure you request all the necessary scopes.
+    ```bash
+    gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets
+    ```
+2.  **Run the setup command:**
+    ```bash
+    gwsa setup --use-adc
+    ```
+3.  **Completion:** The tool will test the ADC credentials and, on success, set `auth.mode: adc` in `config.yaml` and cache the validated scopes.
+
+---
+
+## Checking Your Configuration
+
+`gwsa` provides two commands to check your authentication and authorization status.
+
+### Quick Status Check (`gwsa setup`)
+
+Running `gwsa setup` with no flags provides a quick, offline status check. It reads your `config.yaml` and validates your credentials and cached scopes without making any live API calls.
+
+**Example Output (Configured but with issues):**
+```
+$ gwsa setup
+
+Google Workspace Access (gwsa)
+------------------------------
+
+Configuration Status: CONFIGURED (Mode: adc)
+
+---
+Credential source: Application Default Credentials (from config) (project: my-gcp-project)
+
+Credential Status:
+  ✗ Invalid
+  - Expired: True
+  - Refreshable: Yes
+
+Feature Support (based on scopes):
+  ✓ Mail
+  ✓ Sheets
+  ✓ Docs
+  ✗ Drive
+---
+
+RESULT: NOT READY
+```
+
+### Deep Diagnostic Check (`gwsa access check`)
+
+The `gwsa access check` command runs a full diagnostic, including live API calls to each Google service to ensure you have actual access. This is the best way to confirm your permissions are working as expected.
+
+**Example Output (Fully working):**
+```
+$ gwsa access check
+
+Google Workspace Access (gwsa)
+------------------------------
+
+Configuration Status: CONFIGURED (Mode: token)
+
+---
+Credential source: Token file: /home/user/.config/gworkspace-access/user_token.json
+
+Credential Status:
+  ✓ Valid
+  - Expired: False
+  - Refreshable: Yes
+
+Feature Support (based on scopes):
+  ✓ Mail
+  ✓ Sheets
+  ✓ Docs
+  ✓ Drive
+
+Live API Access (Deep Check):
+  ✓ mail       OK (123 labels)
+  ✓ sheets     OK
+  ✓ docs       OK
+  ✓ drive      OK
+---
+
+RESULT: READY
+```
+
+---
+
+## Advanced: Standalone Token Creation
+
+The `gwsa access token` command is a standalone utility for creating OAuth tokens. **It does not affect `gwsa`'s own configuration.** This is useful for creating tokens for other scripts or applications.
 
 ```bash
 gwsa access token \
-  --scope https://www.googleapis.com/auth/gmail.readonly \
-  --client-creds ~/.config/gworkspace-access/client_secrets.json \
-  --output user_token.json
+  --scope mail-read \
+  --scope sheets \
+  --client-creds /path/to/client_secrets.json \
+  --output /path/to/save/my_token.json
 ```
-
-**Pros:**
-- Works with most account types
-- Token persists indefinitely (auto-refreshes)
-- You control the OAuth client
-- Compatible with ADC via `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-
-**Cons:**
-- Requires setting up OAuth client in Google Cloud Console
-- Initial setup more complex than ADC
-
-**Note:** Tokens created by `gwsa access token` include `type: authorized_user`, making them compatible with `google.auth.default()` when referenced via `GOOGLE_APPLICATION_CREDENTIALS`.
-
-### 2. Application Default Credentials (ADC)
-
-Use Google's gcloud CLI to authenticate:
-
-```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly
-```
-
-**Pros:**
-- Simple one-command setup
-- No need to manage OAuth client credentials
-- Standard Google pattern
-
-**Cons:**
-- Uses Google's OAuth client ID (not under your control)
-- Blocked by some account security configurations (see below)
-
-### 3. Service Account
-
-For server-to-server authentication without user interaction:
-
-```python
-from google.oauth2 import service_account
-
-credentials = service_account.Credentials.from_service_account_file(
-    'service-account.json',
-    scopes=['https://www.googleapis.com/auth/gmail.readonly']
-)
-```
-
-**Pros:**
-- No user interaction required
-- Ideal for CI/CD and automated jobs
-
-**Cons:**
-- Cannot access regular Gmail accounts (only Workspace with domain-wide delegation)
-- Requires Workspace admin to configure delegation
 
 ---
 
-## Token File Formats
+## Scope Aliases
 
-Different authentication methods produce token files with different fields. Understanding these differences helps when troubleshooting or choosing an approach.
+For convenience, `gwsa` supports short aliases for common Google API scopes. You can use these aliases with the `gwsa access token` command and in the `validated_scopes` section of your `config.yaml`.
 
-### gcloud ADC Token
-
-Location: `~/.config/gcloud/application_default_credentials.json`
-
-```json
-{
-  "client_id": "GOOGLE_DEFAULT_CLIENT_ID.apps.googleusercontent.com",
-  "client_secret": "GOOGLE_DEFAULT_CLIENT_SECRET",
-  "quota_project_id": "your-gcp-project-id",
-  "refresh_token": "REFRESH_TOKEN_VALUE",
-  "type": "authorized_user",
-  "universe_domain": "googleapis.com"
-}
-```
-
-- Uses Google's default OAuth client ID (shared across all gcloud users)
-- Includes `quota_project_id` from your gcloud config
-- No `scopes` or `expiry` fields
-
-### Google OAuth Library Token
-
-Location: User-specified (e.g., `~/.config/gworkspace-access/user_token.json`)
-
-Created by applications using Google's OAuth library. The typical flow is:
-1. `InstalledAppFlow.from_client_secrets_file()` - initiates browser-based OAuth
-2. `flow.run_local_server()` - user authorizes, returns credentials
-3. `creds.to_json()` - serializes credentials to this format
-
-Tools like `gwsa` use this pattern internally:
-
-```json
-{
-  "token": "ACCESS_TOKEN_VALUE",
-  "refresh_token": "REFRESH_TOKEN_VALUE",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
-  "client_secret": "YOUR_CLIENT_SECRET",
-  "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
-  "expiry": "2024-01-15T12:00:00.000000Z",
-  "type": "authorized_user"
-}
-```
-
-- Uses your custom OAuth client ID
-- Includes `scopes` and `expiry` fields
-- **No `quota_project_id`** (causes "No project ID" warning - see [QUOTAS.md](QUOTAS.md))
-
-### Service Account Key
-
-```json
-{
-  "type": "service_account",
-  "project_id": "my-project-123",
-  "private_key_id": "...",
-  "private_key": "-----BEGIN PRIVATE KEY-----\n...",
-  "client_email": "my-sa@my-project-123.iam.gserviceaccount.com"
-}
-```
-
-- Contains `project_id` directly
-- Contains private key material - **keep secure**
-
-### Field Comparison
-
-| Field | gcloud ADC | `creds.to_json()` | gwsa | Service Account |
-|-------|------------|-------------------|------|-----------------|
-| `type` | `authorized_user` | ✗ Missing | `authorized_user` | `service_account` |
-| `quota_project_id` | ✓ Present | ✗ Missing | ✗ Missing | N/A |
-| `project_id` | ✗ | ✗ | ✗ | ✓ Present |
-| `scopes` | ✗ | ✓ Present | ✓ Present | ✗ |
-| `expiry` | ✗ | ✓ Present | ✓ Present | ✗ |
-| `token` (access token) | ✗ | ✓ Present | ✓ Present | ✗ |
-| `client_id` origin | Google's | Your OAuth client | Your OAuth client | Service account |
-
-**Note:** The Google OAuth library's `creds.to_json()` does not include the `type` field. gwsa explicitly adds `"type": "authorized_user"` to make tokens compatible with `google.auth.default()` when used via `GOOGLE_APPLICATION_CREDENTIALS`.
+| Alias                 | Full Google API Scope URL                                       |
+|-----------------------|-----------------------------------------------------------------|
+| `mail-read`           | `https://www.googleapis.com/auth/gmail.readonly`                |
+| `mail-modify`         | `https://www.googleapis.com/auth/gmail.modify`                  |
+| `mail-labels`         | `https://www.googleapis.com/auth/gmail.labels`                  |
+| `mail`                | `https://www.googleapis.com/auth/gmail.modify`                  |
+| `sheets-read`         | `https://www.googleapis.com/auth/spreadsheets.readonly`         |
+| `sheets`              | `https://www.googleapis.com/auth/spreadsheets`                  |
+| `docs-read`           | `https://www.googleapis.com/auth/documents.readonly`            |
+| `docs`                | `https://www.googleapis.com/auth/documents`                     |
+| `drive-read`          | `https://www.googleapis.com/auth/drive.readonly`                |
+| `drive-metadata-read` | `https://www.googleapis.com/auth/drive.metadata.readonly`       |
+| `drive`               | `https://www.googleapis.com/auth/drive`                         |
 
 ---
 
-## Account Type Compatibility
+## Understanding the Configuration File (`config.yaml`)
 
-### Google Workspace (Corporate/Org-Managed)
+The `config.yaml` file stores the authentication mode and caches the scopes that were validated during setup.
 
-| Method | Compatibility | Notes |
-|--------|---------------|-------|
-| OAuth User Token | ✓ Works | May require admin approval for OAuth client |
-| ADC (gcloud) | ✓ Works | Even with restrictive org policies |
-| Service Account | ✓ Works | Requires domain-wide delegation setup |
+- **`auth.mode`**: Can be `token` or `adc`. This tells `gwsa` which credential type to load.
+- **`auth.validated_scopes`**: A list of the Google API scopes that were confirmed to be granted to your credentials the last time you ran `gwsa setup`. 
+- **`auth.last_scope_check`**: A timestamp of when the scopes were last checked.
 
-Workspace admins can restrict which OAuth clients are allowed. If your OAuth client is blocked, ask your admin to allowlist it.
-
-### Regular Gmail (@gmail.com)
-
-| Method | Compatibility | Notes |
-|--------|---------------|-------|
-| OAuth User Token | ✓ Works | Standard flow |
-| ADC (gcloud) | ✓ Usually works | May be blocked with security keys (see below) |
-| Service Account | ✗ Not supported | No mechanism to grant access |
-
-### Gmail with Advanced Protection Program (APP)
-
-| Method | Compatibility | Notes |
-|--------|---------------|-------|
-| OAuth User Token | ⚠ Pre-existing only | Tokens created before APP still work |
-| ADC (gcloud) | ✗ Blocked | `error 400: policy_enforced` |
-| Service Account | ✗ Not supported | N/A for consumer accounts |
-
-### Gmail with 2FA + Hardware Security Keys
-
-| Method | Compatibility | Notes |
-|--------|---------------|-------|
-| OAuth User Token | ✓ Works | Custom OAuth client not blocked |
-| ADC (gcloud) | ✗ Often blocked | Google's gcloud client treated as untrusted |
-| Service Account | ✗ Not supported | N/A for consumer accounts |
-
----
-
-## Advanced Protection Program (APP)
-
-Google's [Advanced Protection Program](https://landing.google.com/advancedprotection/) provides the strongest account security but restricts third-party app access.
-
-### Key Behaviors
-
-1. **New OAuth flows blocked** - Cannot authorize new apps after APP is enabled
-2. **Pre-existing tokens persist** - Tokens created before enabling APP continue to work
-3. **Google's own clients affected** - Even gcloud CLI is blocked
-
-### Verified Test Results
-
-| Scenario | Result |
-|----------|--------|
-| Create token → Enable APP → Use token | ✓ Works |
-| Enable APP → Create new token | ✗ Blocked |
-| Enable APP → Use gcloud ADC | ✗ Blocked |
-| Disable APP → Create token → Re-enable APP → Use token | ✓ Works |
-
-The last scenario has been tested and confirmed: tokens created while APP is disabled continue to work after re-enabling APP. The refresh token persists and auto-refreshes normally.
-
-### Workarounds for APP Users
-
-1. **Create tokens before enabling APP**
-   - Plan ahead: create and store tokens before enrollment
-   - Tokens persist indefinitely with auto-refresh
-
-2. **Temporarily disable APP to create new tokens**
-   - Unenroll from APP at https://myaccount.google.com/advanced-protection-program
-   - Create token with `gwsa access token` or `gwsa setup`
-   - Re-enroll in APP
-   - **Verified:** The token continues working after re-enrollment - refresh tokens survive APP re-enablement
-
-3. **Use a separate account**
-   - Use non-APP account for development/automation
-   - Keep APP on your primary account
-
-### Token Storage for APP Users
-
-Since you can't easily regenerate tokens with APP enabled, treat your token file as a critical credential:
-
-- Store securely (encrypted, limited access)
-- Back up to secure location
-- Consider storing in a secrets manager for cloud deployments
-
----
-
-## Gmail with Hardware Security Keys
-
-Even without APP enrollment, Gmail accounts with hardware security keys (FIDO2/WebAuthn) may block some OAuth clients.
-
-### Observed Behavior
-
-- **Custom OAuth clients**: Usually work
-- **Google's gcloud OAuth client**: Often blocked with "This app is blocked" error
-
-### Why This Happens
-
-Google applies stricter third-party app policies to accounts with hardware security keys, treating them as high-security accounts even without formal APP enrollment.
-
-### Recommendation
-
-For Gmail accounts with security keys, use the **OAuth User Token** method with your own OAuth client rather than ADC.
-
----
-
-## Choosing the Right Method
-
-| Your Situation | Recommended Method |
-|----------------|-------------------|
-| Workspace account, simple setup | ADC (gcloud) |
-| Workspace account, need control | OAuth User Token |
-| Regular Gmail | Either works |
-| Gmail + security keys | OAuth User Token |
-| Gmail + APP | OAuth User Token (create before APP) |
-| CI/CD with Workspace | Service Account |
-| CI/CD with Gmail | OAuth User Token (store in secrets) |
-
----
-
-## Testing Your Credentials
-
-Use `gwsa access check` to verify your credentials work:
-
-```bash
-# Auto-detect credentials (checks token files, then falls back to ADC)
-gwsa access check
-
-# Test a specific token file
-gwsa access check --token-file ./my_token.json
-
-# Test Application Default Credentials
-gwsa access check --application-default
-
-# Test only specific APIs
-gwsa access check --only gmail,docs
-```
-
-The command will:
-1. Report which credential source it's using
-2. Show token validity and expiration status
-3. Test credential refresh
-4. Test API access (Gmail, Docs, Sheets, Drive by default)
-
-Example output:
-```
-Credential source: Token file: /home/user/.config/gworkspace-access/user_token.json
---------------------------------------------------
-Valid: False
-Expired: True
-Has refresh token: True
-Scopes: https://www.googleapis.com/auth/gmail.modify
---------------------------------------------------
-Testing credential refresh...
-✓ Refresh successful
---------------------------------------------------
-API Access:
-
-  ✓ gmail      OK (47 labels)
-  ✗ docs       FAILED
-  ✗ sheets     FAILED
-  ✗ drive      FAILED
-
---------------------------------------------------
-✗ Some checks failed
-```
+This caching allows the tool to fail fast if you try to run a command for a feature you haven't granted scopes for, without having to make a network call every time.
 
 ---
 
 ## Troubleshooting
 
-### "This app is blocked"
+### "Configuration Status: NOT CONFIGURED"
 
-**Cause:** Account security settings blocking the OAuth client.
+This means `config.yaml` has not been created or is empty. Run one of the `gwsa setup` commands to configure the tool.
 
-**Solutions:**
-- Use OAuth User Token method instead of ADC
-- Check if APP is enabled
-- For Workspace: ask admin to allowlist the client
+### "ERROR: Credentials Not Found or Invalid"
 
-### "error 400: policy_enforced"
+This means the tool is configured for a specific mode, but the credentials for that mode are broken.
 
-**Cause:** Advanced Protection Program blocking new OAuth flows.
-
-**Solutions:**
-- Use a pre-existing token (created before APP)
-- Temporarily disable APP to create token
-- Use a different account
-
-### "Access blocked: Authorization Error"
-
-**Cause:** OAuth client not authorized for the requested scopes, or scopes not enabled in Cloud Console.
-
-**Solutions:**
-- Enable the required API in Google Cloud Console
-- Add the scope to your OAuth consent screen
-- For Workspace: ensure admin has approved the scopes
-
-### Token refresh fails
-
-**Cause:** Refresh token revoked or expired.
-
-**Solutions:**
-- Re-run the OAuth flow to get a new token
-- Check if you revoked access at https://myaccount.google.com/connections
-- For APP users: may need to temporarily disable APP
+- **If Mode is `adc`**: Your ADC credentials may be expired or missing. Try running `gcloud auth application-default login` again, then re-run `gwsa setup --use-adc`.
+- **If Mode is `token`**: Your `user_token.json` may be missing, corrupted, or its refresh token was revoked. You need to generate a new one by re-running the setup with your `client_secrets.json`:
+  ```bash
+  gwsa setup --client-creds /path/to/your/client_secrets.json
+  ```
+This will trigger a new browser-based authentication and create a fresh, valid token.

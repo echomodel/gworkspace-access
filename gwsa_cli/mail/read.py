@@ -20,7 +20,8 @@ def read_message(message_id: str):
         # Extract relevant parts
         headers = msg['payload']['headers']
         subject = next((header['value'] for header in headers if header['name'] == 'Subject'), 'N/A')
-        sender = next((header['value'] for header in headers if header['name'] == 'From'), 'N/A')
+        from_addr = next((header['value'] for header in headers if header['name'] == 'From'), 'N/A')
+        to_addr = next((header['value'] for header in headers if header['name'] == 'To'), 'N/A')
         date = next((header['value'] for header in headers if header['name'] == 'Date'), 'N/A')
         
         # Get the body. Emails can have both text/plain and text/html parts.
@@ -67,15 +68,16 @@ def read_message(message_id: str):
         message_details = {
             "id": message_id,
             "subject": subject,
-            "sender": sender,
+            "from": from_addr,
+            "to": to_addr,
             "date": date,
             "snippet": msg.get('snippet', ''),
             "body": body,
-            "labelIds": msg.get('labelIds', []), # Added labelIds
-            "raw": json.dumps(msg, indent=2) # Include raw message for detailed inspection
+            "labelIds": msg.get('labelIds', []),
+            "raw": json.dumps(msg, indent=2)
         }
-        
-        logger.debug(f"Successfully retrieved message: '{subject}' from '{sender}'")
+
+        logger.debug(f"Successfully retrieved message: '{subject}' from '{from_addr}' to '{to_addr}'")
         return message_details
 
     except HttpError as error:

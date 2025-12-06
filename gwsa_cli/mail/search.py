@@ -6,6 +6,9 @@ from ..mail import _get_gmail_service # Changed to relative import
 
 logger = logging.getLogger(__name__)
 
+from ..decorators import require_scopes
+
+@require_scopes('mail')
 def search_messages(query_string: str, page_token: Optional[str] = None, max_results: int = 25, format: str = 'full') -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Searches for Gmail messages matching the given query string with pagination support.
@@ -56,21 +59,25 @@ def search_messages(query_string: str, page_token: Optional[str] = None, max_res
                 label_ids = msg.get('labelIds', [])
 
                 subject = "N/A"
-                sender = "N/A"
+                from_addr = "N/A"
+                to_addr = "N/A"
                 date = "N/A"
 
                 for header in headers:
                     if header['name'] == 'Subject':
                         subject = header['value']
                     elif header['name'] == 'From':
-                        sender = header['value']
+                        from_addr = header['value']
+                    elif header['name'] == 'To':
+                        to_addr = header['value']
                     elif header['name'] == 'Date':
                         date = header['value']
 
                 msg_dict = {
                     "id": message['id'],
                     "subject": subject,
-                    "sender": sender,
+                    "from": from_addr,
+                    "to": to_addr,
                     "date": date,
                     "labelIds": label_ids
                 }
@@ -97,7 +104,7 @@ def search_messages(query_string: str, page_token: Optional[str] = None, max_res
                     msg_dict['snippet'] = snippet
 
                 parsed_messages.append(msg_dict)
-                logger.debug(f"- Subject: {subject}, From: {sender}, Date: {date}, Labels: {label_ids}")
+                logger.debug(f"- Subject: {subject}, From: {from_addr}, To: {to_addr}, Date: {date}, Labels: {label_ids}")
 
             logger.debug(f"Successfully parsed {len(parsed_messages)} messages")
             return parsed_messages, metadata

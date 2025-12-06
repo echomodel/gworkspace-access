@@ -1,8 +1,10 @@
 .env
 credentials.json
+client_secrets.json
 user_token.json
 *.log
 __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+build/

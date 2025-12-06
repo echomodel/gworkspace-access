@@ -4,9 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Tuple, Dict, Optional
+from datetime import datetime
 
 # Import mail related constants from the mail package's __init__.py
 from .mail import USER_TOKEN_FILE, SCOPES
+from .auth.check_access import get_active_credentials, REQUIRED_SCOPES, get_token_scopes, get_feature_status, test_apis
+from .config import get_config_value, set_config_value, get_config_file_path
 
 # --- Setup Logging ---
 # Only configure basicConfig if a handler has not already been added
@@ -132,6 +135,7 @@ def ensure_user_token_json(new_user: bool = False):
     Ensures user_token.json is present and valid, performing OAuth flow if necessary.
     This function will be interactive via a browser.
     :param new_user: If True, force a new OAuth flow by deleting any existing user_token.json.
+    :return: The loaded/created credentials object on success, None on failure.
     """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -176,7 +180,7 @@ def ensure_user_token_json(new_user: bool = False):
                 logger.error(f"Error: Client credentials file '{CLIENT_SECRETS_FILE}' not found.")
                 logger.error("Cannot initiate user authorization flow without client credentials.")
                 logger.error(f"Please ensure '{CLIENT_SECRETS_FILE}' is present (run 'gwsa setup' first if needed).")
-                return False
+                return None
 
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -186,7 +190,7 @@ def ensure_user_token_json(new_user: bool = False):
                 logger.info("New user authorization completed via browser.")
             except Exception as e:
                 logger.error(f"Failed to complete new user authorization flow: {e}")
-                return False
+                return None
 
         # Save token with type field for ADC compatibility
         token_data = json.loads(creds.to_json())
@@ -197,7 +201,7 @@ def ensure_user_token_json(new_user: bool = False):
     else:
         logger.info("User credentials are valid.")
 
-    return True
+    return creds
 
 
 def create_token_for_scopes(client_creds_path: str, output_path: str, scopes: list[str]) -> bool:
@@ -286,7 +290,7 @@ def print_status_table(title: str, status_ok: bool, data: Dict, status_only: boo
         status_symbol = "✗"  # X for missing/error
 
     click.echo(f"\n{status_symbol} {title} [{action_indicator}]")
-    click.echo("=" * 80)
+    click.echo("=" * 50)
 
     for key, value in data.items():
         if key == "status":
@@ -301,123 +305,404 @@ def print_status_table(title: str, status_ok: bool, data: Dict, status_only: boo
     click.echo("=" * 80)
 
 
-def run_setup(new_user: bool = False, client_creds: str = None, status_only: bool = False):
+def _atomic_client_creds_setup(client_creds_path_str: str, force_new_user: bool) -> bool:
+    """
+    Handles the --client-creds setup atomically.
+    """
+    import tempfile
+    import shutil
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    provided_creds_path = Path(client_creds_path_str)
+    if not provided_creds_path.exists():
+        logger.error(f"Error: Client secrets file not found: {client_creds_path_str}")
+        return False
+
+    temp_dir = Path(tempfile.mkdtemp(dir=_CONFIG_DIR))
+    temp_client_secrets = temp_dir / "client_secrets.json"
+    temp_user_token = temp_dir / "user_token.json"
+
+    try:
+        shutil.copy(provided_creds_path, temp_client_secrets)
+        logger.info(f"Staged new client secrets to temporary file: {temp_client_secrets}")
+
+        logger.info("Initiating new user authorization flow via browser...")
+        flow = InstalledAppFlow.from_client_secrets_file(str(temp_client_secrets), SCOPES)
+        creds = flow.run_local_server(port=0)
+        logger.info("New user authorization completed successfully.")
+
+        token_data = json.loads(creds.to_json())
+        token_data["type"] = "authorized_user"
+        with open(temp_user_token, "w") as token_file:
+            json.dump(token_data, token_file, indent=2)
+        logger.info(f"Staged new user token to temporary file: {temp_user_token}")
+
+        # --- Atomic Commit ---
+        logger.info("Committing new credentials...")
+        shutil.move(str(temp_client_secrets), CLIENT_SECRETS_FILE)
+        shutil.move(str(temp_user_token), USER_TOKEN_FILE)
+        logger.info("Successfully replaced old credentials with new ones.")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to complete OAuth flow: {e}")
+        logger.error("Your old credentials (if any) have been left untouched.")
+        return False
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+            logger.debug(f"Cleaned up temporary directory: {temp_dir}")
+
+def _get_status_report(deep_check: bool = False) -> Dict:
+    """
+    Gathers all status information and returns it as a dictionary.
+    This function contains the core logic and is designed to be tested.
+    """
+    config_file = get_config_file_path()
+    if not config_file.exists():
+        return {"status": "NOT_CONFIGURED"}
+
+    auth_mode = get_config_value("auth.mode")
+    if not auth_mode:
+        return {"status": "NOT_CONFIGURED"}
+
+    report = {"status": "CONFIGURED", "mode": auth_mode}
+
+    try:
+        creds, source = get_active_credentials()
+        report["source"] = source
+        report["creds_valid"] = creds.valid
+        report["creds_expired"] = creds.expired
+        report["creds_refreshable"] = hasattr(creds, 'refresh_token') and creds.refresh_token is not None
+
+        try:
+            granted_scopes = set(get_token_scopes(creds))
+            report["scope_validation_error"] = None
+            report["feature_status"] = get_feature_status(granted_scopes)
+        except Exception as e:
+            report["scope_validation_error"] = str(e)
+            report["feature_status"] = {}
+
+        if deep_check:
+            apis_to_test = [f for f, supported in report.get("feature_status", {}).items() if supported]
+            if apis_to_test:
+                try:
+                    report["api_results"] = test_apis(creds, only=apis_to_test)
+                    report["api_error"] = None
+                except Exception as e:
+                    report["api_results"] = {}
+                    report["api_error"] = str(e)
+            else:
+                report["api_results"] = {}
+                report["api_error"] = None
+
+    except Exception as e:
+        report["status"] = "ERROR"
+        report["error_details"] = str(e)
+
+    return report
+
+def _display_status_report(report: Dict, is_ready: bool):
+    """
+    Takes a status report dictionary and prints it to the console with rich formatting.
+    """
+    import click
+
+    click.secho("\nGoogle Workspace Access (gwsa)", fg="blue")
+    click.secho("------------------------------", fg="blue")
+
+    if report["status"] == "NOT_CONFIGURED":
+        click.secho("\nConfiguration Status:", fg="yellow", nl=False)
+        click.echo(" NOT CONFIGURED")
+        click.echo("\n---")
+        click.secho("\n⚙️ Action Required", fg="magenta", bold=True)
+        click.echo("The `gwsa` tool is not ready. Configure credentials using one of the following methods:")
+        click.echo("\n* Option 1: Use Google Cloud ADC (Recommended)")
+        click.echo("    1. Authenticate with `gcloud`:")
+        click.echo("       $ gcloud auth application-default login")
+        click.echo("    2. Configure gwsa:")
+        click.echo("       $ gwsa setup --use-adc")
+        click.echo("\n* Option 2: Use OAuth Client Secrets File")
+        click.echo("    1. Configure gwsa directly:")
+        click.echo("       $ gwsa setup --client-creds /path/to/your/client_secrets.json")
+        click.echo("\n---")
+        click.secho("\nRESULT: NOT READY", fg="red", bold=True)
+        return
+
+    click.secho("\nConfiguration Status:", fg="yellow", nl=False)
+    click.echo(f" CONFIGURED (Mode: {report.get('mode', 'unknown')})")
+
+    if report["status"] == "ERROR":
+        click.echo("\n---")
+        click.secho("\n❌ ERROR: Credentials Not Found or Invalid", fg="red", bold=True)
+        click.echo(f"The tool is configured for '{report.get('mode')}' mode, but failed to load credentials.")
+        click.echo(f"Error details: {report.get('error_details')}")
+        click.echo("\n---")
+        click.secho("\n⚙️ Action Required", fg="magenta", bold=True)
+        if report.get('mode') == 'adc':
+            click.echo("Your Application Default Credentials (ADC) may be missing, expired, or lack required scopes.")
+            click.echo("Try re-authenticating with gcloud:")
+            click.echo("   $ gcloud auth application-default login")
+            click.echo("Then, re-run setup to validate and cache the new scopes:")
+            click.echo("   $ gwsa setup --use-adc")
+        elif report.get('mode') == 'token':
+            click.echo("Your user_token.json file may be missing, corrupted, or expired.")
+            click.echo("Try re-authorizing the application:")
+            click.echo("   $ gwsa setup --client-creds /path/to/your/client_secrets.json --new-user")
+        click.echo("\n---")
+        click.secho("\nRESULT: NOT READY", fg="red", bold=True)
+        return
+
+    # --- Detailed Report for Configured State ---
+    click.echo("\n---")
+    click.echo(f"Credential source: {report.get('source')}")
+    
+    click.echo("\nCredential Status:")
+    if report.get('creds_valid'):
+        click.secho("  ✓ Valid", fg="green")
+    else:
+        click.secho("  ✗ Invalid", fg="red")
+    click.echo(f"  - Expired: {report.get('creds_expired')}")
+    if report.get('creds_refreshable'):
+        click.echo("  - Refreshable: Yes")
+    else:
+        click.echo("  - Refreshable: No")
+
+    click.echo("\nFeature Support (based on scopes):")
+    if report.get("scope_validation_error"):
+        click.secho(f"  ✗ Could not validate scopes: {report.get('scope_validation_error')}", fg="red")
+    else:
+        for feature, supported in report.get("feature_status", {}).items():
+            if supported:
+                click.secho(f"  ✓ {feature.capitalize()}", fg="green")
+            else:
+                click.secho(f"  ✗ {feature.capitalize()}", fg="red")
+
+    if report.get("api_results"):
+        click.echo("\nLive API Access (Deep Check):")
+        for api_name, result in report["api_results"].items():
+            if result["success"]:
+                status_msg = "OK"
+                if "label_count" in result:
+                    status_msg = f'OK ({result["label_count"]} labels)'
+                click.secho(f"  ✓ {api_name:10} {status_msg}", fg="green")
+            else:
+                click.secho(f"  ✗ {api_name:10} FAILED", fg="red")
+
+    click.echo("\n---")
+    
+    if is_ready:
+        click.secho("\nRESULT: READY", fg="green", bold=True)
+    else:
+        click.secho("\nRESULT: NOT READY", fg="red", bold=True)
+
+
+def _get_detailed_status_data(creds, source: str, deep_check: bool = False) -> Dict:
+    """
+    Gathers detailed status information for a given credential and returns it as a dictionary.
+    """
+    report = {
+        "source": source,
+        "creds_valid": creds.valid,
+        "creds_expired": creds.expired,
+        "creds_refreshable": hasattr(creds, 'refresh_token') and creds.refresh_token is not None,
+        "scope_validation_error": None,
+        "feature_status": {},
+        "api_results": {},
+        "api_error": None,
+    }
+
+    try:
+        granted_scopes = set(get_token_scopes(creds))
+        report["feature_status"] = get_feature_status(granted_scopes)
+    except Exception as e:
+        report["scope_validation_error"] = str(e)
+
+    if deep_check:
+        apis_to_test = [f for f, supported in report.get("feature_status", {}).items() if supported]
+        if apis_to_test:
+            try:
+                report["api_results"] = test_apis(creds, only=apis_to_test)
+            except Exception as e:
+                report["api_error"] = str(e)
+
+    return report
+
+def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = False, adc_login: bool = False, status_only: bool = False):
     """
     Setup or check status - single unified path with conditional actions and reporting.
-
-    Stage 1: Evaluate what needs to be done (same logic for all paths)
-    Stage 2: Execute if not status_only, else report what would happen
-
-    :param new_user: Force new OAuth flow
-    :param client_creds: Path to client_secrets.json to copy
-    :param status_only: If True, skip write operations and report what would happen
     """
     import click
     import shutil
+    import subprocess
+    import google.auth.exceptions
+    from .auth.check_access import FEATURE_SCOPES
 
-    if not status_only:
-        logger.info("Starting local setup script...")
+    if not (new_user or client_creds or use_adc or adc_login):
+        status_only = True
 
-    # Ensure config directory exists (always, needed for both paths)
     gwa_dir = Path(_CONFIG_DIR)
     gwa_dir.mkdir(parents=True, exist_ok=True)
 
-    # ===== STAGE 1: EVALUATE WHAT NEEDS TO BE DONE (same for all paths) =====
+    if status_only:
+        report = _get_status_report(deep_check=False)
+        is_ready = report["status"] in ["READY", "CONFIGURED"] and report.get("creds_valid", False)
+        _display_status_report(report, is_ready=is_ready)
+        return is_ready
 
-    # Plan for client secrets
-    client_action_needed = False
-    client_secrets_existed = os.path.exists(CLIENT_SECRETS_FILE)
-    files_are_identical = False
+    # --- Active Setup Logic ---
+    if adc_login:
+        click.echo("\n" + "=" * 50)
+        click.echo("Initiating ADC Login and Configuration")
+        click.echo("=" * 50)
+        
+        all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+        all_scopes.add("https://www.googleapis.com/auth/cloud-platform")
+        scopes_str = ",".join(sorted(list(all_scopes)))
+        gcloud_command = ["gcloud", "auth", "application-default", "login", f"--scopes={scopes_str}"]
+        
+        click.echo("Executing gcloud command to grant credentials...")
+        
+        try:
+            # We capture output to check for the quota project warning
+            result = subprocess.run(gcloud_command, check=True, capture_output=True, text=True)
+            
+            if "Cannot find a quota project" in result.stderr:
+                click.secho("\nℹ️ NOTICE: Quota Project Required", fg="cyan", bold=True)
+                click.echo("\nGoogle has authenticated you, but you must set a 'quota project' for billing and usage tracking.")
+                click.echo("Please run the following command, replacing YOUR_PROJECT_ID with your Google Cloud project ID:")
+                click.secho("\n  gcloud auth application-default set-quota-project YOUR_PROJECT_ID\n", fg="yellow")
+                click.echo("After running the command above, re-run setup to finalize configuration:")
+                click.secho("\n  gwsa setup --use-adc\n", fg="cyan")
+                return False # Stop here and let the user fix their gcloud config
 
-    if client_creds:
-        if os.path.exists(client_creds):
-            # Check if files are identical (avoid redundant copy)
-            if client_secrets_existed:
-                source_hash = hash_file(Path(client_creds))
-                dest_hash = hash_file(Path(CLIENT_SECRETS_FILE))
-                files_are_identical = source_hash == dest_hash
+            click.echo("\ngcloud login successful. Now verifying and configuring gwsa...")
+            use_adc = True 
 
-            client_action_needed = not files_are_identical
-        else:
-            logger.error(f"Error: Client secrets file not found: {client_creds}")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            click.secho("\n❌ ERROR: gcloud command failed.", fg="red", bold=True)
+            click.echo("Please ensure `gcloud` is installed and in your PATH, then try again.")
+            stderr = getattr(e, 'stderr', '')
+            if stderr:
+                click.echo(f"\nDetails:\n{stderr}")
             return False
 
-    # Plan for user token
-    user_action_needed = False
-    user_token_existed = os.path.exists(USER_TOKEN_FILE)
+    if use_adc:
+        click.echo("\n" + "=" * 50)
+        click.echo("Configuring for Application Default Credentials (ADC)")
+        click.echo("=" * 50)
+        try:
+            creds, source = get_active_credentials(use_adc=True)
+            click.echo(f"  ✓ ADC credentials loaded from: {source}")
+            
+            report = _get_detailed_status_data(creds, source, deep_check=False)
+            
+            is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error")
+            if "feature_status" in report and report["feature_status"]:
+                is_ready = is_ready and all(report["feature_status"].values())
 
-    if new_user or not user_token_existed:
-        user_action_needed = True
-
-    # ===== STAGE 2: EXECUTE IF NOT STATUS_ONLY =====
-
-    client_action_performed = False
-    user_action_performed = False
-
-    if not status_only:
-        # Execute client secrets copy if needed
-        if client_creds and client_action_needed:
-            shutil.copy(client_creds, CLIENT_SECRETS_FILE)
-            logger.info(f"Client secrets copied from {client_creds} to {CLIENT_SECRETS_FILE}")
-            client_action_performed = True
-
-        # Execute user token setup if needed
-        if user_action_needed:
-            if not ensure_user_token_json(new_user=new_user):
+            if is_ready:
+                set_config_value("auth.mode", "adc")
+                granted_scopes = set(get_token_scopes(creds))
+                set_config_value("auth.validated_scopes", list(granted_scopes))
+                set_config_value("auth.last_scope_check", datetime.now().isoformat())
+                logger.info("ADC configured and validated scopes cached.")
+                _display_status_report(report, is_ready=True)
+                return True
+            else:
+                _display_status_report(report, is_ready=False)
+                click.echo("\n---")
+                click.secho("\n❌ ERROR: ADC validation failed.", fg="red", bold=True)
+                click.echo("Your ADC credentials are not valid or are missing required scopes.")
+                click.secho("\n⚙️ Action Required", fg="magenta", bold=True)
+                click.echo("To grant full functionality, run the following command:")
+                
+                all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+                scopes_str = ",".join(sorted(list(all_scopes)))
+                gcloud_command = f"gcloud auth application-default login --scopes={scopes_str}"
+                
+                click.secho(f"\n   {gcloud_command}\n", fg="cyan")
+                click.echo("Then, re-run this setup command:")
+                click.secho("\n   gwsa setup --use-adc\n", fg="cyan")
                 return False
-            user_action_performed = True
 
-    # ===== STAGE 3: DETERMINE STATUS INDICATORS =====
+        except google.auth.exceptions.DefaultCredentialsError as e:
+            click.secho(f"\n❌ ERROR: {e}", fg="red", bold=True)
+            click.secho("\n⚙️ Action Required", fg="magenta", bold=True)
+            click.echo("Application Default Credentials are not set up on this machine.")
+            click.echo("To grant full functionality, run the following command:")
+            
+            all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+            all_scopes.add("https://www.googleapis.com/auth/cloud-platform")
+            scopes_str = ",".join(sorted(list(all_scopes)))
+            gcloud_command = f"gcloud auth application-default login --scopes={scopes_str}"
+            
+            click.secho(f"\n   {gcloud_command}\n", fg="cyan")
+            click.echo("Then, re-run this setup command:")
+            click.secho("\n   gwsa setup --use-adc\n", fg="cyan")
+            return False
+        except Exception as e:
+            click.echo(f"✗ Failed to configure ADC: {e}")
+            return False
 
-    # After execution (or evaluation), determine what status to report
-    # In status_only mode, action_needed becomes the indicator
-    # In setup mode, action_performed becomes the indicator
+    elif client_creds:
+        click.echo("\n" + "=" * 50)
+        click.echo("Configuring for OAuth Token (user_token.json)")
+        click.echo("=" * 50)
+        
+        if not _atomic_client_creds_setup(client_creds, True): # client-creds always implies new user
+             click.echo("✗ User authentication failed. Configuration not saved.")
+             return False
 
-    if status_only:
-        client_action_performed = client_action_needed
-        user_action_performed = user_action_needed
+        # Post-setup validation and configuration save
+        creds, source = get_active_credentials()
+        details_report = _get_detailed_status_data(creds, source, deep_check=False)
+        report = {"status": "CONFIGURED", "mode": "token"}
+        report.update(details_report)
+        is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
+        
+        set_config_value("auth.mode", "token")
+        granted_scopes = set(get_token_scopes(creds))
+        set_config_value("auth.validated_scopes", list(granted_scopes))
+        set_config_value("auth.last_scope_check", datetime.now().isoformat())
+        logger.info("Token auth configured and validated scopes cached.")
+        
+        _display_status_report(report, is_ready=is_ready)
+        return is_ready
+    
+    elif new_user:
+        click.echo("\n" + "=" * 50)
+        click.echo("Re-authenticating user for existing configuration")
+        click.echo("=" * 50)
+        if not os.path.exists(CLIENT_SECRETS_FILE):
+            click.secho("\n❌ ERROR: client_secrets.json not found.", fg="red", bold=True)
+            click.echo("Cannot re-authenticate without the client secrets file.")
+            click.echo("Please run setup with the --client-creds flag first:")
+            click.secho("\n  gwsa setup --client-creds /path/to/client_secrets.json\n", fg="cyan")
+            return False
 
-    # Display configuration status (same output for both paths)
-    click.echo("\n" + "=" * 80)
-    click.echo("gworkspace-access (gwsa) Configuration Status")
-    click.echo("=" * 80)
+        if not _atomic_client_creds_setup(CLIENT_SECRETS_FILE, True): # new-user always implies new user
+             click.echo("✗ User authentication failed. Configuration not saved.")
+             return False
 
-    click.echo("\nCONFIGURATION PATH SEARCH")
-    click.echo("=" * 80)
-    status_indicator = "✓ FOUND" if gwa_dir.exists() else "✗ not found"
-    click.echo(f"  {status_indicator:<10} {gwa_dir}")
-    click.echo("=" * 80)
+        # Post-setup validation and configuration save
+        creds, source = get_active_credentials()
+        details_report = _get_detailed_status_data(creds, source, deep_check=False)
+        report = {"status": "CONFIGURED", "mode": "token"}
+        report.update(details_report)
+        is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
 
-    # Check client and user credentials (same checks for both paths)
-    client_ok, client_data = check_client_config(status_only=status_only)
-    print_status_table("CLIENT APPLICATION CONFIGURATION", client_ok, client_data, status_only=status_only, action_performed=client_action_performed)
+        set_config_value("auth.mode", "token")
+        granted_scopes = set(get_token_scopes(creds))
+        set_config_value("auth.validated_scopes", list(granted_scopes))
+        set_config_value("auth.last_scope_check", datetime.now().isoformat())
+        logger.info("Token auth configured and validated scopes cached.")
 
-    user_ok, user_data = check_user_credentials(status_only=status_only)
-    print_status_table("USER AUTHENTICATION", user_ok, user_data, status_only=status_only, action_performed=user_action_performed)
+        _display_status_report(report, is_ready=is_ready)
+        return is_ready
 
-    # Overall status (same output for both paths)
-    click.echo("\n" + "=" * 80)
-    if client_ok and user_ok:
-        click.echo("✓ gwsa is fully configured and ready to use")
-        return True
-    elif client_ok and not user_ok:
-        click.echo("⚠ Client app configured but user authentication missing")
-        click.echo("  Run: gwsa setup")
+    else: # Fallback if no specific config action taken
+        click.secho("No configuration action specified. Use --use-adc, --adc-login, or --client-creds.", fg="yellow")
         return False
-    elif not client_ok and user_ok:
-        click.echo("⚠ User authenticated but client app configuration missing")
-        click.echo("  This is unusual - check your gworkspace-access installation")
-        return False
-    else:
-        click.echo("✗ gwsa is not properly configured")
-        if not gwa_dir.exists():
-            click.echo("  gworkspace-access not found - install it from:")
-            click.echo("  https://github.com/krisrowe/gworkspace-access")
-        else:
-            click.echo("  Run: gwsa setup")
-        return False
 
-if __name__ == "__main__":
-    import sys
-    if not run_setup():
-        sys.exit(1)
