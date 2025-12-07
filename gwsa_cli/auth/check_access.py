@@ -243,8 +243,9 @@ def test_drive_access(creds) -> dict:
 
 
 # Map of supported API names to test functions
+# Keys match FEATURE_SCOPES for consistency when testing by feature name
 SUPPORTED_APIS = {
-    "gmail": test_gmail_access,
+    "mail": test_gmail_access,
     "docs": test_docs_access,
     "sheets": test_sheets_access,
     "drive": test_drive_access,

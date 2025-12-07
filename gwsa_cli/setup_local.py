@@ -7,7 +7,7 @@ from typing import Tuple, Dict, Optional
 from datetime import datetime
 
 # Import mail related constants from the mail package's __init__.py
-from .mail import USER_TOKEN_FILE, SCOPES
+from .mail import USER_TOKEN_FILE
 from .auth.check_access import get_active_credentials, REQUIRED_SCOPES, get_token_scopes, get_feature_status, test_apis
 from .config import get_config_value, set_config_value, get_config_file_path
 
@@ -134,12 +134,20 @@ def ensure_user_token_json(new_user: bool = False):
     """
     Ensures user_token.json is present and valid, performing OAuth flow if necessary.
     This function will be interactive via a browser.
+
+    When performing a new OAuth flow, requests all feature scopes (mail, sheets, docs, drive)
+    so the resulting token can be used for all gwsa features.
+
     :param new_user: If True, force a new OAuth flow by deleting any existing user_token.json.
     :return: The loaded/created credentials object on success, None on failure.
     """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
+    from .auth.check_access import FEATURE_SCOPES
+
+    # Collect all scopes from all features for a complete token
+    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set})
 
     # Ensure config directory exists
     os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -155,7 +163,7 @@ def ensure_user_token_json(new_user: bool = False):
     if os.path.exists(USER_TOKEN_FILE):
         logger.debug(f"Found {USER_TOKEN_FILE}. Attempting to load user credentials.")
         try:
-            creds = Credentials.from_authorized_user_file(USER_TOKEN_FILE, SCOPES)
+            creds = Credentials.from_authorized_user_file(USER_TOKEN_FILE, all_scopes)
             logger.debug("User credentials loaded.")
         except Exception as e:
             logger.warning(f"Failed to load user credentials from {USER_TOKEN_FILE}: {e}")
@@ -184,7 +192,7 @@ def ensure_user_token_json(new_user: bool = False):
 
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    CLIENT_SECRETS_FILE, SCOPES
+                    CLIENT_SECRETS_FILE, all_scopes
                 )
                 creds = flow.run_local_server(port=0) # Port 0 for dynamic port
                 logger.info("New user authorization completed via browser.")
@@ -308,10 +316,14 @@ def print_status_table(title: str, status_ok: bool, data: Dict, status_only: boo
 def _atomic_client_creds_setup(client_creds_path_str: str, force_new_user: bool) -> bool:
     """
     Handles the --client-creds setup atomically.
+
+    Requests all feature scopes (mail, sheets, docs, drive) during the OAuth flow
+    so the resulting token can be used for all gwsa features.
     """
     import tempfile
     import shutil
     from google_auth_oauthlib.flow import InstalledAppFlow
+    from .auth.check_access import FEATURE_SCOPES
 
     provided_creds_path = Path(client_creds_path_str)
     if not provided_creds_path.exists():
@@ -322,12 +334,15 @@ def _atomic_client_creds_setup(client_creds_path_str: str, force_new_user: bool)
     temp_client_secrets = temp_dir / "client_secrets.json"
     temp_user_token = temp_dir / "user_token.json"
 
+    # Collect all scopes from all features for a complete token
+    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set})
+
     try:
         shutil.copy(provided_creds_path, temp_client_secrets)
         logger.info(f"Staged new client secrets to temporary file: {temp_client_secrets}")
 
         logger.info("Initiating new user authorization flow via browser...")
-        flow = InstalledAppFlow.from_client_secrets_file(str(temp_client_secrets), SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(str(temp_client_secrets), all_scopes)
         creds = flow.run_local_server(port=0)
         logger.info("New user authorization completed successfully.")
 
