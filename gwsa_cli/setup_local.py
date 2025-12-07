@@ -595,9 +595,11 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
         try:
             creds, source = get_active_credentials(use_adc=True)
             click.echo(f"  ✓ ADC credentials loaded from: {source}")
-            
+
             report = _get_detailed_status_data(creds, source, deep_check=False)
-            
+            report["status"] = "CONFIGURED"
+            report["mode"] = "adc"
+
             is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error")
             if "feature_status" in report and report["feature_status"]:
                 is_ready = is_ready and all(report["feature_status"].values())
