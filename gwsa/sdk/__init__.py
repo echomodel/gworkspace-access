@@ -21,5 +21,6 @@ from . import config
 from . import profiles
 from . import auth
 from . import mail
+from . import docs
 
-__all__ = ["config", "profiles", "auth", "mail"]
+__all__ = ["config", "profiles", "auth", "mail", "docs"]

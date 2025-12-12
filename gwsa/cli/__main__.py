@@ -14,6 +14,7 @@ from gwsa.sdk.auth import get_credentials
 
 from . import setup_local
 from .sheets_commands import sheets as sheets_module
+from .docs_commands import docs as docs_module
 from .config_commands import config_group as config_module
 from .profiles_commands import profiles as profiles_module
 from .auth import check_access as check_access_module
@@ -218,6 +219,7 @@ gwsa.add_command(profiles_module, name='profiles')
 gwsa.add_command(access)
 gwsa.add_command(mail)
 gwsa.add_command(sheets_module, name='sheets')
+gwsa.add_command(docs_module, name='docs')
 
 access.add_command(create_token, name='token')
 access.add_command(check_access, name='check')

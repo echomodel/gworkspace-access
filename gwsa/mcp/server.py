@@ -13,7 +13,7 @@ from typing import Optional, List
 
 from mcp.server.fastmcp import FastMCP
 
-from gwsa.sdk import profiles, mail, auth
+from gwsa.sdk import profiles, mail, docs, auth
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,165 @@ async def list_email_labels() -> str:
         return json.dumps(simplified, indent=2)
     except Exception as e:
         logger.error(f"Error listing labels: {e}")
+        return json.dumps({"error": str(e)})
+
+
+# =============================================================================
+# Docs Tools
+# =============================================================================
+
+@mcp.tool()
+async def list_docs(max_results: int = 25, query: Optional[str] = None) -> str:
+    """
+    List Google Docs accessible to the current user.
+
+    Args:
+        max_results: Maximum number of documents to return (default 25)
+        query: Optional search query to filter documents by title or content
+
+    Returns:
+        JSON with list of documents including id, title, url, and timestamps
+    """
+    try:
+        result = docs.list_documents(max_results=max_results, query=query)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error listing docs: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def create_doc(title: str, body_text: Optional[str] = None) -> str:
+    """
+    Create a new Google Doc.
+
+    Args:
+        title: Title for the new document
+        body_text: Optional initial body text to insert
+
+    Returns:
+        JSON with document id, title, and url
+    """
+    try:
+        result = docs.create_document(title=title, body_text=body_text)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error creating doc: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def read_doc(doc_id: str, format: str = "content") -> str:
+    """
+    Read a Google Doc by ID.
+
+    Args:
+        doc_id: The Google Doc ID
+        format: "content" for metadata + text, "text" for plain text only,
+                "raw" for full API response
+
+    Returns:
+        Document content in requested format
+    """
+    try:
+        if format == "text":
+            text = docs.get_document_text(doc_id)
+            return json.dumps({"text": text}, indent=2)
+        elif format == "raw":
+            doc = docs.get_document(doc_id)
+            return json.dumps(doc, indent=2)
+        else:
+            content = docs.get_document_content(doc_id)
+            return json.dumps(content, indent=2)
+    except Exception as e:
+        logger.error(f"Error reading doc: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def append_to_doc(doc_id: str, text: str) -> str:
+    """
+    Append text to the end of a Google Doc.
+
+    Args:
+        doc_id: The Google Doc ID
+        text: Text to append
+
+    Returns:
+        Success status and document revision info
+    """
+    try:
+        result = docs.append_text(doc_id, text)
+        return json.dumps({
+            "success": True,
+            "document_id": doc_id,
+            "write_control": result.get("writeControl", {})
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"Error appending to doc: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> str:
+    """
+    Insert text at a specific position in a Google Doc.
+
+    Args:
+        doc_id: The Google Doc ID
+        text: Text to insert
+        index: Position to insert at (1 = beginning of document)
+
+    Returns:
+        Success status and document revision info
+    """
+    try:
+        result = docs.insert_text(doc_id, text, index=index)
+        return json.dumps({
+            "success": True,
+            "document_id": doc_id,
+            "inserted_at_index": index,
+            "write_control": result.get("writeControl", {})
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"Error inserting in doc: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def replace_in_doc(
+    doc_id: str,
+    find_text: str,
+    replace_with: str,
+    match_case: bool = True
+) -> str:
+    """
+    Replace all occurrences of text in a Google Doc.
+
+    Args:
+        doc_id: The Google Doc ID
+        find_text: Text to find
+        replace_with: Text to replace with
+        match_case: Whether to match case (default True)
+
+    Returns:
+        Number of occurrences replaced
+    """
+    try:
+        result = docs.replace_text(doc_id, find_text, replace_with, match_case=match_case)
+        replies = result.get("replies", [])
+        occurrences = 0
+        if replies:
+            occurrences = replies[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
+        return json.dumps({
+            "success": True,
+            "document_id": doc_id,
+            "occurrences_replaced": occurrences,
+            "find_text": find_text,
+            "replace_with": replace_with
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"Error replacing in doc: {e}")
         return json.dumps({"error": str(e)})
 
 
