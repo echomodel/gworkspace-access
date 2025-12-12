@@ -1,39 +1,24 @@
 """
 Integration tests for 'gwsa mail label' command and message modifications.
 
-Tests label application, removal using the label mechanism.
-Configuration uses tests/config.yaml for label name and search criteria.
-
-Note: All tests use the label defined in tests/config.yaml. Setup and teardown
-fixtures ensure the test label is removed from all test emails before and after
-test execution.
+Tests label application and removal using profile-based configuration
+from tests/test-config.yaml.
 """
 
 import pytest
-import sys
-import os
-
-# Add parent directory to path to import conftest
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from conftest import TEST_CONFIG
 
 
 @pytest.fixture(scope="module", autouse=True)
-def cleanup_test_labels(cli_runner, today_minus_60_days):
+def cleanup_test_labels(cli_runner, search_query, today_minus_n_days, test_label):
     """
     Setup: Remove test label from all matching emails before tests run.
     Teardown: Remove test label from all matching emails after tests complete.
 
     This ensures a clean test environment and leaves the mailbox in a clean state.
-    Uses configuration from tests/config.yaml for label name and search criteria.
     """
-    # Get configuration values
-    base_query = TEST_CONFIG.get('search', {}).get('query', '')
-    test_label = TEST_CONFIG.get('label', {}).get('test_label', 'Test')
-
     # Pre-test cleanup: Remove test label from target emails
-    search_query = f'{base_query} after:{today_minus_60_days} label:{test_label}'
-    search_result = cli_runner(["mail", "search", search_query])
+    full_query = f'{search_query} after:{today_minus_n_days} label:{test_label}'
+    search_result = cli_runner(["mail", "search", full_query])
 
     if search_result["returncode"] == 0 and search_result["json"]:
         for msg in search_result["json"]:
@@ -43,7 +28,7 @@ def cleanup_test_labels(cli_runner, today_minus_60_days):
     yield
 
     # Post-test cleanup: Remove test label from all target emails
-    search_result = cli_runner(["mail", "search", search_query])
+    search_result = cli_runner(["mail", "search", full_query])
 
     if search_result["returncode"] == 0 and search_result["json"]:
         for msg in search_result["json"]:
@@ -51,7 +36,7 @@ def cleanup_test_labels(cli_runner, today_minus_60_days):
 
 
 @pytest.mark.integration
-def test_mail_label_apply(cli_runner, today_minus_60_days, test_email_id):
+def test_mail_label_apply(cli_runner, search_query, today_minus_n_days, test_email_id, test_label):
     """
     Test applying a label to an email message.
 
@@ -67,17 +52,11 @@ def test_mail_label_apply(cli_runner, today_minus_60_days, test_email_id):
     3. Apply test label to the email
     4. Read email details again to verify label IS present
     """
-    # Get configuration values
-    base_query = TEST_CONFIG.get('search', {}).get('query', '')
-    test_label = TEST_CONFIG.get('label', {}).get('test_label', 'Test')
-
-    # Use target email from test_email_id fixture
     message_id = test_email_id
 
     # Step 1: Search for the email without the test label
-    # (ensures it exists and doesn't already have the label)
-    search_query = f'{base_query} after:{today_minus_60_days} -label:{test_label}'
-    search_result = cli_runner(["mail", "search", search_query])
+    full_query = f'{search_query} after:{today_minus_n_days} -label:{test_label}'
+    search_result = cli_runner(["mail", "search", full_query])
 
     assert search_result["returncode"] == 0, f"Search failed: {search_result['stderr']}"
     assert search_result["json"] is not None, "Invalid JSON response"
@@ -122,12 +101,12 @@ def test_mail_label_apply(cli_runner, today_minus_60_days, test_email_id):
     # Verify other fields unchanged
     assert message_before["id"] == message_after["id"], "Message ID changed"
     assert message_before["subject"] == message_after["subject"], "Subject changed"
-    assert message_before["sender"] == message_after["sender"], "Sender changed"
+    assert message_before["from"] == message_after["from"], "From changed"
     assert message_before["date"] == message_after["date"], "Date changed"
 
 
 @pytest.mark.integration
-def test_mail_label_remove(cli_runner, today_minus_60_days, test_email_id):
+def test_mail_label_remove(cli_runner, search_query, today_minus_n_days, test_email_id, test_label):
     """
     Test removing a label from an email message.
 
@@ -146,17 +125,11 @@ def test_mail_label_remove(cli_runner, today_minus_60_days, test_email_id):
     3. Remove test label from the email
     4. Read email details again to verify label is NOT present
     """
-    # Get configuration values
-    base_query = TEST_CONFIG.get('search', {}).get('query', '')
-    test_label = TEST_CONFIG.get('label', {}).get('test_label', 'Test')
-
-    # Use target email from test_email_id fixture
     message_id = test_email_id
 
     # Step 1: Search for the email WITH the test label
-    # (ensures the label from previous test still exists)
-    search_query = f'{base_query} after:{today_minus_60_days} label:{test_label}'
-    search_result = cli_runner(["mail", "search", search_query])
+    full_query = f'{search_query} after:{today_minus_n_days} label:{test_label}'
+    search_result = cli_runner(["mail", "search", full_query])
 
     assert search_result["returncode"] == 0, f"Search failed: {search_result['stderr']}"
     assert search_result["json"] is not None, "Invalid JSON response"
@@ -199,5 +172,5 @@ def test_mail_label_remove(cli_runner, today_minus_60_days, test_email_id):
     # Verify other fields unchanged
     assert message_before["id"] == message_after["id"], "Message ID changed"
     assert message_before["subject"] == message_after["subject"], "Subject changed"
-    assert message_before["sender"] == message_after["sender"], "Sender changed"
+    assert message_before["from"] == message_after["from"], "From changed"
     assert message_before["date"] == message_after["date"], "Date changed"

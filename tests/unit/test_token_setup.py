@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch
 from google_auth_oauthlib.flow import InstalledAppFlow
-from gwsa_cli.setup_local import _atomic_client_creds_setup
+from gwsa.cli.setup_local import _atomic_client_creds_setup
 
 
 @pytest.fixture
@@ -48,9 +48,9 @@ def isolated_config_dir(tmp_path: Path, monkeypatch) -> Path:
     config_dir.mkdir()
 
     # Redirect all file operations to our temp directory
-    monkeypatch.setattr("gwsa_cli.setup_local._CONFIG_DIR", str(config_dir))
-    monkeypatch.setattr("gwsa_cli.setup_local.CLIENT_SECRETS_FILE", str(config_dir / "client_secrets.json"))
-    monkeypatch.setattr("gwsa_cli.setup_local.USER_TOKEN_FILE", str(config_dir / "user_token.json"))
+    monkeypatch.setattr("gwsa.cli.setup_local._CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr("gwsa.cli.setup_local.CLIENT_SECRETS_FILE", str(config_dir / "client_secrets.json"))
+    monkeypatch.setattr("gwsa.cli.setup_local.USER_TOKEN_FILE", str(config_dir / "user_token.json"))
 
     return config_dir
 

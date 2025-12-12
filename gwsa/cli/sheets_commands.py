@@ -2,8 +2,8 @@ import click
 from googleapiclient.discovery import build
 import os
 import json
-from gwsa_cli.auth.check_access import get_active_credentials
-from gwsa_cli.decorators import require_scopes
+from gwsa.sdk.auth import get_credentials as get_active_credentials
+from .decorators import require_scopes
 
 @click.group()
 def sheets():

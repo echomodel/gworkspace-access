@@ -1,4 +1,4 @@
-"""GWSA CLI - Gmail Workspace Assistant command-line interface."""
+"""GWSA CLI - Command-line interface for Google Workspace Access."""
 
 import logging
 import os
@@ -8,11 +8,11 @@ from functools import wraps
 from dotenv import load_dotenv
 import click
 
+from gwsa import __version__
+from gwsa.sdk import mail as sdk_mail
+from gwsa.sdk.auth import get_credentials
+
 from . import setup_local
-from . import __version__
-from .mail import search as search_module
-from .mail import read as read_module
-from .mail import label as label_module
 from .sheets_commands import sheets as sheets_module
 from .config_commands import config_group as config_module
 from .profiles_commands import profiles as profiles_module
@@ -114,15 +114,12 @@ def check_access(token_file, application_default):
     This command runs a full diagnostic, including live API calls.
     """
     try:
-        creds, source = check_access_module.get_active_credentials(
-            token_file=token_file,
-            use_adc=application_default,
-            config_token_path=setup_local.USER_TOKEN_FILE
-        )
+        # Use SDK get_credentials (aliased as get_active_credentials in check_access_module)
+        creds, source = get_credentials(use_adc=application_default)
         # Get detailed status with deep check (live API calls)
         report = setup_local._get_detailed_status_data(creds, source, deep_check=True)
         report["status"] = "CONFIGURED"
-        report["mode"] = "token" if token_file or not application_default else "adc"
+        report["mode"] = "adc" if application_default else "token"
 
         # Determine if ready based on credentials being valid/refreshable
         is_ready = report.get("creds_valid", False) or report.get("creds_refreshable", False)
@@ -158,16 +155,13 @@ def search(query, page_token, max_results, format):
     """Search for emails. Output is in JSON format."""
     try:
         logger.debug(f"Executing mail search with query: '{query}'")
-        messages, metadata = search_module.search_messages(query, page_token=page_token, max_results=max_results, format=format)
+        messages, metadata = sdk_mail.search_messages(
+            query, page_token=page_token, max_results=max_results, format=format
+        )
         logger.info(f"Found {len(messages)} messages (estimated total: {metadata['resultSizeEstimate']})")
         if metadata.get('nextPageToken'):
             logger.info(f"More pages available. Use --page-token {metadata['nextPageToken']} to fetch next page")
         click.echo(json.dumps(messages, indent=2))
-    except FileNotFoundError as e:
-        logger.error(f"Error: {e}")
-        logger.error(f"This usually means client credentials ('{setup_local.CLIENT_SECRETS_FILE}') are missing.")
-        logger.error("Please run 'gwsa setup' to ensure all credentials are in place.")
-        sys.exit(1)
     except Exception as e:
         logger.critical(f"An error occurred during mail search: {e}", exc_info=True)
         sys.exit(1)
@@ -180,14 +174,9 @@ def search(query, page_token, max_results, format):
 def read_command(message_id):
     """Read a specific email by ID."""
     try:
-        logger.info(f"Executing mail read for message ID: '{message_id}'")
-        message_details = read_module.read_message(message_id)
+        logger.debug(f"Executing mail read for message ID: '{message_id}'")
+        message_details = sdk_mail.read_message(message_id)
         click.echo(json.dumps(message_details, indent=2))
-    except FileNotFoundError as e:
-        logger.error(f"Error: {e}")
-        logger.error(f"This usually means client credentials ('{setup_local.CLIENT_SECRETS_FILE}') are missing.")
-        logger.error("Please run 'gwsa setup' to ensure all credentials are in place.")
-        sys.exit(1)
     except Exception as e:
         logger.critical(f"An error occurred during mail read for ID {message_id}: {e}", exc_info=True)
         sys.exit(1)
@@ -204,19 +193,12 @@ def label_command(message_id, label_name, remove):
     """Add or remove labels from an email."""
     try:
         action = "removing" if remove else "adding"
-        logger.info(f"{action.capitalize()} label '{label_name}' for message ID: '{message_id}'")
-        updated_message = label_module.modify_message_labels(message_id, label_name, add=not remove)
-        if updated_message:
-            click.echo(json.dumps(updated_message, indent=2))
+        logger.debug(f"{action.capitalize()} label '{label_name}' for message ID: '{message_id}'")
+        if remove:
+            updated_message = sdk_mail.remove_label(message_id, label_name)
         else:
-            logger.info(f"Label '{label_name}' was already in the desired state for message ID '{message_id}'.")
-            message_details = read_module.read_message(message_id)
-            click.echo(json.dumps(message_details, indent=2))
-    except FileNotFoundError as e:
-        logger.error(f"Error: {e}")
-        logger.error(f"This usually means client credentials ('{setup_local.CLIENT_SECRETS_FILE}') are missing.")
-        logger.error("Please run 'gwsa setup' to ensure all credentials are in place.")
-        sys.exit(1)
+            updated_message = sdk_mail.add_label(message_id, label_name)
+        click.echo(json.dumps(updated_message, indent=2))
     except Exception as e:
         logger.critical(f"An error occurred during mail label for ID {message_id}: {e}", exc_info=True)
         sys.exit(1)

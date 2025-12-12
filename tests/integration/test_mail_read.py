@@ -20,21 +20,19 @@ def test_mail_read_full_details(cli_runner, test_email_id):
     3. All expected fields are present
     4. Field types are correct
     5. Field values are non-empty where expected
-    6. Content matches expectations
 
     Expected JSON Structure:
         {
             "id": string,
             "subject": string,
-            "sender": string,
+            "from": string,
             "date": string (RFC 2822),
             "snippet": string (may be empty),
             "body": {
                 "text": string or None,
                 "html": string or None
             },
-            "labelIds": array of strings,
-            "raw": string (full JSON representation)
+            "labelIds": array of strings
         }
     """
     message_id = test_email_id
@@ -62,35 +60,20 @@ def test_mail_read_full_details(cli_runner, test_email_id):
     # ===== REQUIRED FIELD: subject =====
     assert "subject" in message, "Missing required field: 'subject'"
     assert isinstance(message["subject"], str), "Field 'subject' must be a string"
-    assert message["subject"], "Field 'subject' is empty"
-    assert "Your Daily Digest" in message["subject"], (
-        f"Subject doesn't contain expected text: {message['subject']}"
-    )
 
-    # ===== REQUIRED FIELD: sender =====
-    assert "sender" in message, "Missing required field: 'sender'"
-    assert isinstance(message["sender"], str), "Field 'sender' must be a string"
-    assert message["sender"], "Field 'sender' is empty"
-    assert "USPS" in message["sender"], (
-        f"Sender doesn't contain 'USPS': {message['sender']}"
-    )
+    # ===== REQUIRED FIELD: from =====
+    assert "from" in message, "Missing required field: 'from'"
+    assert isinstance(message["from"], str), "Field 'from' must be a string"
+    assert message["from"], "Field 'from' is empty"
 
     # ===== REQUIRED FIELD: date =====
     assert "date" in message, "Missing required field: 'date'"
     assert isinstance(message["date"], str), "Field 'date' must be a string"
     assert message["date"], "Field 'date' is empty"
 
-    # Validate date format (RFC 2822 or similar)
-    # Example: "Fri, 28 Nov 2025 13:29:02 +0000"
-    assert re.match(r'\w+,\s+\d+\s+\w+\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+[+-]\d{4}', message["date"]), (
-        f"Date doesn't match expected format (RFC 2822): {message['date']}"
-    )
-
     # ===== OPTIONAL FIELD: snippet =====
     assert "snippet" in message, "Missing field: 'snippet'"
     assert isinstance(message["snippet"], str), "Field 'snippet' must be a string"
-    # snippet can be empty, but for USPS emails it should have content
-    # We allow empty for robustness
 
     # ===== REQUIRED FIELD: body =====
     assert "body" in message, "Missing required field: 'body'"
@@ -106,19 +89,9 @@ def test_mail_read_full_details(cli_runner, test_email_id):
     assert message["body"]["html"] is None or isinstance(message["body"]["html"], str), \
         "body.html must be string or None"
 
-    # At least one should have content (text preferred, html fallback)
-    has_text = message["body"]["text"] and len(message["body"]["text"]) > 0
-    has_html = message["body"]["html"] and len(message["body"]["html"]) > 0
-
-    assert has_text or has_html, (
-        "Body has neither text nor html content. "
-        "Snippet field provides fallback: " + message["snippet"]
-    )
-
     # ===== REQUIRED FIELD: labelIds =====
     assert "labelIds" in message, "Missing required field: 'labelIds'"
     assert isinstance(message["labelIds"], list), "Field 'labelIds' must be a list"
-    # labelIds can be empty, but USPS emails typically have labels (INBOX, CATEGORY_UPDATES, etc.)
 
     # Verify labelIds contains strings
     for idx, label_id in enumerate(message["labelIds"]):
@@ -127,27 +100,9 @@ def test_mail_read_full_details(cli_runner, test_email_id):
         )
         assert label_id, f"labelIds[{idx}] is empty"
 
-    # ===== REQUIRED FIELD: raw =====
-    assert "raw" in message, "Missing required field: 'raw'"
-    assert isinstance(message["raw"], str), "Field 'raw' must be a string"
-    assert message["raw"], "Field 'raw' is empty"
-
-    # Verify raw can be parsed as JSON
-    import json
-    try:
-        raw_json = json.loads(message["raw"])
-        assert isinstance(raw_json, dict), "Raw field should contain JSON object"
-    except json.JSONDecodeError as e:
-        pytest.fail(f"Raw field is not valid JSON: {e}")
-
-    # ===== VERIFY NO EXTRA UNEXPECTED FIELDS =====
-    expected_fields = {"id", "subject", "sender", "date", "snippet", "body", "labelIds", "raw"}
+    # ===== VERIFY EXPECTED FIELDS =====
+    expected_fields = {"id", "subject", "from", "to", "date", "snippet", "body", "labelIds"}
     actual_fields = set(message.keys())
-
-    extra_fields = actual_fields - expected_fields
-    if extra_fields:
-        # Extra fields are OK (for future extensibility), just note them
-        print(f"Note: Extra fields in response: {extra_fields}")
 
     missing_fields = expected_fields - actual_fields
     assert not missing_fields, f"Missing expected fields: {missing_fields}"

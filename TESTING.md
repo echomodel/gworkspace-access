@@ -41,33 +41,88 @@ Install with: `pip install -e ".[dev]"`
 │       └── test_mail_read.py          # Message reading tests
 ```
 
-## Test Configuration: conftest.py
+## Test Configuration
+
+### Profile-Based Test Settings: test-config.yaml
+
+The `tests/test-config.yaml` file maps gwsa profile names to test-specific settings. This allows different email accounts to use different search queries for finding test emails.
+
+**File Location**: `tests/test-config.yaml`
+
+**Structure**:
+```yaml
+profiles:
+  # Profile name must match a gwsa profile name
+  default:
+    search_query: 'subject:"Your Daily Digest" from:"USPS Informed Delivery"'
+    test_label: "Test"
+    min_results: 2
+    days_range: 60
+
+  adc:
+    search_query: 'subject:"Daily Newsletter"'
+    test_label: "Test"
+    min_results: 3
+    days_range: 7
+```
+
+**Settings**:
+- `search_query`: Gmail search query for finding routine, low-risk test emails
+- `test_label`: Label name used for add/remove tests (default: "Test")
+- `min_results`: Minimum emails expected from search (default: 2)
+- `days_range`: Number of days back to search (default: 60)
+
+**How It Works**:
+1. `conftest.py` reads the active gwsa profile via `gwsa profiles list`
+2. Looks up test settings for that profile in `test-config.yaml`
+3. If found, integration tests run with those settings
+4. If not found, tests requiring specific emails are skipped with helpful instructions
+
+**Adding a New Profile**:
+Add a section under `profiles:` with your gwsa profile name as the key:
+```yaml
+profiles:
+  my_profile:
+    search_query: 'from:newsletters@example.com'
+    test_label: "Test"
+    min_results: 2
+    days_range: 30
+```
+
+### conftest.py
 
 The `tests/conftest.py` file serves as the pytest configuration and setup/teardown for all integration tests.
 
 ### Responsibilities:
 
-1. **CLI Installation Verification**
+1. **Profile Status Validation**
+   - Checks that gwsa has a valid, configured profile
+   - Verifies credentials are valid and not expired
+   - Exits with clear error message if profile not ready
+
+2. **Test Config Loading**
+   - Loads `tests/test-config.yaml`
+   - Looks up settings for the active gwsa profile
+   - Skips tests gracefully if profile not in config
+
+3. **CLI Installation Verification**
    - Validates that `gwsa` is installed and available
-   - Executes `python -m gwsa_cli --help` to verify the current codebase is being tested (not outdated installed version)
+   - Executes `python -m gwsa.cli --help` to verify the current codebase is being tested
    - Exits with code 1 if the tool is not properly installed
-   - Ensures tests operate on the latest code, not a previously installed/cached version
 
-2. **Session-Level Fixtures**
+4. **Session-Level Fixtures**
    - `cli_runner`: Fixture that invokes CLI commands via subprocess
-   - `test_email_id`: Shared fixture containing the message ID of a pre-identified test email from the USPS emails matching the search criteria (populated by `test_mail_search.py`)
-   - `today_minus_60_days`: Fixture that calculates the date string in the format `YYYY-MM-DD` for 60 days ago
-
-3. **Test Data Constants**
-   - Search query criteria for test emails
-   - Expected label names
-   - Message field validators
+   - `search_query`: Search query from test config for active profile
+   - `test_label`: Label name from test config
+   - `test_email_id`: Message ID of a test email (found via search_query)
+   - `today_minus_n_days`: Date string based on profile's days_range
 
 ### Implementation Notes:
 
-- The conftest uses subprocess to invoke the CLI (via `python -m gwsa_cli`) rather than importing the module directly, ensuring the test environment mimics real user usage
+- The conftest uses subprocess to invoke the CLI (via `python -m gwsa.cli`) rather than importing the module directly, ensuring the test environment mimics real user usage
 - All CLI commands output JSON, which is parsed using Python's `json` module for assertions
-- If `gwsa setup` has not been run, tests will gracefully fail with a clear message about missing credentials
+- If `gwsa setup` has not been run, tests will fail with a clear message about missing credentials
+- If the active profile is not in test-config.yaml, email-related tests are skipped with instructions
 
 ---
 

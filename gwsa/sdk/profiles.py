@@ -16,7 +16,7 @@ import hashlib
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from .config import get_config_value, set_config_value, get_config_file_path
 
@@ -41,7 +41,7 @@ def get_profiles_dir() -> Path:
 def is_valid_profile_name(name: str) -> bool:
     """Check if a profile name is valid."""
     if name == ADC_PROFILE_NAME:
-        return True  # Reserved name, always valid for lookups
+        return True
     return bool(PROFILE_NAME_PATTERN.match(name))
 
 
@@ -60,7 +60,7 @@ def get_profile_metadata_path(name: str) -> Path:
     return get_profile_dir(name) / "profile.yaml"
 
 
-def list_profiles() -> list[dict]:
+def list_profiles() -> List[Dict[str, Any]]:
     """
     List all available profiles with their metadata.
 
@@ -110,9 +110,26 @@ def get_active_profile_name() -> Optional[str]:
     """
     Get the name of the currently active profile.
 
-    Returns None if no profile is configured (legacy single-token mode).
+    Returns None if no profile is configured.
     """
     return get_config_value("active_profile")
+
+
+def get_active_profile() -> Optional[Dict[str, Any]]:
+    """
+    Get the currently active profile with its metadata.
+
+    Returns None if no profile is configured.
+    """
+    active_name = get_active_profile_name()
+    if not active_name:
+        return None
+
+    for profile in list_profiles():
+        if profile["name"] == active_name:
+            return profile
+
+    return None
 
 
 def set_active_profile(name: str) -> bool:
@@ -139,7 +156,7 @@ def set_active_profile(name: str) -> bool:
 def profile_exists(name: str) -> bool:
     """Check if a token-based profile exists."""
     if name == ADC_PROFILE_NAME:
-        return True  # ADC always "exists"
+        return True
 
     profile_dir = get_profile_dir(name)
     token_path = get_profile_token_path(name)
@@ -171,7 +188,7 @@ def load_profile_metadata(name: str) -> dict:
 def save_profile_metadata(name: str, metadata: dict):
     """Save profile metadata to profile.yaml."""
     if name == ADC_PROFILE_NAME:
-        return  # ADC has no stored metadata
+        return
 
     metadata_path = get_profile_metadata_path(name)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,14 +222,11 @@ def create_profile(name: str, token_data: dict, email: Optional[str] = None,
     profile_dir = get_profile_dir(name)
     token_path = get_profile_token_path(name)
 
-    # Create profile directory
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save token
     with open(token_path, 'w') as f:
         json.dump(token_data, f, indent=2)
 
-    # Save metadata
     metadata = {
         "created": datetime.now().isoformat(),
     }
@@ -249,7 +263,6 @@ def delete_profile(name: str) -> bool:
     shutil.rmtree(profile_dir)
     logger.info(f"Deleted profile '{name}'")
 
-    # If this was the active profile, clear active_profile
     if get_active_profile_name() == name:
         set_config_value("active_profile", None)
 
@@ -267,7 +280,6 @@ def update_profile_metadata(name: str, email: Optional[str] = None,
         scopes: Validated scopes to cache
     """
     if name == ADC_PROFILE_NAME:
-        # For ADC, use specialized ADC metadata storage
         update_adc_cached_metadata(email=email, scopes=scopes)
         return
 
@@ -367,11 +379,11 @@ def check_adc_changed() -> bool:
     cached_hash = cached.get("adc_file_hash")
 
     if cached_hash is None:
-        return True  # No cache, consider it "changed"
+        return True
 
     current_hash = _compute_adc_file_hash()
     if current_hash is None:
-        return True  # ADC file missing
+        return True
 
     return cached_hash != current_hash
 
