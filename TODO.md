@@ -99,3 +99,43 @@ Investigate the best practices for structuring and registering tools with the `F
 
 **Reasoning:**
 As the number of tools for different Google Workspace services (Mail, Docs, Sheets, Calendar, etc.) grows, the single `server.py` file will become increasingly large and difficult to manage. A modular structure would improve code readability, maintainability, and scalability.
+
+---
+
+### Add User Identity Metadata to MCP Tool Outputs
+
+**Description:**
+To improve transparency and user trust, MCP tool operations should return the active user profile (e.g., email address) as part of their standard response. This allows the LLM/agent to confirm which identity is performing an action without requiring a separate tool call.
+
+**Implementation:**
+
+1.  **Identify Cached Profile Info:** The active user's profile information is available locally via the `gwsa.sdk.profiles.get_active_profile()` function. This function reads from a local cache and should not introduce network latency.
+
+2.  **Create a Helper Function:** In `gwsa/mcp/server.py`, create a helper function that retrieves the active profile and formats a standard metadata object.
+    ```python
+    def _get_profile_metadata():
+        profile = profiles.get_active_profile()
+        if not profile:
+            return {"active_profile": "unknown"}
+        return {
+            "active_profile": {
+                "name": profile.get("name"),
+                "email": profile.get("email"),
+                "is_adc": profile.get("is_adc", False)
+            }
+        }
+    ```
+
+3.  **Update Tool Responses:** For each relevant tool (e.g., `search_emails`, `read_doc`, `list_docs`), modify the JSON response to include this metadata.
+    ```python
+    # Example for search_emails
+    result = {
+        "messages": messages,
+        # ... other data ...
+    }
+    result.update(_get_profile_metadata()) # Add the metadata
+    return json.dumps(result, indent=2)
+    ```
+
+**Reasoning:**
+Returning the active user as metadata in every response is a lightweight way to provide crucial context to the LLM agent. The agent can then decide whether to surface this information to the user (e.g., "Searching for emails in your `work@company.com` account..."), improving the conversational experience and preventing actions from being performed with the wrong identity.
