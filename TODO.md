@@ -205,3 +205,95 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
 
 **Reasoning:**
 A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.
+
+---
+
+### Refactor MCP Tools to Return Objects Instead of JSON Strings
+
+**Description:**
+The current MCP server tools manually serialize responses using `json.dumps(..., indent=2)` and return strings. This causes formatting issues in Claude (visible `\n` characters, escaped quotes) because the JSON is double-encoded. FastMCP supports returning objects directly, which it serializes properly into `structuredContent`.
+
+**Current Pattern (problematic):**
+```python
+@mcp.tool()
+async def search_emails(...) -> str:
+    messages, metadata = mail.search_messages(...)
+    return json.dumps({
+        "messages": messages,
+        "resultSizeEstimate": metadata.get("resultSizeEstimate", 0),
+        "nextPageToken": metadata.get("nextPageToken")
+    }, indent=2)  # ❌ Creates literal \n in output
+```
+
+**Recommended Pattern (per FastMCP examples):**
+```python
+@mcp.tool()
+async def search_emails(...) -> dict:
+    messages, metadata = mail.search_messages(...)
+    return {
+        "messages": messages,
+        "resultSizeEstimate": metadata.get("resultSizeEstimate", 0),
+        "nextPageToken": metadata.get("nextPageToken")
+    }  # ✅ FastMCP handles serialization
+```
+
+**Optional Enhancement - Pydantic Models:**
+```python
+from pydantic import BaseModel, Field
+
+class EmailSearchResult(BaseModel):
+    messages: list[dict]
+    resultSizeEstimate: int = Field(description="Estimated total results")
+    nextPageToken: str | None = Field(description="Token for next page")
+
+@mcp.tool()
+async def search_emails(...) -> EmailSearchResult:
+    messages, metadata = mail.search_messages(...)
+    return EmailSearchResult(
+        messages=messages,
+        resultSizeEstimate=metadata.get("resultSizeEstimate", 0),
+        nextPageToken=metadata.get("nextPageToken")
+    )
+```
+
+**Benefits of Pydantic Models:**
+- Automatic `outputSchema` generation for tool discovery
+- Type validation at runtime
+- Better documentation for LLM clients
+- IDE autocomplete and type checking
+
+**Files to Update:**
+- `gwsa/mcp/server.py` - All tool functions currently using `json.dumps()`
+
+**Tools Affected:**
+1. `list_profiles` - returns profile list
+2. `get_active_profile` - returns profile info
+3. `switch_profile` - returns success/error
+4. `search_emails` - returns messages + pagination
+5. `read_email` - returns message content
+6. `add_email_label` / `remove_email_label` - returns label status
+7. `list_email_labels` - returns label list
+8. `list_docs` - returns document list
+9. `create_doc` - returns doc info
+10. `read_doc` - returns doc content
+11. `append_to_doc` / `insert_in_doc` - returns write status
+12. `replace_in_doc` - returns replacement count
+
+**Error Handling Consideration:**
+For error responses, return a dict with `error` key:
+```python
+except HttpError as e:
+    if e.resp.status == 403:
+        return {
+            "error": "The caller does not have permission.",
+            "details": str(e),
+            "hint": "Try switching profiles..."
+        }
+```
+
+**Reference:**
+- Official FastMCP examples: `github.com/modelcontextprotocol/python-sdk/examples/fastmcp/weather_structured.py`
+- MCP specification: `modelcontextprotocol.io/specification/2025-06-18/server/tools`
+
+**Reasoning:**
+The current approach of returning JSON strings causes poor formatting in Claude's UI. By returning objects directly, FastMCP properly separates `content` (text representation) from `structuredContent` (parsed data). This improves the user experience when viewing tool results and aligns with MCP best practices.
