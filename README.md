@@ -32,10 +32,27 @@ Before you begin, ensure you have the following installed and configured:
 ## Quick Start (Single Command)
 
 ```bash
-pip install git+https://github.com/krisrowe/gworkspace-access.git && gwsa setup
+pipx install git+https://github.com/krisrowe/gworkspace-access.git && gwsa setup
 ```
 
 That's it! The `gwsa setup` command will guide you through the rest.
+
+> **Note:** If you don't have `pipx`, you can use `pip install` instead, though `pipx` is recommended for CLI tools as it creates isolated environments.
+
+### Upgrading
+
+To upgrade to the latest version:
+
+```bash
+pipx upgrade gwsa
+```
+
+Or with pip:
+```bash
+pip install --upgrade git+https://github.com/krisrowe/gworkspace-access.git
+```
+
+> **Important:** Without `--upgrade`, pip will skip installation if any version is already installed, even if a newer version is available.
 
 ---
 
@@ -246,6 +263,19 @@ Different Google account types have varying compatibility with authentication me
 | Gmail + APP | OAuth Token created *before* enabling APP |
 
 For information about API quotas, billing, and the "No project ID" warning, see **[QUOTAS.md](QUOTAS.md)**.
+
+---
+
+## MCP Server for AI Assistants
+
+The `gwsa` package includes an MCP (Model Context Protocol) server that exposes Google Workspace operations to AI assistants like Claude and Gemini.
+
+```bash
+# The MCP server is included with gwsa - no separate install needed
+gwsa-mcp  # Starts the MCP server (typically called by your AI assistant)
+```
+
+For configuration instructions, see **[MCP-SERVER.md](MCP-SERVER.md)**.
 
 ---
 
