@@ -18,9 +18,6 @@ setup(
         'click_option_group',
         'mcp>=1.0.0',
     ],
-    extras_require={
-        'mcp': ['mcp>=1.0.0'],
-    },
     entry_points={
         'console_scripts': [
             'gwsa=gwsa.cli.__main__:main',

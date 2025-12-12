@@ -37,6 +37,10 @@ pipx install git+https://github.com/krisrowe/gworkspace-access.git && gwsa setup
 
 That's it! The `gwsa setup` command will guide you through the rest.
 
+This installs two commands:
+- **`gwsa`** - The CLI tool for direct command-line use
+- **`gwsa-mcp`** - The MCP server for AI assistant integration (see [MCP Server](#mcp-server-for-ai-assistants))
+
 > **Note:** If you don't have `pipx`, you can use `pip install` instead, though `pipx` is recommended for CLI tools as it creates isolated environments.
 
 ### Upgrading
