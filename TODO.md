@@ -1,7 +1,7 @@
 ### Enhance 403 Error Message in MCP Server for Google Docs
 
 **Description:**
-When the `gwsa-mcp` server's `read_doc` tool encounters an `HttpError` with a 403 status code (Permission Denied) from the Google Docs API, the error message returned to the MCP client should be more informative. It should explicitly suggest that the user check their `gwsa` profile for correct permissions.
+When the `gwsa-mcp` server's `read_doc` tool encounters an `HttpError` with a 403 status code (PermissionDenied) from the Google Docs API, the error message returned to the MCP client should be more informative. It should explicitly suggest that the user check their `gwsa` profile for correct permissions.
 
 **Location:**
 `gwsa/mcp/server.py`, within the `read_doc` async function.
@@ -139,3 +139,18 @@ To improve transparency and user trust, MCP tool operations should return the ac
 
 **Reasoning:**
 Returning the active user as metadata in every response is a lightweight way to provide crucial context to the LLM agent. The agent can then decide whether to surface this information to the user (e.g., "Searching for emails in your `work@company.com` account..."), improving the conversational experience and preventing actions from being performed with the wrong identity.
+
+---
+
+### Validate MCP Server Prerequisites in Documentation
+
+**Description:**
+Ensure that the `MCP-SERVER.md` documentation clearly specifies the prerequisite of having `gworkspace-access` / `gwsa` installed and fully configured on the machine *before* attempting to use the `gwsa-mcp` server. This is crucial to prevent users from encountering errors due to an uninitialized environment.
+
+**Action:**
+- Review the "Quick Start" and "Prerequisites" sections of `MCP-SERVER.md`.
+- Explicitly add a note or a step indicating that `gwsa setup` must be successfully run to establish an active and validated profile before using `gwsa-mcp`.
+- If a relevant section already exists, ensure its wording is unambiguous.
+
+**Reasoning:**
+While `gwsa-mcp` is an entry point of the `gwsa` package, its functionality depends entirely on the underlying `gwsa` configuration (active profile, credentials). Users might install `gwsa-mcp` but forget or be unaware that `gwsa setup` is a necessary first step. Clear documentation of this prerequisite will guide users to a successful setup and prevent frustration.
