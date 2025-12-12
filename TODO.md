@@ -50,3 +50,31 @@ async def read_doc(doc_id: str, format: str = "content") -> str:
 
 **Reasoning:**
 Currently, a 403 error for Google Docs results in a generic "The caller does not have permission" message. This can be unhelpful for users, as the most common cause in an MCP setup is an incorrect or unauthenticated `gwsa` profile. By adding a specific hint to check profiles, the user can more quickly diagnose and resolve the issue.
+
+---
+
+### Validate and Document MCP Server Behavior in Unconfigured States
+
+**Description:**
+The `gwsa-mcp` server relies on a correctly configured `gwsa` CLI environment to function. We need to validate and document the server's behavior and error handling when this underlying configuration is missing or incomplete.
+
+**Scenarios to Validate:**
+
+1.  **`gwsa` CLI Not Installed:**
+    -   **Question:** Is it possible to install `gwsa-mcp` without the `gwsa` package? (Answer: No, it's the same package).
+    -   **Action:** Confirm that since `gwsa-mcp` is an entry point of the `gwsa` package, it cannot be installed without it. This is more of a documentation note than a test case.
+
+2.  **`gwsa` CLI Installed but Not Configured:**
+    -   **Scenario:** A user has successfully run `pipx install -e .` but has **not** run `gwsa setup` to create a profile.
+    -   **Action:**
+        -   Start the `gwsa-mcp` server through an MCP client (e.g., `gemini mcp list`).
+        -   Attempt to use a tool (e.g., `list_profiles`).
+        -   Record the exact error message that is returned.
+        -   **Goal:** The error should be clear and actionable, guiding the user to run `gwsa setup`. If the current error is generic or confusing, create a new task to improve it.
+
+**Documentation Task:**
+-   Update `MCP-SERVER.md` with a "Prerequisites" or "Troubleshooting" section that clearly states the dependency on a configured `gwsa` CLI.
+-   Document the expected error message for an unconfigured state and provide the solution (`gwsa setup`).
+
+**Reasoning:**
+Proactively addressing these edge cases will prevent user confusion and support issues. The MCP server should fail gracefully with clear instructions if its foundational requirements are not met.
