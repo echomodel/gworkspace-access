@@ -84,7 +84,10 @@ def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatc
     
     # Mock the functions that would make network calls
     monkeypatch.setattr("google.auth.default", lambda: (mock_creds, "mock-project"))
-    monkeypatch.setattr("gwsa_cli.setup_local.get_token_scopes", lambda creds: mock_scopes)
+    monkeypatch.setattr("gwsa_cli.setup_local.get_token_info", lambda creds: {
+        "scopes": mock_scopes,
+        "email": "testuser@example.com"
+    })
 
     # Action
     report = _get_status_report()
@@ -93,6 +96,7 @@ def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatc
     assert report["status"] == "CONFIGURED"
     assert report["mode"] == "adc"
     assert report["creds_valid"] is True
+    assert report["user_email"] == "testuser@example.com"
     assert report["feature_status"]["mail"] is False # We only have readonly
     assert report["feature_status"]["sheets"] is True
     assert report["feature_status"]["docs"] is False
@@ -119,7 +123,10 @@ def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypa
     
     # Mock the functions that would make network calls
     monkeypatch.setattr("gwsa_cli.setup_local.get_active_credentials", lambda: (mock_creds, "mock_token_file"))
-    monkeypatch.setattr("gwsa_cli.setup_local.get_token_scopes", lambda creds: mock_scopes)
+    monkeypatch.setattr("gwsa_cli.setup_local.get_token_info", lambda creds: {
+        "scopes": mock_scopes,
+        "email": "tokenuser@example.com"
+    })
 
     # Action
     report = _get_status_report()
@@ -128,6 +135,7 @@ def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypa
     assert report["status"] == "CONFIGURED"
     assert report["mode"] == "token"
     assert report["creds_valid"] is True
+    assert report["user_email"] == "tokenuser@example.com"
     assert "error_details" not in report
     assert report["feature_status"]["mail"] is True
     assert report["feature_status"]["sheets"] is False

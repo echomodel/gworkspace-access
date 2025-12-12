@@ -8,7 +8,7 @@ from datetime import datetime
 
 # Import mail related constants from the mail package's __init__.py
 from .mail import USER_TOKEN_FILE
-from .auth.check_access import get_active_credentials, REQUIRED_SCOPES, get_token_scopes, get_feature_status, test_apis
+from .auth.check_access import get_active_credentials, REQUIRED_SCOPES, get_token_info, get_token_scopes, get_feature_status, test_apis, IDENTITY_SCOPES
 from .config import get_config_value, set_config_value, get_config_file_path
 
 # --- Setup Logging ---
@@ -146,8 +146,8 @@ def ensure_user_token_json(new_user: bool = False):
     from google_auth_oauthlib.flow import InstalledAppFlow
     from .auth.check_access import FEATURE_SCOPES
 
-    # Collect all scopes from all features for a complete token
-    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set})
+    # Collect all scopes from all features plus identity scopes for a complete token
+    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
 
     # Ensure config directory exists
     os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -334,8 +334,8 @@ def _atomic_client_creds_setup(client_creds_path_str: str, force_new_user: bool)
     temp_client_secrets = temp_dir / "client_secrets.json"
     temp_user_token = temp_dir / "user_token.json"
 
-    # Collect all scopes from all features for a complete token
-    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set})
+    # Collect all scopes from all features plus identity scopes for a complete token
+    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
 
     try:
         shutil.copy(provided_creds_path, temp_client_secrets)
@@ -392,7 +392,9 @@ def _get_status_report(deep_check: bool = False) -> Dict:
         report["creds_refreshable"] = hasattr(creds, 'refresh_token') and creds.refresh_token is not None
 
         try:
-            granted_scopes = set(get_token_scopes(creds))
+            token_info = get_token_info(creds)
+            granted_scopes = set(token_info["scopes"])
+            report["user_email"] = token_info.get("email")
             report["scope_validation_error"] = None
             report["feature_status"] = get_feature_status(granted_scopes)
         except Exception as e:
@@ -472,7 +474,9 @@ def _display_status_report(report: Dict, is_ready: bool):
     # --- Detailed Report for Configured State ---
     click.echo("\n---")
     click.echo(f"Credential source: {report.get('source')}")
-    
+    if report.get('user_email'):
+        click.echo(f"Authenticated user: {report.get('user_email')}")
+
     click.echo("\nCredential Status:")
     if report.get('creds_valid'):
         click.secho("  ✓ Valid", fg="green")
@@ -526,10 +530,14 @@ def _get_detailed_status_data(creds, source: str, deep_check: bool = False) -> D
         "feature_status": {},
         "api_results": {},
         "api_error": None,
+        "user_email": None,
     }
 
     try:
-        granted_scopes = set(get_token_scopes(creds))
+        token_info = get_token_info(creds)
+        granted_scopes = set(token_info["scopes"])
+        report["user_email"] = token_info.get("email")
+        report["granted_scopes"] = granted_scopes
         report["feature_status"] = get_feature_status(granted_scopes)
     except Exception as e:
         report["scope_validation_error"] = str(e)
@@ -572,11 +580,11 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
         click.echo("Initiating ADC Login and Configuration")
         click.echo("=" * 50)
         
-        all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+        all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES
         all_scopes.add("https://www.googleapis.com/auth/cloud-platform")
         scopes_str = ",".join(sorted(list(all_scopes)))
         gcloud_command = ["gcloud", "auth", "application-default", "login", f"--scopes={scopes_str}"]
-        
+
         click.echo("Executing gcloud command to grant credentials...")
         
         try:
@@ -621,8 +629,7 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
 
             if is_ready:
                 set_config_value("auth.mode", "adc")
-                granted_scopes = set(get_token_scopes(creds))
-                set_config_value("auth.validated_scopes", list(granted_scopes))
+                set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
                 set_config_value("auth.last_scope_check", datetime.now().isoformat())
                 logger.info("ADC configured and validated scopes cached.")
                 _display_status_report(report, is_ready=True)
@@ -635,10 +642,10 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
                 click.secho("\n⚙️ Action Required", fg="magenta", bold=True)
                 click.echo("To grant full functionality, run the following command:")
                 
-                all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+                all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES
                 scopes_str = ",".join(sorted(list(all_scopes)))
                 gcloud_command = f"gcloud auth application-default login --scopes={scopes_str}"
-                
+
                 click.secho(f"\n   {gcloud_command}\n", fg="cyan")
                 click.echo("Then, re-run this setup command:")
                 click.secho("\n   gwsa setup --use-adc\n", fg="cyan")
@@ -650,11 +657,11 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
             click.echo("Application Default Credentials are not set up on this machine.")
             click.echo("To grant full functionality, run the following command:")
             
-            all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set}
+            all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES
             all_scopes.add("https://www.googleapis.com/auth/cloud-platform")
             scopes_str = ",".join(sorted(list(all_scopes)))
             gcloud_command = f"gcloud auth application-default login --scopes={scopes_str}"
-            
+
             click.secho(f"\n   {gcloud_command}\n", fg="cyan")
             click.echo("Then, re-run this setup command:")
             click.secho("\n   gwsa setup --use-adc\n", fg="cyan")
@@ -681,14 +688,13 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
         report = {"status": "CONFIGURED", "mode": "token"}
         report.update(details_report)
         is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-        granted_scopes = set(get_token_scopes(creds))
-        set_config_value("auth.validated_scopes", list(granted_scopes))
+        set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
         set_config_value("auth.last_scope_check", datetime.now().isoformat())
         logger.info("Token auth configured and validated scopes cached.")
-        
+
         _display_status_report(report, is_ready=is_ready)
         return is_ready
-    
+
     elif new_user:
         click.echo("\n" + "=" * 50)
         click.echo("Re-authenticating user for existing configuration")
@@ -713,8 +719,7 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
         report = {"status": "CONFIGURED", "mode": "token"}
         report.update(details_report)
         is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-        granted_scopes = set(get_token_scopes(creds))
-        set_config_value("auth.validated_scopes", list(granted_scopes))
+        set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
         set_config_value("auth.last_scope_check", datetime.now().isoformat())
         logger.info("Token auth configured and validated scopes cached.")
 

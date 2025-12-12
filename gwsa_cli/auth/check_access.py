@@ -259,6 +259,9 @@ FEATURE_SCOPES = {
     "drive": {"https://www.googleapis.com/auth/drive"},
 }
 
+# Identity scopes - always requested to enable user identification
+IDENTITY_SCOPES = {"https://www.googleapis.com/auth/userinfo.email"}
+
 def get_feature_status(granted_scopes: set[str]) -> dict[str, bool]:
     """
     Determines if each major gwsa feature is supported by the granted scopes.
@@ -307,12 +310,14 @@ def validate_api_names(names: list[str]) -> list[str]:
     return [n for n in names if n.lower() not in SUPPORTED_APIS]
 
 
-def get_token_scopes(creds) -> list[str]:
+def get_token_info(creds) -> dict:
     """
-    Use Google's tokeninfo endpoint to get the scopes for a given credential.
+    Use Google's tokeninfo endpoint to get info about a credential.
 
     Returns:
-        A list of scope strings.
+        A dict with:
+            - scopes: list of scope strings
+            - email: user email associated with the token (may be None)
 
     Raises:
         Exception on network error or if token is invalid.
@@ -329,10 +334,26 @@ def get_token_scopes(creds) -> list[str]:
         raise ValueError("Credentials object has no access token.")
 
     url = f"https://www.googleapis.com/oauth2/v3/tokeninfo?access_token={access_token}"
-    
+
     with urllib.request.urlopen(url) as response:
         if response.status == 200:
             data = json.loads(response.read().decode())
-            return data.get("scope", "").split(" ")
+            return {
+                "scopes": data.get("scope", "").split(" "),
+                "email": data.get("email"),
+            }
         else:
             raise ConnectionError(f"Tokeninfo endpoint failed with status {response.status}: {response.read().decode()}")
+
+
+def get_token_scopes(creds) -> list[str]:
+    """
+    Use Google's tokeninfo endpoint to get the scopes for a given credential.
+
+    Returns:
+        A list of scope strings.
+
+    Raises:
+        Exception on network error or if token is invalid.
+    """
+    return get_token_info(creds)["scopes"]
