@@ -297,3 +297,48 @@ except HttpError as e:
 
 **Reasoning:**
 The current approach of returning JSON strings causes poor formatting in Claude's UI. By returning objects directly, FastMCP properly separates `content` (text representation) from `structuredContent` (parsed data). This improves the user experience when viewing tool results and aligns with MCP best practices.
+
+---
+
+### Investigate MCP Server Status/Metadata Reporting
+
+**Description:**
+Explore whether MCP provides mechanisms for servers to report status, metadata, or context information that clients (Claude, Gemini) display in their UI. This could help users see which gwsa profile is active without calling a tool.
+
+**Current State:**
+- `get_active_profile` tool exists - LLM must explicitly call it
+- FastMCP `name` parameter: `mcp = FastMCP("gwsa")` - sets server name
+
+**MCP Mechanisms to Investigate:**
+
+1. **Server Implementation Info** (initialization handshake):
+   ```python
+   # FastMCP may support setting version/description
+   mcp = FastMCP(
+       name="gwsa",
+       version="0.2.1",
+       description="Google Workspace Access - Gmail, Docs"
+   )
+   ```
+
+2. **Protected Resource Metadata** (2025 spec):
+   - `.well-known` URLs for server discovery
+   - JSON file describing purpose, endpoints, auth methods
+
+3. **Tasks API** (2025-11-25 spec):
+   - New abstraction for tracking work status
+   - Clients can query task status
+
+**Questions to Answer:**
+- Does Claude/Gemini read and display server `name`/`version`/`description`?
+- Can we include dynamic info (like active profile) in server metadata?
+- Is there a "status" or "health" concept in MCP that clients poll?
+
+**Action Items:**
+1. Check FastMCP constructor parameters for metadata options
+2. Test what Claude/Gemini display for server info
+3. If dynamic status isn't supported, document that `get_active_profile` is the pattern
+
+**Reference:**
+- MCP Changelog: https://modelcontextprotocol.io/specification/2025-11-25/changelog
+- Server Implementation interface in MCP spec
