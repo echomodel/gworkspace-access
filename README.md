@@ -87,7 +87,21 @@ Install the `gwsa` tool and its dependencies using `pip`.
 ```bash
 # Recommended for development (your code changes are reflected immediately)
 pip install -e .
+```
 
+> **Troubleshooting `externally-managed-environment` error:**
+> If you encounter this error, it means your system's Python distribution prevents direct package installation. The recommended solution is to use `pipx`, which installs CLI tools in isolated environments.
+>
+> ```bash
+> # First, ensure pipx is installed
+> python3 -m pip install --user pipx
+> python3 -m pipx ensurepath
+>
+> # Then, install the tool in editable mode using pipx
+> pipx install -e .
+> ```
+
+```bash
 # For a regular installation
 # pip install .
 ```
