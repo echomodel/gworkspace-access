@@ -61,6 +61,32 @@ gcloud auth application-default login --scopes=https://www.googleapis.com/auth/g
 gwsa setup --use-adc
 ```
 
+#### Important Note for Corporate & Google Workspace Accounts
+When using Application Default Credentials (ADC) with a corporate or Google Workspace account, Google requires you to specify a **Quota Project**. This project is used for billing and API usage tracking. Without it, API calls will fail.
+
+You must perform two additional steps:
+
+**1. Set the Quota Project:**
+Identify a Google Cloud Project where your user has the `Service Usage Consumer` role (or `Owner`) and set it as the quota project.
+
+```bash
+# Replace 'your-quota-project-id' with a project you own or have access to
+gcloud auth application-default set-quota-project 'your-quota-project-id'
+```
+
+**2. Enable APIs in the Quota Project:**
+The quota project must have the necessary Google Workspace APIs enabled. The tests or commands will fail if the corresponding API is not enabled.
+
+```bash
+# Example for enabling the Gmail API
+gcloud services enable gmail.googleapis.com --project='your-quota-project-id'
+
+# You may also need to enable other APIs depending on your usage
+gcloud services enable drive.googleapis.com --project='your-quota-project-id'
+gcloud services enable sheets.googleapis.com --project='your-quota-project-id'
+gcloud services enable docs.googleapis.com --project='your-quota-project-id'
+```
+
 This sets the `adc` profile as active.
 
 ---
