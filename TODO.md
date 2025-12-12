@@ -154,3 +154,54 @@ Ensure that the `MCP-SERVER.md` documentation clearly specifies the prerequisite
 
 **Reasoning:**
 While `gwsa-mcp` is an entry point of the `gwsa` package, its functionality depends entirely on the underlying `gwsa` configuration (active profile, credentials). Users might install `gwsa-mcp` but forget or be unaware that `gwsa setup` is a necessary first step. Clear documentation of this prerequisite will guide users to a successful setup and prevent frustration.
+
+---
+
+### Review CLI Command Overlap: `gwsa setup` vs `gwsa profiles`
+
+**Description:**
+Audit the overlap and potential redundancy between `gwsa setup` (with its various `--args`) and `gwsa profiles` subcommands. Both command families perform profile-related operations, which may cause user confusion about which command to use for a given task.
+
+**Goals:**
+
+1.  **Map Command Capabilities:** Document what each command/flag does:
+    -   `gwsa setup` (default behavior)
+    -   `gwsa setup --new-user`
+    -   `gwsa setup --switch-user`
+    -   `gwsa profiles list`
+    -   `gwsa profiles switch`
+    -   `gwsa profiles add` (if exists)
+    -   Any other related commands
+
+2.  **Identify Overlap:** Determine where functionality overlaps:
+    -   Do `gwsa setup --switch-user` and `gwsa profiles switch` do the same thing?
+    -   Is there a clear distinction between "setup" (initial config) vs "profiles" (ongoing management)?
+
+3.  **Scenario Coverage Matrix:** Create a matrix of user scenarios and which command addresses each:
+    -   **Post-install, pre-config:** First-time user, no profiles exist
+    -   **Add second profile:** User has one profile, wants to add another
+    -   **Switch between existing profiles:** Quick context switch
+    -   **Re-authenticate expired profile:** Token refresh or re-auth
+    -   **Delete/remove a profile:** Clean up unused profiles
+    -   **List available profiles:** Discover what's configured
+    -   **Check current active profile:** Verify context
+
+4.  **Simplification Recommendations:** Based on findings, recommend:
+    -   Consolidating commands if there's true redundancy
+    -   Clarifying documentation if commands serve distinct purposes
+    -   Adding aliases or deprecation warnings if needed
+
+5.  **Unit Test Review:** Audit and update unit tests for scenario coverage:
+    -   Review existing tests for `gwsa setup` and `gwsa profiles` commands
+    -   Identify gaps: which scenarios from the matrix above lack test coverage?
+    -   **Requires approval before changes:** Propose test additions/modifications and get user sign-off before implementing
+    -   Ensure tests cover both positive paths (success) and negative paths (errors, edge cases):
+        -   No config directory exists
+        -   Config exists but no profiles
+        -   Config exists with corrupted/invalid data
+        -   Profile exists but credentials expired
+        -   Switching to non-existent profile
+        -   Adding profile with duplicate name
+
+**Reasoning:**
+A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.

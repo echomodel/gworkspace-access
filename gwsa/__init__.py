@@ -6,4 +6,4 @@ Namespace package containing:
 - gwsa.mcp: Model Context Protocol server for LLM integration
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

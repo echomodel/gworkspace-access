@@ -12,6 +12,7 @@ import logging
 from typing import Optional, List
 
 from mcp.server.fastmcp import FastMCP
+from googleapiclient.errors import HttpError
 
 from gwsa.sdk import profiles, mail, docs, auth
 
@@ -322,6 +323,17 @@ async def read_doc(doc_id: str, format: str = "content") -> str:
         else:
             content = docs.get_document_content(doc_id)
             return json.dumps(content, indent=2)
+    except HttpError as e:
+        if e.resp.status == 403:
+            logger.error(f"Permission error reading doc: {e}")
+            return json.dumps({
+                "error": "The caller does not have permission.",
+                "details": str(e),
+                "hint": "The active gwsa profile may not have access to this document. "
+                        "Try switching profiles with the `switch_profile` tool or "
+                        "running `gwsa setup --new-user` to re-authenticate."
+            })
+        raise
     except Exception as e:
         logger.error(f"Error reading doc: {e}")
         return json.dumps({"error": str(e)})

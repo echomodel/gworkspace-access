@@ -48,4 +48,47 @@ Tests use configuration from `tests/config.yaml` to be generic and reusable for 
 
 ## Contributing Guidelines
 
+### Version Management
+
+**Single source of truth:** `gwsa/__init__.py` contains `__version__`
+
+**When to bump versions:**
+
+| Change Type | Bump | Example |
+|-------------|------|---------|
+| Bug fix, minor tweak | Patch | 0.2.0 → 0.2.1 |
+| New feature (backwards compatible) | Minor | 0.2.0 → 0.3.0 |
+| Breaking change | Major | 0.2.0 → 1.0.0 |
+
+**Release workflow:**
+
+1. Make changes, commit normally
+2. When ready to release:
+   ```bash
+   # Update version in gwsa/__init__.py
+   # Commit the version bump
+   git add gwsa/__init__.py
+   git commit -m "chore: bump version to X.Y.Z"
+
+   # Tag the release
+   git tag vX.Y.Z
+
+   # Push with tags
+   git push && git push --tags
+   ```
+
+**Why version bumps matter:**
+
+- `pip install --upgrade` only installs if version number is higher
+- Same version number = pip thinks nothing changed, skips update
+- PyPI rejects re-uploads of same version
+- Editable installs (`pip install -e .`) always use live code regardless of version
+
+**For development:** Use editable install to avoid version concerns:
+```bash
+pipx install -e .   # or: pip install -e .
+```
+
+### Code Changes
+
 _Further contributing guidelines can be added here._
