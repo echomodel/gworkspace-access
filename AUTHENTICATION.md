@@ -1,110 +1,141 @@
 # Authentication Guide
 
-This guide covers the authentication flow for `gwsa`, including the different configuration modes, how to test your setup, and advanced utilities.
+This guide covers the authentication flow for `gwsa`, including profiles for multi-identity support, how to test your setup, and advanced utilities.
 
-## How `gwsa` Handles Authentication
+## Overview
 
-`gwsa` can be configured in one of two modes. The chosen mode is stored in the `config.yaml` file (`~/.config/gworkspace-access/config.yaml`) under the `auth.mode` key.
+`gwsa` uses a **profile-based** authentication system that allows you to:
 
-### 1. Token Mode (`auth.mode: token`)
-
-This is the recommended and most robust method. It uses a dedicated `user_token.json` file that is generated specifically for `gwsa` using your own private OAuth Client ID.
-
-- **Pros:** Works with all account types (including personal Gmail with advanced security), gives you full control over the OAuth client, and is self-contained within the `gwsa` configuration directory.
-- **Cons:** Requires you to create an OAuth Client ID in the Google Cloud Console first.
-
-### 2. ADC Mode (`auth.mode: adc`)
-
-This method uses Google's Application Default Credentials (ADC). It's a fast way to get started if you already use the `gcloud` CLI.
-
-- **Pros:** Very simple one-command setup if you already have `gcloud` configured.
-- **Cons:** May be blocked by certain high-security account configurations (like Advanced Protection). It also relies on a global credential that can be affected by other applications.
+- **Switch between Google accounts** instantly without re-authenticating
+- **Isolate credentials** from external changes (like `gcloud` commands)
+- **Maintain multiple identities** for work, personal, and testing purposes
 
 ---
 
-## Initial Setup (`gwsa setup`)
+## Understanding Profiles
 
-The `gwsa setup` command is the primary way to configure authentication for the tool.
+A **profile** represents a single Google account identity. Each profile has:
+- A stored OAuth token (`user_token.json`)
+- Cached metadata (email, validated scopes, timestamps)
 
-### Configuring for Token Mode
+### Profile Types
 
-This is the most common setup flow. You will need a `client_secrets.json` file from your Google Cloud project.
+**Token Profiles** (e.g., `default`, `work`, `personal`)
+- Stored in `~/.config/gworkspace-access/profiles/<name>/`
+- Self-contained and isolated from external credential changes
+- Persist until explicitly deleted
 
-1.  **Run the setup command:**
-    ```bash
-    gwsa setup --client-creds /path/to/your/client_secrets.json
-    ```
-2.  **Authorize in Browser:** Your web browser will open, asking you to grant permission for your application.
-3.  **Completion:** Upon success, the tool will create a `user_token.json` file, set `auth.mode: token` in `config.yaml`, and cache the validated scopes.
+**Built-in ADC Profile** (`adc`)
+- A virtual profile that uses Google's Application Default Credentials
+- Not stored—always reads live ADC credentials from `gcloud`
+- Affected by `gcloud auth application-default login` and environment variables
 
-This process is **atomic**. If the browser authentication is cancelled or fails, your previous configuration (if any) will be left untouched.
+### Why Profiles?
 
-### Configuring for ADC Mode
+**Problem:** Without profiles, running `gcloud auth application-default login` for a different project would silently change which account `gwsa` uses. This is confusing and error-prone.
 
-If you have already logged in with the `gcloud` CLI, you can configure `gwsa` to use those credentials.
+**Solution:** Token profiles store credentials independently. Once you create a profile, it remains stable regardless of what `gcloud` commands you run or what `GOOGLE_APPLICATION_CREDENTIALS` is set to.
 
-1.  **Log in with `gcloud`:** Make sure you request all the necessary scopes.
-    ```bash
-    gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets
-    ```
-2.  **Run the setup command:**
-    ```bash
-    gwsa setup --use-adc
-    ```
-3.  **Completion:** The tool will test the ADC credentials and, on success, set `auth.mode: adc` in `config.yaml` and cache the validated scopes.
+The `adc` profile exists for convenience when you want to use whatever ADC is currently configured, but token profiles are recommended for predictable behavior.
+
+---
+
+## Quick Start
+
+### Option 1: Create a Token Profile (Recommended)
+
+```bash
+# Create the default profile using your OAuth client credentials
+gwsa setup --client-creds /path/to/client_secrets.json
+```
+
+This creates a `default` profile with your Google account's token.
+
+### Option 2: Use ADC Profile
+
+```bash
+# First, authenticate with gcloud (with required scopes)
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email
+
+# Then configure gwsa to use ADC
+gwsa setup --use-adc
+```
+
+This sets the `adc` profile as active.
+
+---
+
+## Managing Profiles
+
+### List All Profiles
+
+```bash
+gwsa profiles list
+```
+
+Example output:
+```
+  adc                (built-in)         Uses Application Default Credentials
+  default (active)   user@gmail.com     4 scopes   validated 2h ago
+  work               user@company.com   4 scopes   validated 1d ago
+```
+
+### Create a New Profile
+
+```bash
+# Create a profile named "work"
+gwsa profiles create work --client-creds /path/to/client_secrets.json
+```
+
+This opens a browser for OAuth consent and creates the profile.
+
+### Switch Active Profile
+
+```bash
+# Switch to the "work" profile
+gwsa profiles use work
+
+# Switch to ADC
+gwsa profiles use adc
+```
+
+After switching, all `gwsa` commands use the new profile's credentials.
+
+### Show Current Profile
+
+```bash
+gwsa profiles current
+```
+
+### Delete a Profile
+
+```bash
+gwsa profiles delete work
+```
 
 ---
 
 ## Checking Your Configuration
 
-`gwsa` provides two commands to check your authentication and authorization status.
+### Quick Status Check
 
-### Quick Status Check (`gwsa setup`)
-
-Running `gwsa setup` with no flags provides a quick, offline status check. It reads your `config.yaml` and validates your credentials and cached scopes without making any live API calls.
-
-**Example Output (Configured but with issues):**
+```bash
+gwsa setup
 ```
-$ gwsa setup
 
+Shows the active profile's credential status without making API calls.
+
+**Example Output:**
+```
 Google Workspace Access (gwsa)
 ------------------------------
 
-Configuration Status: CONFIGURED (Mode: adc)
+Active Profile: default
+Configuration Status: CONFIGURED
 
 ---
-Credential source: Application Default Credentials (from config) (project: my-gcp-project)
-
-Credential Status:
-  ✗ Invalid
-  - Expired: True
-  - Refreshable: Yes
-
-Feature Support (based on scopes):
-  ✓ Mail
-  ✓ Sheets
-  ✓ Docs
-  ✗ Drive
----
-
-RESULT: NOT READY
-```
-
-### Deep Diagnostic Check (`gwsa access check`)
-
-The `gwsa access check` command runs a full diagnostic, including live API calls to each Google service to ensure you have actual access. This is the best way to confirm your permissions are working as expected.
-
-**Example Output (Fully working):**
-```
-$ gwsa access check
-
-Google Workspace Access (gwsa)
-------------------------------
-
-Configuration Status: CONFIGURED (Mode: token)
-
----
-Credential source: Token file: /home/user/.config/gworkspace-access/user_token.json
+Credential source: Token file: ~/.config/gworkspace-access/profiles/default/user_token.json
+Authenticated user: user@gmail.com
 
 Credential Status:
   ✓ Valid
@@ -116,22 +147,91 @@ Feature Support (based on scopes):
   ✓ Sheets
   ✓ Docs
   ✓ Drive
-
-Live API Access (Deep Check):
-  ✓ mail       OK (123 labels)
-  ✓ sheets     OK
-  ✓ docs       OK
-  ✓ drive      OK
 ---
 
 RESULT: READY
 ```
 
+### Deep Diagnostic Check
+
+```bash
+gwsa access check
+```
+
+Runs live API calls to verify actual access to each Google service.
+
+---
+
+## Directory Structure
+
+```
+~/.config/gworkspace-access/
+├── config.yaml              # Root config (active_profile, global settings)
+├── client_secrets.json      # OAuth client credentials (shared)
+└── profiles/
+    ├── default/
+    │   ├── user_token.json  # OAuth token
+    │   └── profile.yaml     # Metadata (email, scopes, timestamps)
+    └── work/
+        ├── user_token.json
+        └── profile.yaml
+```
+
+### Root `config.yaml`
+
+```yaml
+active_profile: default      # Currently active profile
+```
+
+### Profile `profile.yaml`
+
+```yaml
+email: user@gmail.com
+validated_scopes:
+  - https://www.googleapis.com/auth/gmail.modify
+  - https://www.googleapis.com/auth/drive
+  - https://www.googleapis.com/auth/documents
+  - https://www.googleapis.com/auth/spreadsheets
+  - https://www.googleapis.com/auth/userinfo.email
+last_validated: 2025-01-15T10:30:00
+created: 2025-01-10T08:00:00
+```
+
+---
+
+## Migration from Legacy Configuration
+
+If you used `gwsa` before the profile system was introduced, your existing `user_token.json` will be automatically migrated to a `default` profile on first run.
+
+**What happens:**
+1. `user_token.json` is moved to `profiles/default/user_token.json`
+2. Cached scopes from `config.yaml` are moved to `profiles/default/profile.yaml`
+3. `active_profile: default` is set in `config.yaml`
+
+Your credentials continue to work—no re-authentication required.
+
+---
+
+## Scope Aliases
+
+For convenience, `gwsa` supports short aliases for common Google API scopes:
+
+| Alias                 | Full Google API Scope URL                                       |
+|-----------------------|-----------------------------------------------------------------|
+| `mail-read`           | `https://www.googleapis.com/auth/gmail.readonly`                |
+| `mail-modify`, `mail` | `https://www.googleapis.com/auth/gmail.modify`                  |
+| `sheets-read`         | `https://www.googleapis.com/auth/spreadsheets.readonly`         |
+| `sheets`              | `https://www.googleapis.com/auth/spreadsheets`                  |
+| `docs-read`           | `https://www.googleapis.com/auth/documents.readonly`            |
+| `docs`                | `https://www.googleapis.com/auth/documents`                     |
+| `drive-read`          | `https://www.googleapis.com/auth/drive.readonly`                |
+| `drive`               | `https://www.googleapis.com/auth/drive`                         |
+
 ---
 
 ## Advanced: Standalone Token Creation
 
-The `gwsa access token` command is a standalone utility for creating OAuth tokens. **It does not affect `gwsa`'s own configuration.** This is useful for creating tokens for other scripts or applications.
+The `gwsa access token` command creates OAuth tokens without affecting `gwsa`'s configuration. Useful for other scripts:
 
 ```bash
 gwsa access token \
@@ -143,51 +243,26 @@ gwsa access token \
 
 ---
 
-## Scope Aliases
-
-For convenience, `gwsa` supports short aliases for common Google API scopes. You can use these aliases with the `gwsa access token` command and in the `validated_scopes` section of your `config.yaml`.
-
-| Alias                 | Full Google API Scope URL                                       |
-|-----------------------|-----------------------------------------------------------------|
-| `mail-read`           | `https://www.googleapis.com/auth/gmail.readonly`                |
-| `mail-modify`         | `https://www.googleapis.com/auth/gmail.modify`                  |
-| `mail-labels`         | `https://www.googleapis.com/auth/gmail.labels`                  |
-| `mail`                | `https://www.googleapis.com/auth/gmail.modify`                  |
-| `sheets-read`         | `https://www.googleapis.com/auth/spreadsheets.readonly`         |
-| `sheets`              | `https://www.googleapis.com/auth/spreadsheets`                  |
-| `docs-read`           | `https://www.googleapis.com/auth/documents.readonly`            |
-| `docs`                | `https://www.googleapis.com/auth/documents`                     |
-| `drive-read`          | `https://www.googleapis.com/auth/drive.readonly`                |
-| `drive-metadata-read` | `https://www.googleapis.com/auth/drive.metadata.readonly`       |
-| `drive`               | `https://www.googleapis.com/auth/drive`                         |
-
----
-
-## Understanding the Configuration File (`config.yaml`)
-
-The `config.yaml` file stores the authentication mode and caches the scopes that were validated during setup.
-
-- **`auth.mode`**: Can be `token` or `adc`. This tells `gwsa` which credential type to load.
-- **`auth.validated_scopes`**: A list of the Google API scopes that were confirmed to be granted to your credentials the last time you ran `gwsa setup`. 
-- **`auth.last_scope_check`**: A timestamp of when the scopes were last checked.
-
-This caching allows the tool to fail fast if you try to run a command for a feature you haven't granted scopes for, without having to make a network call every time.
-
----
-
 ## Troubleshooting
 
-### "Configuration Status: NOT CONFIGURED"
+### "No active profile configured"
 
-This means `config.yaml` has not been created or is empty. Run one of the `gwsa setup` commands to configure the tool.
+Run `gwsa setup` with either `--client-creds` or `--use-adc` to create and activate a profile.
+
+### "Profile not found: <name>"
+
+The specified profile doesn't exist. Use `gwsa profiles list` to see available profiles.
+
+### ADC profile shows unexpected account
+
+The `adc` profile uses whatever ADC is currently configured. Check with:
+```bash
+gcloud auth application-default print-access-token
+```
+
+If you need a stable identity, create a token profile instead.
 
 ### "ERROR: Credentials Not Found or Invalid"
 
-This means the tool is configured for a specific mode, but the credentials for that mode are broken.
-
-- **If Mode is `adc`**: Your ADC credentials may be expired or missing. Try running `gcloud auth application-default login` again, then re-run `gwsa setup --use-adc`.
-- **If Mode is `token`**: Your `user_token.json` may be missing, corrupted, or its refresh token was revoked. You need to generate a new one by re-running the setup with your `client_secrets.json`:
-  ```bash
-  gwsa setup --client-creds /path/to/your/client_secrets.json
-  ```
-This will trigger a new browser-based authentication and create a fresh, valid token.
+- **For token profiles:** The token may be corrupted or revoked. Delete and recreate the profile.
+- **For ADC:** Run `gcloud auth application-default login` again.

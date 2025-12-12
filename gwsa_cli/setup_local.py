@@ -369,20 +369,103 @@ def _atomic_client_creds_setup(client_creds_path_str: str, force_new_user: bool)
             shutil.rmtree(temp_dir)
             logger.debug(f"Cleaned up temporary directory: {temp_dir}")
 
+def _setup_token_profile(profile_name: str, client_creds_path: str) -> Optional[Tuple[bool, Dict]]:
+    """
+    Set up a token-based profile via OAuth flow.
+
+    Args:
+        profile_name: Name of the profile to create/update
+        client_creds_path: Path to client_secrets.json
+
+    Returns:
+        Tuple of (is_ready, report_dict) on success, None on failure
+    """
+    import shutil
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from .auth.check_access import FEATURE_SCOPES
+    from .profiles import create_profile, get_profile_dir, delete_profile
+
+    if not os.path.exists(client_creds_path):
+        logger.error(f"Client secrets file not found: {client_creds_path}")
+        return None
+
+    # Collect all scopes from all features plus identity scopes
+    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
+
+    logger.info(f"Creating profile '{profile_name}' via OAuth flow...")
+
+    try:
+        # Copy client secrets to config directory if not already there
+        if os.path.abspath(client_creds_path) != os.path.abspath(CLIENT_SECRETS_FILE):
+            os.makedirs(os.path.dirname(CLIENT_SECRETS_FILE), exist_ok=True)
+            shutil.copy(client_creds_path, CLIENT_SECRETS_FILE)
+            logger.info(f"Copied client secrets to {CLIENT_SECRETS_FILE}")
+
+        # Run OAuth flow
+        flow = InstalledAppFlow.from_client_secrets_file(client_creds_path, all_scopes)
+        creds = flow.run_local_server(port=0)
+        logger.info("User authorization completed via browser.")
+
+        # Get token info
+        token_info = get_token_info(creds)
+        email = token_info.get("email")
+        scopes = token_info.get("scopes", [])
+
+        # Prepare token data
+        token_data = json.loads(creds.to_json())
+        token_data["type"] = "authorized_user"
+
+        # Delete existing profile if it exists (to replace it)
+        profile_dir = get_profile_dir(profile_name)
+        if profile_dir.exists():
+            delete_profile(profile_name)
+
+        # Create the profile
+        if not create_profile(profile_name, token_data, email=email, scopes=scopes):
+            logger.error(f"Failed to create profile '{profile_name}'")
+            return None
+
+        # Set as active profile
+        set_config_value("active_profile", profile_name)
+        logger.info(f"Profile '{profile_name}' created and set as active.")
+
+        # Build status report
+        creds, source = get_active_credentials()
+        details_report = _get_detailed_status_data(creds, source, deep_check=False)
+        report = {"status": "CONFIGURED", "mode": "token", "profile": profile_name}
+        report.update(details_report)
+
+        is_ready = (
+            report.get("creds_refreshable", False)
+            and not report.get("scope_validation_error")
+            and all(report.get("feature_status", {}).values())
+        )
+
+        return is_ready, report
+
+    except Exception as e:
+        logger.error(f"Failed to complete OAuth flow: {e}")
+        return None
+
+
 def _get_status_report(deep_check: bool = False) -> Dict:
     """
     Gathers all status information and returns it as a dictionary.
     This function contains the core logic and is designed to be tested.
     """
+    from .profiles import ADC_PROFILE_NAME, get_active_profile_name
+
     config_file = get_config_file_path()
     if not config_file.exists():
         return {"status": "NOT_CONFIGURED"}
 
-    auth_mode = get_config_value("auth.mode")
-    if not auth_mode:
+    active_profile = get_active_profile_name()
+    if not active_profile:
         return {"status": "NOT_CONFIGURED"}
 
-    report = {"status": "CONFIGURED", "mode": auth_mode}
+    # Determine mode from profile type
+    auth_mode = "adc" if active_profile == ADC_PROFILE_NAME else "token"
+    report = {"status": "CONFIGURED", "mode": auth_mode, "profile": active_profile}
 
     try:
         creds, source = get_active_credentials()
@@ -628,10 +711,19 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
                 is_ready = is_ready and all(report["feature_status"].values())
 
             if is_ready:
+                # Cache ADC metadata (email, scopes, file hash for change detection)
+                from .profiles import update_adc_cached_metadata, ADC_PROFILE_NAME
+                update_adc_cached_metadata(
+                    email=report.get("user_email"),
+                    scopes=list(report.get("granted_scopes", []))
+                )
+                # Set active profile to ADC
+                set_config_value("active_profile", ADC_PROFILE_NAME)
+                # Also keep legacy config for backward compatibility
                 set_config_value("auth.mode", "adc")
                 set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
                 set_config_value("auth.last_scope_check", datetime.now().isoformat())
-                logger.info("ADC configured and validated scopes cached.")
+                logger.info("ADC configured and validated. Cached email, scopes, and file hash.")
                 _display_status_report(report, is_ready=True)
                 return True
             else:
@@ -672,26 +764,16 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
 
     elif client_creds:
         click.echo("\n" + "=" * 50)
-        click.echo("Configuring for OAuth Token (user_token.json)")
+        click.echo("Configuring OAuth Token Profile")
         click.echo("=" * 50)
-        
-        if not _atomic_client_creds_setup(client_creds, True): # client-creds always implies new user
-             click.echo("✗ User authentication failed. Configuration not saved.")
-             return False
 
-        # Set auth.mode FIRST so get_active_credentials() knows where to look
-        set_config_value("auth.mode", "token")
+        profile_name = "default"
+        result = _setup_token_profile(profile_name, client_creds)
+        if not result:
+            click.echo("✗ User authentication failed. Configuration not saved.")
+            return False
 
-        # Post-setup validation and configuration save
-        creds, source = get_active_credentials()
-        details_report = _get_detailed_status_data(creds, source, deep_check=False)
-        report = {"status": "CONFIGURED", "mode": "token"}
-        report.update(details_report)
-        is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-        set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
-        set_config_value("auth.last_scope_check", datetime.now().isoformat())
-        logger.info("Token auth configured and validated scopes cached.")
-
+        is_ready, report = result
         _display_status_report(report, is_ready=is_ready)
         return is_ready
 
@@ -699,6 +781,7 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
         click.echo("\n" + "=" * 50)
         click.echo("Re-authenticating user for existing configuration")
         click.echo("=" * 50)
+
         if not os.path.exists(CLIENT_SECRETS_FILE):
             click.secho("\n❌ ERROR: client_secrets.json not found.", fg="red", bold=True)
             click.echo("Cannot re-authenticate without the client secrets file.")
@@ -706,23 +789,20 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
             click.secho("\n  gwsa setup --client-creds /path/to/client_secrets.json\n", fg="cyan")
             return False
 
-        if not _atomic_client_creds_setup(CLIENT_SECRETS_FILE, True): # new-user always implies new user
-             click.echo("✗ User authentication failed. Configuration not saved.")
-             return False
+        # Re-authenticate using existing client secrets into active profile or "default"
+        from .profiles import get_active_profile_name, ADC_PROFILE_NAME
+        active_profile = get_active_profile_name()
+        if not active_profile or active_profile == ADC_PROFILE_NAME:
+            profile_name = "default"
+        else:
+            profile_name = active_profile
 
-        # Set auth.mode FIRST so get_active_credentials() knows where to look
-        set_config_value("auth.mode", "token")
+        result = _setup_token_profile(profile_name, CLIENT_SECRETS_FILE)
+        if not result:
+            click.echo("✗ User authentication failed. Configuration not saved.")
+            return False
 
-        # Post-setup validation and configuration save
-        creds, source = get_active_credentials()
-        details_report = _get_detailed_status_data(creds, source, deep_check=False)
-        report = {"status": "CONFIGURED", "mode": "token"}
-        report.update(details_report)
-        is_ready = report.get("creds_refreshable", False) and not report.get("scope_validation_error") and all(report.get("feature_status", {}).values())
-        set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
-        set_config_value("auth.last_scope_check", datetime.now().isoformat())
-        logger.info("Token auth configured and validated scopes cached.")
-
+        is_ready, report = result
         _display_status_report(report, is_ready=is_ready)
         return is_ready
 

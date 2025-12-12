@@ -51,18 +51,25 @@ def find_token_file(token_path: str = None, config_token_path: str = None) -> st
 
 
 def get_active_credentials(
-    token_file: str = None, # Allow explicit override for `access check --token-file`
-    use_adc: bool = False,    # Allow explicit override for `access check --application-default`
-    config_token_path: str = None
+    token_file: str = None,  # Explicit token file override
+    use_adc: bool = False,   # Explicit ADC override
+    profile: str = None      # Explicit profile override
 ) -> tuple[object, str]:
     """
-    Load credentials strictly based on the configured auth mode or explicit flags.
-    No fallback behavior.
+    Load credentials based on active profile or explicit flags.
+
+    Priority order:
+    1. Explicit flags (use_adc, token_file, profile)
+    2. active_profile from config
     """
     import google.auth
     from google.oauth2.credentials import Credentials
+    from gwsa_cli.profiles import (
+        ADC_PROFILE_NAME, get_active_profile_name, profile_exists,
+        get_profile_token_path
+    )
 
-    # Explicit flags for `gwsa access check` take highest precedence
+    # Explicit flags take highest precedence
     if use_adc:
         creds, project = google.auth.default()
         source = "Application Default Credentials (from flag)"
@@ -78,30 +85,39 @@ def get_active_credentials(
         else:
             raise FileNotFoundError(f"Specified token file not found: {token_file}")
 
-    # If no flags, use the mode from config.yaml
-    auth_mode = config.get_config_value("auth.mode")
-
-    if auth_mode == 'adc':
-        creds, project = google.auth.default()
-        source = "Application Default Credentials (from config)"
-        if project:
-            source += f" (project: {project})"
-        return creds, source
-    
-    elif auth_mode == 'token':
-        # Use the standard config path if not explicitly provided
-        from gwsa_cli.mail import USER_TOKEN_FILE
-        effective_token_path = config_token_path or USER_TOKEN_FILE
-        found_path = find_token_file(config_token_path=effective_token_path)
-        if found_path:
-            creds = Credentials.from_authorized_user_file(found_path)
-            return creds, f"Token file: {os.path.abspath(found_path)}"
+    # Explicit profile override
+    if profile:
+        if profile == ADC_PROFILE_NAME:
+            creds, project = google.auth.default()
+            source = f"Application Default Credentials (profile: {profile})"
+            if project:
+                source += f" (project: {project})"
+            return creds, source
+        elif profile_exists(profile):
+            token_path = get_profile_token_path(profile)
+            creds = Credentials.from_authorized_user_file(str(token_path))
+            return creds, f"Profile '{profile}': {token_path}"
         else:
-            raise FileNotFoundError(f"Token file not found at expected path: {effective_token_path}")
-    
-    else: # No config or unknown mode
-        # This will be caught by the higher-level status check, but raise for safety
-        raise ValueError("No valid auth.mode configured and no credentials specified.")
+            raise ValueError(f"Profile not found: {profile}")
+
+    # Check for active_profile
+    active_profile = get_active_profile_name()
+    if active_profile:
+        if active_profile == ADC_PROFILE_NAME:
+            creds, project = google.auth.default()
+            source = f"Application Default Credentials (profile: {active_profile})"
+            if project:
+                source += f" (project: {project})"
+            return creds, source
+        elif profile_exists(active_profile):
+            token_path = get_profile_token_path(active_profile)
+            creds = Credentials.from_authorized_user_file(str(token_path))
+            return creds, f"Profile '{active_profile}': {token_path}"
+        else:
+            raise ValueError(f"Active profile not found: {active_profile}")
+
+    # No profile configured
+    raise ValueError("No active profile configured. Run 'gwsa setup' or 'gwsa profiles create' first.")
 
 
 def test_refresh(creds) -> bool:
@@ -260,7 +276,8 @@ FEATURE_SCOPES = {
 }
 
 # Identity scopes - always requested to enable user identification
-IDENTITY_SCOPES = {"https://www.googleapis.com/auth/userinfo.email"}
+# Include "openid" because Google automatically adds it when userinfo.email is requested
+IDENTITY_SCOPES = {"https://www.googleapis.com/auth/userinfo.email", "openid"}
 
 def get_feature_status(granted_scopes: set[str]) -> dict[str, bool]:
     """

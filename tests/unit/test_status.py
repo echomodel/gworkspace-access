@@ -21,12 +21,12 @@ def test_get_status_report_not_configured(tmp_path: Path, monkeypatch):
 
 def test_get_status_report_configured_adc_no_creds(tmp_path: Path, monkeypatch):
     """
-    Verify status report for a system configured for ADC but missing ADC credentials.
+    Verify status report for a system configured for ADC profile but missing ADC credentials.
     """
-    # Arrange
+    # Arrange: Config with active_profile = "adc"
     config_path = tmp_path / "config.yaml"
     with open(config_path, "w") as f:
-        yaml.dump({"auth": {"mode": "adc"}}, f)
+        yaml.dump({"active_profile": "adc"}, f)
     monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setattr("google.auth.default", lambda: (_ for _ in ()).throw(Exception("ADC not found")))
@@ -37,21 +37,24 @@ def test_get_status_report_configured_adc_no_creds(tmp_path: Path, monkeypatch):
     # Assertion
     assert report["status"] == "ERROR"
     assert report["mode"] == "adc"
+    assert report["profile"] == "adc"
     assert "error_details" in report
     assert "ADC not found" in report["error_details"]
 
 def test_get_status_report_configured_token_no_token_file(tmp_path: Path, monkeypatch):
     """
-    Verify status report for a system configured for Token mode but missing the token file.
+    Verify status report for a system configured for a token profile but missing the token file.
     """
-    # Arrange
+    # Arrange: Config with active_profile pointing to a non-existent profile
     config_path = tmp_path / "config.yaml"
     with open(config_path, "w") as f:
-        yaml.dump({"auth": {"mode": "token"}}, f)
+        yaml.dump({"active_profile": "myprofile"}, f)
     monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
-    non_existent_token = tmp_path / "user_token.json"
-    monkeypatch.setattr("gwsa_cli.mail.USER_TOKEN_FILE", str(non_existent_token))
-    monkeypatch.setattr("gwsa_cli.setup_local.USER_TOKEN_FILE", str(non_existent_token))
+
+    # Create profiles directory but no token file
+    profiles_dir = tmp_path / "profiles" / "myprofile"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    # Note: No user_token.json file created
 
     # Action
     report = _get_status_report()
@@ -59,17 +62,19 @@ def test_get_status_report_configured_token_no_token_file(tmp_path: Path, monkey
     # Assertion
     assert report["status"] == "ERROR"
     assert report["mode"] == "token"
+    assert report["profile"] == "myprofile"
     assert "error_details" in report
-    assert "Token file not found" in report["error_details"]
+    # Profile doesn't exist (no token file)
+    assert "not found" in report["error_details"].lower() or "profile" in report["error_details"].lower()
 
 def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatch):
     """
-    Verify status report for a system configured for ADC with valid credentials.
+    Verify status report for a system configured for ADC profile with valid credentials.
     """
-    # Arrange: Config
+    # Arrange: Config with active_profile = "adc"
     config_path = tmp_path / "config.yaml"
     with open(config_path, "w") as f:
-        yaml.dump({"auth": {"mode": "adc"}}, f)
+        yaml.dump({"active_profile": "adc"}, f)
     monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
 
     # Arrange: Mock Credentials
@@ -81,7 +86,7 @@ def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatc
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/spreadsheets",
     ]
-    
+
     # Mock the functions that would make network calls
     monkeypatch.setattr("google.auth.default", lambda: (mock_creds, "mock-project"))
     monkeypatch.setattr("gwsa_cli.setup_local.get_token_info", lambda creds: {
@@ -95,6 +100,7 @@ def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatc
     # Assertion
     assert report["status"] == "CONFIGURED"
     assert report["mode"] == "adc"
+    assert report["profile"] == "adc"
     assert report["creds_valid"] is True
     assert report["user_email"] == "testuser@example.com"
     assert report["feature_status"]["mail"] is False # We only have readonly
@@ -103,12 +109,12 @@ def test_get_status_report_configured_adc_valid_creds(tmp_path: Path, monkeypatc
 
 def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypatch):
     """
-    Verify status report for a system configured for Token mode with a valid token file.
+    Verify status report for a system configured for a token profile with a valid token file.
     """
-    # Arrange: Config
+    # Arrange: Config with active_profile = "myprofile"
     config_path = tmp_path / "config.yaml"
     with open(config_path, "w") as f:
-        yaml.dump({"auth": {"mode": "token"}}, f)
+        yaml.dump({"active_profile": "myprofile"}, f)
     monkeypatch.setenv("GWSA_CONFIG_FILE", str(config_path))
 
     # Arrange: Mock Credentials & Scopes
@@ -120,7 +126,7 @@ def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypa
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/documents.readonly",
     ]
-    
+
     # Mock the functions that would make network calls
     monkeypatch.setattr("gwsa_cli.setup_local.get_active_credentials", lambda: (mock_creds, "mock_token_file"))
     monkeypatch.setattr("gwsa_cli.setup_local.get_token_info", lambda creds: {
@@ -134,6 +140,7 @@ def test_get_status_report_configured_token_valid_creds(tmp_path: Path, monkeypa
     # Assertion
     assert report["status"] == "CONFIGURED"
     assert report["mode"] == "token"
+    assert report["profile"] == "myprofile"
     assert report["creds_valid"] is True
     assert report["user_email"] == "tokenuser@example.com"
     assert "error_details" not in report
