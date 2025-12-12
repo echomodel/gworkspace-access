@@ -78,3 +78,24 @@ The `gwsa-mcp` server relies on a correctly configured `gwsa` CLI environment to
 
 **Reasoning:**
 Proactively addressing these edge cases will prevent user confusion and support issues. The MCP server should fail gracefully with clear instructions if its foundational requirements are not met.
+
+---
+
+### Architectural Review of MCP Tool Registration
+
+**Description:**
+Investigate the best practices for structuring and registering tools with the `FastMCP` framework. Currently, all `@mcp.tool()` decorators are located in a single, monolithic `gwsa/mcp/server.py` file.
+
+**Questions to Answer:**
+
+1.  Does the `FastMCP` framework support a more modular approach, such as registering tools from different files or modules (e.g., a "blueprint" or "router" pattern)?
+2.  What is the recommended pattern for a project with a growing number of tools to maintain code organization and separation of concerns?
+3.  Would splitting the tools into logical groups (e.g., `gwsa/mcp/mail_tools.py`, `gwsa/mcp/docs_tools.py`) improve maintainability?
+
+**Action:**
+-   Review the `mcp` library's documentation and source code (if necessary) to understand its registration mechanisms.
+-   Based on the findings, refactor the `gwsa/mcp/server.py` file into smaller, more focused modules if a better pattern exists.
+-   If no such pattern is supported, document this limitation.
+
+**Reasoning:**
+As the number of tools for different Google Workspace services (Mail, Docs, Sheets, Calendar, etc.) grows, the single `server.py` file will become increasingly large and difficult to manage. A modular structure would improve code readability, maintainability, and scalability.
