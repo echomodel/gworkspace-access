@@ -42,17 +42,25 @@ For detailed documentation, see the main project [README.md](./README.md).
 
 ### Prerequisites
 
-- **`gwsa` CLI**: The `gwsa` tool must be installed and configured. See the main [README.md](./README.md) for setup instructions.
-- **MCP Client**: Gemini CLI, Claude Desktop, or a similar MCP-compatible tool.
+1. **`gwsa` CLI installed and configured**:
+   ```bash
+   pipx install git+https://github.com/krisrowe/gworkspace-access.git
+   gwsa setup  # Required! Creates your first profile
+   ```
+   The MCP server uses your gwsa profiles for authentication. Without running `gwsa setup`, all tools will return: *"No active profile configured."*
 
-### Step 1: Install `gwsa` with MCP extras
+2. **MCP Client**: Gemini CLI, Claude Code, or a similar MCP-compatible tool.
 
-If you haven't already, install `gwsa` using `pipx` in editable mode. This will install the `gwsa-mcp` server command.
+### Step 1: Verify gwsa is configured
+
+Confirm you have an active profile before proceeding:
 
 ```bash
-# In your cloned gworkspace-access directory
-pipx install -e .
+gwsa profiles list
+# Should show at least one profile with an email address
 ```
+
+If you see only the built-in `adc` profile or get errors, run `gwsa setup` first.
 
 ### Step 2: Register the Server with Gemini CLI
 
