@@ -237,8 +237,14 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | 10 | "default" profile special? | No - just convention, only "adc" is reserved | ✅ Good |
     | 11 | What happens when active profile deleted? | Sets `active_profile` to `None`, NOT to ADC | ⚠️ Discuss: Should fallback to ADC? |
     | 12 | Fresh install + MCP tool call? | "No active profile configured" error | ✅ Good (clear error) |
-    | 13 | What happens when active profile is None? | CLI/MCP returns "No active profile configured" error | ⚠️ Discuss: Is this clear enough? Should we suggest `gwsa profiles list` + `gwsa profiles switch`? |
+    | 13 | Where is "no active profile" error shown? | Need to audit: Which commands/tools check for active profile vs work without one? | ⚠️ Audit needed (see breakdown below) |
     | 14 | Any unrecoverable corruption scenario? | Can user always escape via CLI alone? | ⚠️ Audit: Corrupted config.yaml? Bad permissions? Is `rm -rf ~/.config/gworkspace-access` always an escape hatch? |
+    | 15 | Does `gwsa profiles list` require active profile? | NO - must work gracefully, show ADC or "nothing configured" | ✅ Expected (verify works) |
+    | 16 | Does `gwsa profiles switch X` require active profile? | Should work without one (setting one) | ⚠️ Verify |
+    | 17 | Does `gwsa setup` require active profile? | Should work without one (creating one) | ⚠️ Verify |
+    | 18 | Do read commands (mail search, docs list) require active profile? | Yes - need creds to call API | ⚠️ Verify error is clear |
+    | 19 | Do write commands (label, append) require active profile? | Yes - need creds to call API | ⚠️ Verify error is clear |
+    | 20 | Do all MCP tools require active profile? | All except `list_profiles`, `get_active_profile`, `switch_profile`? | ⚠️ Audit each tool |
 
 9.  **Create Permanent Auth/Profile Behavior Documentation:**
     -   Once all Q&A items above are resolved, document the finalized behavior in a dedicated `.md` file (e.g., `AUTH.md` or `PROFILES.md`)
