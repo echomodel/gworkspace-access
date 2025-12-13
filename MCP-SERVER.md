@@ -45,9 +45,11 @@ For detailed documentation, see the main project [README.md](./README.md).
 1. **`gwsa` CLI installed and configured**:
    ```bash
    pipx install git+https://github.com/krisrowe/gworkspace-access.git
-   gwsa setup  # Required! Creates your first profile
+   gwsa client import /path/to/client_secrets.json
+   gwsa profiles add default
+   gwsa profiles use default
    ```
-   The MCP server uses your gwsa profiles for authentication. Without running `gwsa setup`, all tools will return: *"No active profile configured."*
+   The MCP server uses your gwsa profiles for authentication. Without a configured profile, all tools will return: *"No active profile configured."*
 
 2. **MCP Client**: Gemini CLI, Claude Code, or a similar MCP-compatible tool.
 
@@ -60,7 +62,7 @@ gwsa profiles list
 # Should show at least one profile with an email address
 ```
 
-If you see only the built-in `adc` profile or get errors, run `gwsa setup` first.
+If you see only the built-in `adc` profile or get errors, create a profile first with `gwsa profiles add`.
 
 ### Step 2: Register the Server with Gemini CLI
 
@@ -160,7 +162,7 @@ gwsa-mcp --stdio
 ### Authentication Issues
 
 **"No active profile configured" or credential errors:**
-- Ensure you have run `gwsa setup` and have a working configuration.
+- Ensure you have created a profile with `gwsa profiles add` and activated it with `gwsa profiles use`.
 - Check your active profile with `gwsa profiles current`.
 - The `gwsa-mcp` server uses the same credentials as the `gwsa` CLI. If the CLI works, the server should too.
 
@@ -193,6 +195,29 @@ This ensures consistent behavior and credential management across all entry poin
 
 - **Credential Storage**: `gwsa-mcp` reads from the secure credential store at `~/.config/gworkspace-access/`. It never needs credentials passed to it directly.
 - **Local only**: The server runs as a local process under your user account and does not expose any network ports by default.
+
+## Limitations
+
+The MCP server intentionally does **not** support certain operations that require interactive authentication or could be destructive:
+
+| Operation | MCP Support | Workaround |
+|-----------|-------------|------------|
+| List profiles | ✓ `list_profiles` | - |
+| Get active profile | ✓ `get_active_profile` | - |
+| Switch profile | ✓ `switch_profile` | - |
+| **Create profile** | ✗ | `gwsa profiles add <name>` |
+| **Refresh/re-auth** | ✗ | `gwsa profiles refresh <name>` |
+| **Rename profile** | ✗ | `gwsa profiles rename <old> <new>` |
+| **Delete profile** | ✗ | `gwsa profiles delete <name>` |
+| **Retrieve credentials** | ✗ | Not supported |
+
+**Why these limitations?**
+
+- **Create/Refresh** require an OAuth browser flow - interactive authentication cannot be performed via MCP
+- **Rename/Delete** are destructive write operations that should require explicit user action via CLI
+- **Credentials** are never exposed through MCP for security reasons
+
+If the AI assistant needs a profile operation that isn't available, it should instruct the user to run the appropriate `gwsa profiles` CLI command.
 
 ## Related Documentation
 

@@ -4,7 +4,7 @@
 /gworkspace-access/
 ├── .env                          # Project configuration (git-ignored)
 ├── .gitignore                    # Specifies ignored files like .env, credentials.json, user_token.json, *.log
-├── credentials.json              # Client credentials (git-ignored), managed by `gwsa setup` from Secret Manager
+├── credentials.json              # Client credentials (git-ignored), OAuth client for profiles
 ├── README.md                     # Main project documentation
 ├── CONTRIBUTING.md               # This file - contribution guidelines and project structure
 ├── pyproject.toml                # Project metadata and build configuration for packaging

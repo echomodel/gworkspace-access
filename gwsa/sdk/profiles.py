@@ -163,6 +163,110 @@ def profile_exists(name: str) -> bool:
     return profile_dir.exists() and token_path.exists()
 
 
+def get_profile_status(name: str) -> dict:
+    """
+    Get the validity status of a profile.
+
+    Returns a dict with:
+        - exists: True if profile exists (for token profiles: dir + token file)
+        - valid: True if profile is usable (exists, not stale, has been validated)
+        - status: 'valid', 'stale', 'unvalidated', 'missing', or 'error'
+        - reason: Human-readable explanation if not valid
+        - email: Cached email if available
+
+    This is the canonical routine for checking if a profile can be used.
+    """
+    # ADC profile
+    if name == ADC_PROFILE_NAME:
+        adc_metadata = load_adc_cached_metadata()
+        adc_changed = check_adc_changed()
+        last_validated = adc_metadata.get("last_validated")
+
+        if adc_changed:
+            if last_validated:
+                return {
+                    "exists": True,
+                    "valid": False,
+                    "status": "stale",
+                    "reason": "ADC credentials have changed since last validation",
+                    "email": adc_metadata.get("email"),
+                }
+            else:
+                return {
+                    "exists": True,
+                    "valid": False,
+                    "status": "unvalidated",
+                    "reason": "ADC has never been validated",
+                    "email": None,
+                }
+        else:
+            return {
+                "exists": True,
+                "valid": True,
+                "status": "valid",
+                "reason": None,
+                "email": adc_metadata.get("email"),
+            }
+
+    # Token profile
+    profile_dir = get_profile_dir(name)
+    token_path = get_profile_token_path(name)
+
+    if not profile_dir.exists():
+        return {
+            "exists": False,
+            "valid": False,
+            "status": "missing",
+            "reason": f"Profile '{name}' does not exist",
+            "email": None,
+        }
+
+    if not token_path.exists():
+        return {
+            "exists": False,
+            "valid": False,
+            "status": "error",
+            "reason": f"Token file missing for profile '{name}'",
+            "email": None,
+        }
+
+    # Check if token file is readable/valid JSON
+    try:
+        import json
+        with open(token_path, 'r') as f:
+            json.load(f)
+    except Exception as e:
+        return {
+            "exists": True,
+            "valid": False,
+            "status": "error",
+            "reason": f"Token file corrupted: {e}",
+            "email": None,
+        }
+
+    # Load metadata
+    metadata = load_profile_metadata(name)
+    last_validated = metadata.get("last_validated")
+    email = metadata.get("email")
+
+    if not last_validated:
+        return {
+            "exists": True,
+            "valid": False,
+            "status": "unvalidated",
+            "reason": f"Profile '{name}' has never been validated",
+            "email": email,
+        }
+
+    return {
+        "exists": True,
+        "valid": True,
+        "status": "valid",
+        "reason": None,
+        "email": email,
+    }
+
+
 def load_profile_metadata(name: str) -> dict:
     """
     Load profile metadata from profile.yaml.

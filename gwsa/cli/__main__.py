@@ -17,8 +17,7 @@ from .sheets_commands import sheets as sheets_module
 from .docs_commands import docs as docs_module
 from .config_commands import config_group as config_module
 from .profiles_commands import profiles as profiles_module
-from .auth import check_access as check_access_module
-from .auth import create_token as create_token_module
+from .client_commands import client as client_module
 
 
 # Configure logging at the application level
@@ -33,7 +32,7 @@ logging.getLogger('google_auth_oauthlib.flow').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-from .decorators import require_scopes
+from .decorators import require_scopes, format_status, show_profile_guidance
 
 
 @click.group()
@@ -45,93 +44,95 @@ def gwsa():
     pass
 
 
-# Setup command
-from click_option_group import optgroup, MutuallyExclusiveOptionGroup
-
-# ... (other imports)
-
+# Status command - shows current configuration and profile status
 @click.command()
-@optgroup.group('Configuration Mode', cls=MutuallyExclusiveOptionGroup)
-@optgroup.option('--client-creds', type=click.Path(exists=True), help='Configure using an OAuth client secrets file (implies --new-user).')
-@optgroup.option('--use-adc', is_flag=True, help='Configure to use existing Application Default Credentials.')
-@optgroup.option('--adc-login', is_flag=True, help='Initiate the ADC login flow and configure gwsa.')
-@click.option('--new-user', is_flag=True, help='Force a new user authentication flow for an existing configuration.')
-def setup(client_creds, use_adc, adc_login, new_user):
-    """Set up local environment and credentials, or check status."""
-    # Using --client-creds always implies a new user is needed to match the tokens.
-    if client_creds:
-        new_user = True
+@click.option('--check', is_flag=True, help='Run deep validation with live API calls.')
+def status(check):
+    """Show current configuration and profile status.
 
-    status_only = not (client_creds or use_adc or adc_login or new_user)
+    Displays the active profile, validation status, and feature availability.
+    Use --check for deep validation that makes live API calls.
+    """
+    from .profiles import get_active_profile, get_profile_status, list_profiles
 
-    if not setup_local.run_setup(
-        new_user=new_user, 
-        client_creds=client_creds, 
-        use_adc=use_adc, 
-        adc_login=adc_login,
-        status_only=status_only
-    ):
+    click.echo("\n" + "=" * 50)
+    click.echo("gwsa Status")
+    click.echo("=" * 50)
+
+    # Get active profile
+    active = get_active_profile()
+    if not active:
+        click.echo()
+        profiles = list_profiles()
+        has_any_valid = any(get_profile_status(p["name"])["valid"] for p in profiles)
+        show_profile_guidance(has_active=False, has_any_valid=has_any_valid)
         sys.exit(1)
 
+    # Show active profile info
+    profile_status = get_profile_status(active["name"])
 
-# Create-token command
-@click.command()
-@click.option('--scope', '-s', 'scopes', multiple=True, required=True,
-              help='Google API scope(s) to request. Can be specified multiple times.')
-@click.option('--client-creds', type=click.Path(exists=True), required=True,
-              help='Path to client_secrets.json file for OAuth.')
-@click.option('--output', '-o', type=click.Path(), required=True,
-              help='Path where the token should be saved.')
-def create_token(scopes, client_creds, output):
-    """Create an OAuth token for specified scopes.
+    click.echo(f"\nActive Profile: {active['name']}")
+    if active.get("is_adc"):
+        click.echo("  Type: Application Default Credentials (ADC)")
+    else:
+        click.echo("  Type: OAuth Token")
 
-    This is a standalone auth utility that does NOT affect gwsa configuration.
-    Use it to create tokens for other projects or specific scope combinations.
+    click.echo(f"  Status: {format_status(profile_status)}")
+    if not profile_status["valid"]:
+        click.echo(f"  Reason: {profile_status['reason']}")
 
-    Example:
-        gwsa access token --scope https://www.googleapis.com/auth/documents \\
-            --client-creds ./credentials.json --output ./my_token.json
-    """
-    scope_list = list(scopes)
-    output_path = os.path.abspath(output)
+    if active.get("email"):
+        click.echo(f"  Email: {active['email']}")
 
-    if not create_token_module.create_token_for_scopes(client_creds, output_path, scope_list):
-        logger.error("Failed to create token. Please check logs for details.")
-        sys.exit(1)
+    scopes = active.get("scopes", [])
+    click.echo(f"  Scopes: {len(scopes)}")
 
-    click.echo(f"\nToken successfully created at: {output_path}")
-    click.echo(f"Scopes: {', '.join(scope_list)}")
+    # Deep check if requested
+    if check:
+        click.echo("\nRunning deep validation...")
+        try:
+            creds, source = get_credentials()
+            report = setup_local._get_detailed_status_data(creds, source, deep_check=True)
 
+            click.echo("\nFeature Support:")
+            for feature, supported in report.get("feature_status", {}).items():
+                if supported:
+                    click.secho(f"  ✓ {feature}", fg="green")
+                else:
+                    click.secho(f"  ✗ {feature}", fg="red")
 
-# Check-access command
-@click.command()
-@click.option('--token-file', type=click.Path(exists=True),
-              help='Path to token file to test.')
-@click.option('--application-default', is_flag=True,
-              help='Use Application Default Credentials (gcloud auth application-default login).')
-def check_access(token_file, application_default):
-    """
-    Test OAuth token validity and API access with a deep check.
-    This command runs a full diagnostic, including live API calls.
-    """
-    try:
-        # Use SDK get_credentials (aliased as get_active_credentials in check_access_module)
-        creds, source = get_credentials(use_adc=application_default)
-        # Get detailed status with deep check (live API calls)
-        report = setup_local._get_detailed_status_data(creds, source, deep_check=True)
-        report["status"] = "CONFIGURED"
-        report["mode"] = "adc" if application_default else "token"
+            if report.get("api_results"):
+                click.echo("\nLive API Access:")
+                for api_name, result in report["api_results"].items():
+                    if result.get("success"):
+                        click.secho(f"  ✓ {api_name}", fg="green")
+                    else:
+                        click.secho(f"  ✗ {api_name}: {result.get('error', 'failed')}", fg="red")
 
-        # Determine if ready based on credentials being valid/refreshable
-        is_ready = report.get("creds_valid", False) or report.get("creds_refreshable", False)
-
-        setup_local._display_status_report(report, is_ready=is_ready)
-
-        if not is_ready:
+        except Exception as e:
+            click.secho(f"\nDeep validation failed: {e}", fg="red")
             sys.exit(1)
 
-    except Exception as e:
-        click.echo(f"✗ Failed to load credentials or run checks: {e}")
+    click.echo("\n" + "=" * 50)
+    if profile_status["valid"]:
+        show_profile_guidance(
+            active_profile_name=active["name"],
+            active_is_valid=True,
+            has_any_valid=True,
+            has_active=True
+        )
+    else:
+        profiles = list_profiles()
+        has_any_valid = any(
+            p["name"] != active["name"] and get_profile_status(p["name"])["valid"]
+            for p in profiles
+        )
+        show_profile_guidance(
+            active_profile_name=active["name"],
+            active_is_valid=False,
+            has_any_valid=has_any_valid,
+            has_active=True
+        )
         sys.exit(1)
 
 
@@ -205,24 +206,14 @@ def label_command(message_id, label_name, remove):
         sys.exit(1)
 
 
-# Access group
-@click.group()
-def access():
-    """Authentication utilities (standalone, does not affect gwsa config)."""
-    pass
-
-
 # Add commands to groups using add_command()
-gwsa.add_command(setup, name='setup')
+gwsa.add_command(status, name='status')
+gwsa.add_command(client_module, name='client')
 gwsa.add_command(config_module, name='config')
 gwsa.add_command(profiles_module, name='profiles')
-gwsa.add_command(access)
 gwsa.add_command(mail)
 gwsa.add_command(sheets_module, name='sheets')
 gwsa.add_command(docs_module, name='docs')
-
-access.add_command(create_token, name='token')
-access.add_command(check_access, name='check')
 
 mail.add_command(search)
 mail.add_command(read_command, name='read')

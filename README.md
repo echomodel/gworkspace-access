@@ -1,6 +1,6 @@
 # Google Workspace Access CLI (`gwsa`)
 
-This project provides a Command Line Interface (CLI) tool, `gwsa`, to search and manage your Gmail account using the Google Gmail API. It centralizes all environment and credential setup within a dedicated `gwsa setup` command.
+A CLI tool for managing Gmail, Google Docs, and Sheets via the Google Workspace APIs. Supports multiple Google account profiles for easy switching between identities.
 
 ## Prerequisites
 
@@ -29,13 +29,24 @@ Before you begin, ensure you have the following installed and configured:
 3.  **`pip`**:
     *   Python's package installer.
 
-## Quick Start (Single Command)
+## Quick Start
 
 ```bash
-pipx install git+https://github.com/krisrowe/gworkspace-access.git && gwsa setup
-```
+# Install
+pipx install git+https://github.com/krisrowe/gworkspace-access.git
 
-That's it! The `gwsa setup` command will guide you through the rest.
+# Import your OAuth client credentials (one-time)
+gwsa client import /path/to/client_secrets.json
+
+# Create your first profile (opens browser for OAuth)
+gwsa profiles add default
+
+# Activate it
+gwsa profiles use default
+
+# Verify
+gwsa status
+```
 
 This installs two commands:
 - **`gwsa`** - The CLI tool for direct command-line use
@@ -98,8 +109,7 @@ Next, you need to get OAuth 2.0 client credentials from the Google Cloud Console
 6.  Click "Create". On the next screen, click **"Download JSON"**.
 7.  Rename the downloaded file to `credentials.json` and place it in the root of this project directory.
 
-> **Important: Backing Up Your Credentials**
-> You can only download the `credentials.json` file once. The `gwsa setup` command (run in a later step) will automatically back up this file as a secret in Google Secret Manager. This makes it easy to set up `gwsa` on a new workstation in the future without having to generate new credentials.
+> **Important:** You can only download the `credentials.json` file once. Keep a backup in a secure location.
 
 ### 3. Install the CLI Tool
 
@@ -127,27 +137,33 @@ pip install -e .
 # pip install .
 ```
 
-### 4. Run Initial Setup
+### 4. Import Client Credentials and Create a Profile
 
-Now, run the central `gwsa setup` command.
+Import your OAuth client credentials (one-time setup):
 
 ```bash
-gwsa setup
+gwsa client import /path/to/credentials.json
 ```
 
-This is the most important step and must be run before any other `gwsa` command. See the section below for a detailed explanation of what it does.
+Then create your first profile:
 
-## What `gwsa setup` Does
+```bash
+gwsa profiles add default
+```
 
-The `gwsa setup` command is the heart of this tool's configuration. It must be run first because it performs several critical actions to bootstrap the environment:
+This opens a browser for Google OAuth consent. After authenticating, activate the profile:
 
-1.  **Ensures a Project ID is Set**: It finds the Google Cloud project ID using either the labeled project (recommended) or the `.env` file.
-2.  **Enables Cloud APIs**: It automatically enables the Gmail API and Secret Manager API on your project if they are not already active.
-3.  **Secures Client Credentials**: It checks for `credentials.json` and synchronizes it with Google Secret Manager, creating a secure backup.
-4.  **Manages User Authorization**: It triggers a browser-based OAuth 2.0 flow to get your permission for the tool to access your Google account. This interactive sign-in process is what generates the user-specific `user_token.json` file.
-5.  **Refreshes Tokens**: On subsequent runs, it will automatically refresh your user token if it has expired.
+```bash
+gwsa profiles use default
+```
 
-Without running `setup` first, the tool has no project context and lacks the necessary client and user credentials to communicate with Google APIs.
+Verify everything is working:
+
+```bash
+gwsa status
+```
+
+For detailed profile management, see **[PROFILES.md](PROFILES.md)**.
 
 ## Using the `gwsa` CLI Tool
 
@@ -202,60 +218,77 @@ LOG_LEVEL=DEBUG gwsa mail search "after:2025-11-27"
 ---
 ## Advanced Usage
 
+### Multiple Profiles
+
+Create additional profiles for different Google accounts:
+
+```bash
+gwsa profiles add work
+gwsa profiles add personal
+```
+
+Switch between them:
+
+```bash
+gwsa profiles use work
+gwsa profiles use personal
+```
+
+List all profiles:
+
+```bash
+gwsa profiles list
+```
+
+### Re-authenticating
+
+If credentials expire or become invalid:
+
+```bash
+gwsa profiles refresh <profile-name>
+gwsa profiles refresh adc  # For ADC profile
+```
+
 ### Setting Up a New Workstation
 
-Once you have completed the first-time setup, configuring `gwsa` on another machine is much simpler.
-
-1.  Clone this repository to your new machine.
-2.  Ensure the [Prerequisites](#prerequisites) (Google Cloud CLI, Python) are met.
-3.  Install the tool: `pip install -e .`
-4.  Run the setup command:
-    ```bash
-    gwsa setup
-    ```
-That's it. Because you already have a labeled project and your client credentials are saved in Secret Manager, the script will automatically:
-- Discover your Google Cloud project.
-- Create the `.env` file with the correct project ID.
-- Download `credentials.json` from Google Secret Manager.
-- Initiate the browser flow to get a fresh `user_token.json` for the new machine.
-
-### Re-authenticating or Switching Users
-
-If you need to regenerate your user token, switch to a different Google account, or fix a corrupted `user_token.json`, you can force a new authentication flow by using the `--new-user` flag with the `setup` command. This will delete the existing token and trigger the browser sign-in process again.
-
-```bash
-gwsa setup --new-user
-```
-
-### Using Custom Credentials Path
-
-If you have a `credentials.json` file in a non-standard location, you can specify its path using the `--client-creds` flag:
-
-```bash
-gwsa setup --client-creds /path/to/credentials.json
-```
-
-The specified credentials file will be copied to the configuration directory for use by the tool.
+1. Install the tool: `pipx install git+https://github.com/krisrowe/gworkspace-access.git`
+2. Copy your `client_secrets.json` to the new machine
+3. Import credentials: `gwsa client import /path/to/client_secrets.json`
+4. Create a profile: `gwsa profiles add default`
+5. Activate it: `gwsa profiles use default`
 
 ## Credential Storage
 
-All credentials are stored centrally in `~/.config/gworkspace-access/` regardless of where the `gwsa` tool is installed or which directory you run the command from. This includes:
+All credentials are stored in `~/.config/gworkspace-access/`:
 
-- **`credentials.json`**: Your OAuth 2.0 client credentials (downloaded from Google Cloud Console)
-- **`user_token.json`**: Your user-specific authorization token (generated during the OAuth flow)
+```
+~/.config/gworkspace-access/
+├── config.yaml           # Active profile setting
+├── client_secrets.json   # OAuth client credentials
+└── profiles/
+    └── <profile-name>/
+        ├── user_token.json  # OAuth token
+        └── profile.yaml     # Metadata
+```
 
-This centralized storage makes it easy to use `gwsa` from any directory on your machine.
+This centralized storage makes it easy to use `gwsa` from any directory.
 
 ---
 
-## Authentication & Account Compatibility
+## Authentication & Profiles
 
-Different Google account types have varying compatibility with authentication methods. See **[AUTHENTICATION.md](AUTHENTICATION.md)** for detailed guidance on:
+See **[PROFILES.md](PROFILES.md)** for complete documentation on:
 
-- **Authentication methods**: OAuth User Token, Application Default Credentials (ADC), Service Accounts
-- **Account compatibility**: Workspace, regular Gmail, Gmail with security keys
-- **Advanced Protection Program (APP)**: Limitations and workarounds
-- **Troubleshooting**: Common errors and solutions
+- **Profile management**: Creating, switching, refreshing, deleting profiles
+- **Profile states**: Valid, stale, unvalidated - what they mean
+- **Error recovery**: Common issues and how to fix them
+- **Edge cases**: Deleted profiles, offline switching, etc.
+
+See **[AUTHENTICATION.md](AUTHENTICATION.md)** for initial OAuth/ADC setup:
+
+- **OAuth setup**: Creating client_secrets.json, first-time authentication
+- **ADC setup**: Using gcloud credentials, quota project configuration
+- **Account compatibility**: Workspace, Gmail, security keys, APP
 
 **Quick summary:**
 
@@ -285,9 +318,20 @@ For configuration instructions, see **[MCP-SERVER.md](MCP-SERVER.md)**.
 
 ## Future Enhancements
 
-While `gwsa` currently functions as a CLI tool, the architecture is designed with a broader vision in mind: **a centralized API service** that can be consumed by any application, not just command-line users.
+### Google Drive Integration
 
-### The Problem with CLI-Only Access
+Planned additions to the CLI and MCP server:
+
+- **`drive_search`** - Search for files/folders by name or query
+- **`drive_list_folder`** - List contents of a folder
+- **`drive_create_folder`** - Create new folders
+- **`drive_upload`** / **`drive_download`** - File transfers
+
+This will enable workflows like "Upload this report to my Project Reports folder" directly from AI assistants.
+
+### Centralized API Service
+
+While `gwsa` currently functions as a CLI tool, the architecture is designed with a broader vision in mind: **a centralized API service** that can be consumed by any application, not just command-line users.
 
 Projects that need programmatic access to Google Workspace APIs (like a Gmail automation service) currently must:
 - Shell out to CLI commands, which is fragile and inefficient
@@ -295,7 +339,7 @@ Projects that need programmatic access to Google Workspace APIs (like a Gmail au
 - Handle the complexity of Google's OAuth client verification process
 - Duplicate credential management across multiple deployments
 
-### The API Vision
+#### The API Vision
 
 The goal is to host `gwsa` as a **REST API on Google Cloud Run**, providing:
 
