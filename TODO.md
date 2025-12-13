@@ -226,7 +226,7 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | # | Question/Scenario | Current Behavior | Status |
     |---|-------------------|------------------|--------|
     | 1 | Is ADC always configured after install? | Yes - virtual/built-in, always in list | ✅ Good |
-    | 2 | Is ADC auto-activated after install? | **NO** - `active_profile` is `None` | ⚠️ Discuss: Should ADC be default fallback? |
+    | 2 | Is ADC auto-activated after install? | **NO** - `active_profile` is `None` | ✅ **Decision: Keep as-is.** ADC must be explicitly activated via `gwsa profiles switch adc`. No auto-fallback. (See note on setup vs profiles below) |
     | 3 | What is "ADC no creds"? | ADC profile exists but `~/.config/gcloud/application_default_credentials.json` missing | ✅ Good |
     | 4 | Token profile with no token file? | `profile_exists()` = True but API call fails with FileNotFoundError | ⚠️ Discuss: Should profile_exists check token file? |
     | 5 | Switch to profile, can't refresh? | Switch succeeds (just config update), failure on first API call | ⚠️ Discuss: Should switch validate? |
@@ -235,7 +235,7 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | 8 | Test expired token refresh? | Mock `creds.valid=False, expired=True, refresh_token="fake"` | ⚠️ Need test |
     | 9 | Duplicate profile name check? | **MISSING** - silently overwrites | 🐛 Bug - needs fix |
     | 10 | "default" profile special? | No - just convention, only "adc" is reserved | ✅ Good |
-    | 11 | What happens when active profile deleted? | Sets `active_profile` to `None`, NOT to ADC | ⚠️ Discuss: Should fallback to ADC? |
+    | 11 | What happens when active profile deleted? | Sets `active_profile` to `None`, NOT to ADC | ✅ **Decision: Keep as-is.** No auto-fallback to ADC. User must explicitly switch. |
     | 12 | Fresh install + MCP tool call? | "No active profile configured" error | ✅ Good (clear error) |
     | 13 | Where is "no active profile" error shown? | Need to audit: Which commands/tools check for active profile vs work without one? | ⚠️ Audit needed (see breakdown below) |
     | 14 | Any unrecoverable corruption scenario? | Can user always escape via CLI alone? | ⚠️ Audit: Corrupted config.yaml? Bad permissions? Is `rm -rf ~/.config/gworkspace-access` always an escape hatch? |
@@ -245,6 +245,30 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | 18 | Do read commands (mail search, docs list) require active profile? | Yes - need creds to call API | ⚠️ Verify error is clear |
     | 19 | Do write commands (label, append) require active profile? | Yes - need creds to call API | ⚠️ Verify error is clear |
     | 20 | Do all MCP tools require active profile? | All except `list_profiles`, `get_active_profile`, `switch_profile`? | ⚠️ Audit each tool |
+
+    **Note on ADC and `gwsa setup` vs `gwsa profiles` overlap:**
+
+    The decision that ADC must be explicitly activated raises the question: how should a user activate it?
+
+    Current commands that could do this:
+    - `gwsa profiles switch adc` - explicit, works today
+    - `gwsa setup` - currently focused on OAuth token flow, not ADC
+
+    **Ideas to clarify:**
+    1. **`gwsa setup` purpose:** First-time OAuth setup (create token profile). Should NOT touch ADC.
+    2. **`gwsa profiles switch adc`:** Explicit way to use ADC. Works today.
+    3. **Should `gwsa setup` offer ADC as an option?** e.g., "Do you want to use OAuth (recommended) or ADC?"
+    4. **Post-install flow:**
+       - Fresh install → no active profile
+       - User runs `gwsa profiles list` → sees ADC (unvalidated) + no user profiles
+       - User chooses: `gwsa setup` (create OAuth profile) OR `gwsa profiles switch adc` (use existing gcloud creds)
+    5. **Naming clarity:**
+       - `gwsa setup` = "create new OAuth profile" (wizard)
+       - `gwsa profiles create` = same but non-interactive?
+       - `gwsa profiles switch` = activate existing profile (incl. ADC)
+       - Overlap: `gwsa setup --switch-user` vs `gwsa profiles switch`?
+
+    **Recommendation:** Audit the overlap (item 6 above) and decide if `setup` should be purely for OAuth wizard, with `profiles` handling all switching/management including ADC.
 
 9.  **Create Permanent Auth/Profile Behavior Documentation:**
     -   Once all Q&A items above are resolved, document the finalized behavior in a dedicated `.md` file (e.g., `AUTH.md` or `PROFILES.md`)
