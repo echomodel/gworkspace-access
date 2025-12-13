@@ -237,6 +237,8 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | 10 | "default" profile special? | No - just convention, only "adc" is reserved | ✅ Good |
     | 11 | What happens when active profile deleted? | Sets `active_profile` to `None`, NOT to ADC | ⚠️ Discuss: Should fallback to ADC? |
     | 12 | Fresh install + MCP tool call? | "No active profile configured" error | ✅ Good (clear error) |
+    | 13 | What happens when active profile is None? | CLI/MCP returns "No active profile configured" error | ⚠️ Discuss: Is this clear enough? Should we suggest `gwsa profiles list` + `gwsa profiles switch`? |
+    | 14 | Any unrecoverable corruption scenario? | Can user always escape via CLI alone? | ⚠️ Audit: Corrupted config.yaml? Bad permissions? Is `rm -rf ~/.config/gworkspace-access` always an escape hatch? |
 
 **Reasoning:**
 A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.
