@@ -240,6 +240,16 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     | 13 | What happens when active profile is None? | CLI/MCP returns "No active profile configured" error | ⚠️ Discuss: Is this clear enough? Should we suggest `gwsa profiles list` + `gwsa profiles switch`? |
     | 14 | Any unrecoverable corruption scenario? | Can user always escape via CLI alone? | ⚠️ Audit: Corrupted config.yaml? Bad permissions? Is `rm -rf ~/.config/gworkspace-access` always an escape hatch? |
 
+9.  **Create Permanent Auth/Profile Behavior Documentation:**
+    -   Once all Q&A items above are resolved, document the finalized behavior in a dedicated `.md` file (e.g., `AUTH.md` or `PROFILES.md`)
+    -   Include:
+        -   Profile lifecycle: creation, switching, deletion, validation
+        -   ADC vs token profiles: when each is used, limitations
+        -   Error scenarios and recovery steps
+        -   Edge cases and their expected behavior
+    -   Cross-reference unit tests that verify each documented behavior
+    -   This becomes the authoritative reference for contributors and advanced users
+
 **Reasoning:**
 A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.
 
