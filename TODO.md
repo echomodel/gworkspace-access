@@ -221,6 +221,23 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
     -   Only "adc" is reserved/built-in
     -   Document this in README or help text to avoid user confusion
 
+8.  **Profile Behavior Q&A - Status Tracker:**
+
+    | # | Question/Scenario | Current Behavior | Status |
+    |---|-------------------|------------------|--------|
+    | 1 | Is ADC always configured after install? | Yes - virtual/built-in, always in list | ✅ Good |
+    | 2 | Is ADC auto-activated after install? | **NO** - `active_profile` is `None` | ⚠️ Discuss: Should ADC be default fallback? |
+    | 3 | What is "ADC no creds"? | ADC profile exists but `~/.config/gcloud/application_default_credentials.json` missing | ✅ Good |
+    | 4 | Token profile with no token file? | `profile_exists()` = True but API call fails with FileNotFoundError | ⚠️ Discuss: Should profile_exists check token file? |
+    | 5 | Switch to profile, can't refresh? | Switch succeeds (just config update), failure on first API call | ⚠️ Discuss: Should switch validate? |
+    | 6 | When is refresh determined? | On first API call when `creds.valid` is False | ✅ Good (lazy) |
+    | 7 | Refresh on switch? | NO - switch is instant config update | ✅ Good |
+    | 8 | Test expired token refresh? | Mock `creds.valid=False, expired=True, refresh_token="fake"` | ⚠️ Need test |
+    | 9 | Duplicate profile name check? | **MISSING** - silently overwrites | 🐛 Bug - needs fix |
+    | 10 | "default" profile special? | No - just convention, only "adc" is reserved | ✅ Good |
+    | 11 | What happens when active profile deleted? | Sets `active_profile` to `None`, NOT to ADC | ⚠️ Discuss: Should fallback to ADC? |
+    | 12 | Fresh install + MCP tool call? | "No active profile configured" error | ✅ Good (clear error) |
+
 **Reasoning:**
 A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.
 
