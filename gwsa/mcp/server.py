@@ -14,7 +14,7 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 from googleapiclient.errors import HttpError
 
-from gwsa.sdk import profiles, mail, docs, auth
+from gwsa.sdk import profiles, mail, docs, drive, auth
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +463,102 @@ async def replace_in_doc(
         }
     except Exception as e:
         logger.error(f"Error replacing in doc: {e}")
+        return {"error": str(e)}
+
+
+# =============================================================================
+# Drive Tools
+# =============================================================================
+
+@mcp.tool()
+async def drive_list_folder(
+    folder_id: Optional[str] = None,
+    max_results: int = 100
+) -> dict[str, Any]:
+    """
+    List contents of a Google Drive folder.
+
+    Args:
+        folder_id: Folder ID to list. Use None for My Drive root.
+        max_results: Maximum number of items to return (default 100)
+
+    Returns:
+        Dict with list of files/folders including id, name, type, and modified_time
+    """
+    try:
+        result = drive.list_folder(folder_id=folder_id, max_results=max_results)
+        return result
+    except Exception as e:
+        logger.error(f"Error listing folder: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def drive_create_folder(
+    name: str,
+    parent_id: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    Create a new folder in Google Drive.
+
+    Args:
+        name: Name for the new folder
+        parent_id: Parent folder ID. Use None for My Drive root.
+
+    Returns:
+        Dict with folder id, name, and url
+    """
+    try:
+        result = drive.create_folder(name=name, parent_id=parent_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error creating folder: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def drive_upload(
+    local_path: str,
+    folder_id: Optional[str] = None,
+    name: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    Upload a file to Google Drive.
+
+    Args:
+        local_path: Absolute path to the local file to upload
+        folder_id: Destination folder ID. Use None for My Drive root.
+        name: Name for the file in Drive. Defaults to local filename.
+
+    Returns:
+        Dict with file id, name, and url
+    """
+    try:
+        result = drive.upload_file(local_path=local_path, folder_id=folder_id, name=name)
+        return result
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def drive_find_folder(path: str) -> dict[str, Any]:
+    """
+    Find a folder by its path (e.g., 'Projects/my-project/cloud-backups').
+
+    Args:
+        path: Folder path with '/' separators
+
+    Returns:
+        Dict with folder id, name, and path. Returns error if not found.
+    """
+    try:
+        result = drive.find_folder_by_path(path)
+        if result:
+            return result
+        return {"error": f"Folder not found: {path}"}
+    except Exception as e:
+        logger.error(f"Error finding folder: {e}")
         return {"error": str(e)}
 
 
