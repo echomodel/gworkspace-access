@@ -256,6 +256,46 @@ async def list_email_labels() -> list[dict[str, Any]]:
         return [{"error": str(e)}]
 
 
+@mcp.tool()
+async def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Send an email via Gmail.
+
+    Args:
+        to: Recipient email address (comma-separated for multiple recipients)
+        subject: Email subject line
+        body: Plain text body of the email
+        cc: Optional CC recipients (comma-separated)
+        bcc: Optional BCC recipients (comma-separated)
+
+    Returns:
+        Dict with message ID and thread ID of the sent email
+    """
+    try:
+        result = mail.send_message(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc,
+            bcc=bcc,
+        )
+        return {
+            "success": True,
+            "message_id": result.get("id"),
+            "thread_id": result.get("threadId"),
+            "message": f"Email sent successfully to {to}",
+        }
+    except Exception as e:
+        logger.error(f"Error sending email: {e}")
+        return {"success": False, "error": str(e)}
+
+
 # =============================================================================
 # Docs Tools
 # =============================================================================

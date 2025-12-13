@@ -1,6 +1,6 @@
 """Gmail operations for GWSA SDK.
 
-Provides functions for searching, reading, and labeling Gmail messages.
+Provides functions for searching, reading, labeling, and sending Gmail messages.
 
 Example usage:
     from gwsa.sdk import mail
@@ -13,12 +13,16 @@ Example usage:
 
     # Add a label to a message
     mail.add_label("message_id_here", "MyLabel")
+
+    # Send an email
+    result = mail.send("recipient@example.com", "Subject", "Body text")
 """
 
 from .service import get_gmail_service
 from .search import search_messages
 from .read import read_message
 from .label import modify_labels, add_label, remove_label, list_labels
+from .send import send_message, create_draft
 
 __all__ = [
     "get_gmail_service",
@@ -28,8 +32,11 @@ __all__ = [
     "add_label",
     "remove_label",
     "list_labels",
+    "send_message",
+    "create_draft",
 ]
 
 # Convenience aliases
 search = search_messages
 read = read_message
+send = send_message
