@@ -270,6 +270,39 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
 
     **Recommendation:** Audit the overlap (item 6 above) and decide if `setup` should be purely for OAuth wizard, with `profiles` handling all switching/management including ADC.
 
+    ---
+
+    **Question #21: How should ADC be activated? Analysis of current overlap:**
+
+    | Command | What it does | Status |
+    |---------|--------------|--------|
+    | `gwsa profiles use adc` | Switches active profile to ADC | ✅ Exists |
+    | `gwsa config set auth.mode adc` | Sets auth mode to ADC | ✅ Exists |
+    | `gwsa setup --use-adc` | (hypothetical) | ❌ Does not exist |
+
+    **Problem:** Two commands do similar things:
+    - `gwsa profiles use adc` - profile-centric (consistent with other profile commands)
+    - `gwsa config set auth.mode adc` - config-centric (lower-level)
+
+    **Questions:**
+    1. Do both commands do exactly the same thing under the hood?
+    2. Should one be deprecated/removed?
+    3. Is `config set auth.mode` even needed if `profiles use` handles ADC?
+    4. What does `auth.mode` actually control vs `active_profile`?
+
+    **Options:**
+    - **A) Keep both:** `config set` for power users, `profiles use` for normal use
+    - **B) Remove `config set auth.mode`:** Simplify, use `profiles use adc` only
+    - **C) Remove ADC from profiles:** ADC is not a "profile", use `config set auth.mode adc` only
+    - **D) Add `gwsa setup --use-adc`:** Third way to do same thing (not recommended)
+
+    **Recommendation:**
+    Option B - Remove `config set auth.mode` and standardize on `profiles use adc`.
+    Reasoning: ADC behaves like a profile (appears in list, can be switched to), so treat it consistently as one.
+    Keep `config set` for other settings, but not for profile/auth mode switching.
+
+    **Action:** Audit what `auth.mode` actually does in code vs `active_profile`. If redundant, deprecate.
+
 9.  **Create Permanent Auth/Profile Behavior Documentation:**
     -   Once all Q&A items above are resolved, document the finalized behavior in a dedicated `.md` file (e.g., `AUTH.md` or `PROFILES.md`)
     -   Include:
