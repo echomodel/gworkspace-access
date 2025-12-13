@@ -9,7 +9,7 @@ Profile operations are read-only (no creation, no credential changes).
 
 import json
 import logging
-from typing import Optional, List
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 from googleapiclient.errors import HttpError
@@ -27,7 +27,7 @@ mcp = FastMCP("gwsa")
 # =============================================================================
 
 @mcp.tool()
-async def list_profiles() -> str:
+async def list_profiles() -> list[dict[str, Any]]:
     """
     List all available authentication profiles.
 
@@ -51,14 +51,14 @@ async def list_profiles() -> str:
                 "is_adc": p["is_adc"],
                 "last_validated": p.get("last_validated"),
             })
-        return json.dumps(safe_profiles, indent=2)
+        return safe_profiles
     except Exception as e:
         logger.error(f"Error listing profiles: {e}")
-        return json.dumps({"error": str(e)})
+        return [{"error": str(e)}]
 
 
 @mcp.tool()
-async def get_active_profile() -> str:
+async def get_active_profile() -> Optional[dict[str, Any]]:
     """
     Get the currently active authentication profile.
 
@@ -68,19 +68,19 @@ async def get_active_profile() -> str:
     try:
         profile = profiles.get_active_profile()
         if profile:
-            return json.dumps({
+            return {
                 "name": profile["name"],
                 "email": profile.get("email"),
                 "is_adc": profile["is_adc"],
-            }, indent=2)
-        return json.dumps(None)
+            }
+        return None
     except Exception as e:
         logger.error(f"Error getting active profile: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def switch_profile(profile_name: str) -> str:
+async def switch_profile(profile_name: str) -> dict[str, Any]:
     """
     Switch to a different authentication profile.
 
@@ -95,25 +95,25 @@ async def switch_profile(profile_name: str) -> str:
     """
     try:
         if not profiles.profile_exists(profile_name):
-            return json.dumps({
+            return {
                 "error": f"Profile '{profile_name}' does not exist",
                 "hint": "Available profiles can be listed with list_profiles"
-            })
+            }
 
         success = profiles.set_active_profile(profile_name)
         if success:
             # Get the profile info to return
             profile = profiles.get_active_profile()
-            return json.dumps({
+            return {
                 "success": True,
                 "message": f"Switched to profile '{profile_name}'",
                 "email": profile.get("email") if profile else None
-            })
+            }
         else:
-            return json.dumps({"error": "Failed to switch profile"})
+            return {"error": "Failed to switch profile"}
     except Exception as e:
         logger.error(f"Error switching profile: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 # =============================================================================
@@ -126,7 +126,7 @@ async def search_emails(
     max_results: int = 25,
     page_token: Optional[str] = None,
     format: str = "metadata"
-) -> str:
+) -> dict[str, Any]:
     """
     Search Gmail messages using Gmail query syntax.
 
@@ -138,7 +138,7 @@ async def search_emails(
         format: "metadata" (fast, headers only) or "full" (includes body, slower)
 
     Returns:
-        JSON with list of messages and pagination info
+        Dict with list of messages and pagination info
     """
     try:
         messages, metadata = mail.search_messages(
@@ -147,18 +147,18 @@ async def search_emails(
             page_token=page_token,
             format=format
         )
-        return json.dumps({
+        return {
             "messages": messages,
             "resultSizeEstimate": metadata.get("resultSizeEstimate", 0),
             "nextPageToken": metadata.get("nextPageToken")
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error searching emails: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def read_email(message_id: str) -> str:
+async def read_email(message_id: str) -> dict[str, Any]:
     """
     Read a specific email message by ID.
 
@@ -174,14 +174,14 @@ async def read_email(message_id: str) -> str:
         # Remove raw field to reduce output size
         if "raw" in message:
             del message["raw"]
-        return json.dumps(message, indent=2)
+        return message
     except Exception as e:
         logger.error(f"Error reading email: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def add_email_label(message_id: str, label_name: str) -> str:
+async def add_email_label(message_id: str, label_name: str) -> dict[str, Any]:
     """
     Add a label to an email message.
 
@@ -196,19 +196,19 @@ async def add_email_label(message_id: str, label_name: str) -> str:
     """
     try:
         result = mail.add_label(message_id, label_name)
-        return json.dumps({
+        return {
             "success": True,
             "message_id": message_id,
             "label_added": label_name,
             "current_labels": result.get("labelIds", [])
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error adding label: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def remove_email_label(message_id: str, label_name: str) -> str:
+async def remove_email_label(message_id: str, label_name: str) -> dict[str, Any]:
     """
     Remove a label from an email message.
 
@@ -221,19 +221,19 @@ async def remove_email_label(message_id: str, label_name: str) -> str:
     """
     try:
         result = mail.remove_label(message_id, label_name)
-        return json.dumps({
+        return {
             "success": True,
             "message_id": message_id,
             "label_removed": label_name,
             "current_labels": result.get("labelIds", [])
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error removing label: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def list_email_labels() -> str:
+async def list_email_labels() -> list[dict[str, Any]]:
     """
     List all Gmail labels available in the current account.
 
@@ -250,10 +250,10 @@ async def list_email_labels() -> str:
                 "name": label["name"],
                 "type": label.get("type", "user")
             })
-        return json.dumps(simplified, indent=2)
+        return simplified
     except Exception as e:
         logger.error(f"Error listing labels: {e}")
-        return json.dumps({"error": str(e)})
+        return [{"error": str(e)}]
 
 
 # =============================================================================
@@ -261,7 +261,7 @@ async def list_email_labels() -> str:
 # =============================================================================
 
 @mcp.tool()
-async def list_docs(max_results: int = 25, query: Optional[str] = None) -> str:
+async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[str, Any]:
     """
     List Google Docs accessible to the current user.
 
@@ -270,18 +270,18 @@ async def list_docs(max_results: int = 25, query: Optional[str] = None) -> str:
         query: Optional search query to filter documents by title or content
 
     Returns:
-        JSON with list of documents including id, title, url, and timestamps
+        Dict with list of documents including id, title, url, and timestamps
     """
     try:
         result = docs.list_documents(max_results=max_results, query=query)
-        return json.dumps(result, indent=2)
+        return result
     except Exception as e:
         logger.error(f"Error listing docs: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def create_doc(title: str, body_text: Optional[str] = None) -> str:
+async def create_doc(title: str, body_text: Optional[str] = None) -> dict[str, Any]:
     """
     Create a new Google Doc.
 
@@ -290,18 +290,18 @@ async def create_doc(title: str, body_text: Optional[str] = None) -> str:
         body_text: Optional initial body text to insert
 
     Returns:
-        JSON with document id, title, and url
+        Dict with document id, title, and url
     """
     try:
         result = docs.create_document(title=title, body_text=body_text)
-        return json.dumps(result, indent=2)
+        return result
     except Exception as e:
         logger.error(f"Error creating doc: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def read_doc(doc_id: str, format: str = "content") -> str:
+async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
     """
     Read a Google Doc by ID.
 
@@ -316,31 +316,31 @@ async def read_doc(doc_id: str, format: str = "content") -> str:
     try:
         if format == "text":
             text = docs.get_document_text(doc_id)
-            return json.dumps({"text": text}, indent=2)
+            return {"text": text}
         elif format == "raw":
             doc = docs.get_document(doc_id)
-            return json.dumps(doc, indent=2)
+            return doc
         else:
             content = docs.get_document_content(doc_id)
-            return json.dumps(content, indent=2)
+            return content
     except HttpError as e:
         if e.resp.status == 403:
             logger.error(f"Permission error reading doc: {e}")
-            return json.dumps({
+            return {
                 "error": "The caller does not have permission.",
                 "details": str(e),
                 "hint": "The active gwsa profile may not have access to this document. "
                         "Try switching profiles with the `switch_profile` tool or "
                         "running `gwsa setup --new-user` to re-authenticate."
-            })
+            }
         raise
     except Exception as e:
         logger.error(f"Error reading doc: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def append_to_doc(doc_id: str, text: str) -> str:
+async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
     """
     Append text to the end of a Google Doc.
 
@@ -353,18 +353,18 @@ async def append_to_doc(doc_id: str, text: str) -> str:
     """
     try:
         result = docs.append_text(doc_id, text)
-        return json.dumps({
+        return {
             "success": True,
             "document_id": doc_id,
             "write_control": result.get("writeControl", {})
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error appending to doc: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
-async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> str:
+async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> dict[str, Any]:
     """
     Insert text at a specific position in a Google Doc.
 
@@ -378,15 +378,15 @@ async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> str:
     """
     try:
         result = docs.insert_text(doc_id, text, index=index)
-        return json.dumps({
+        return {
             "success": True,
             "document_id": doc_id,
             "inserted_at_index": index,
             "write_control": result.get("writeControl", {})
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error inserting in doc: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 @mcp.tool()
@@ -395,7 +395,7 @@ async def replace_in_doc(
     find_text: str,
     replace_with: str,
     match_case: bool = True
-) -> str:
+) -> dict[str, Any]:
     """
     Replace all occurrences of text in a Google Doc.
 
@@ -414,16 +414,16 @@ async def replace_in_doc(
         occurrences = 0
         if replies:
             occurrences = replies[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
-        return json.dumps({
+        return {
             "success": True,
             "document_id": doc_id,
             "occurrences_replaced": occurrences,
             "find_text": find_text,
             "replace_with": replace_with
-        }, indent=2)
+        }
     except Exception as e:
         logger.error(f"Error replacing in doc: {e}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 # =============================================================================
@@ -433,13 +433,15 @@ async def replace_in_doc(
 @mcp.resource("gwsa://profiles")
 async def profiles_resource() -> str:
     """List of available authentication profiles."""
-    return await list_profiles()
+    result = await list_profiles()
+    return json.dumps(result, indent=2)
 
 
 @mcp.resource("gwsa://labels")
 async def labels_resource() -> str:
     """List of Gmail labels in the current account."""
-    return await list_email_labels()
+    result = await list_email_labels()
+    return json.dumps(result, indent=2)
 
 
 # =============================================================================

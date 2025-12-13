@@ -2,30 +2,6 @@
 
 ## Open Items
 
-### Refactor MCP Tools to Return Objects Instead of JSON Strings
-
-**Priority:** Medium
-
-The current MCP server tools manually serialize responses using `json.dumps()` and return strings. This can cause formatting issues in Claude. FastMCP supports returning objects directly, which it serializes properly.
-
-**Current Pattern (problematic):**
-```python
-@mcp.tool()
-async def search_emails(...) -> str:
-    return json.dumps({"messages": messages}, indent=2)  # Creates literal \n
-```
-
-**Recommended Pattern:**
-```python
-@mcp.tool()
-async def search_emails(...) -> dict:
-    return {"messages": messages}  # FastMCP handles serialization
-```
-
-**Files:** `gwsa/mcp/server.py` - All 12 tool functions
-
----
-
 ### Add User Identity Metadata to MCP Tool Outputs
 
 **Priority:** Low
@@ -97,6 +73,7 @@ The term "token profile" is misleading (ADC also uses tokens). Better terms migh
 
 ## Completed (Recently)
 
+- ✅ Refactor MCP tools to return objects instead of JSON strings (14 tools updated)
 - ✅ Implement `gwsa client import` / `gwsa client show` commands
 - ✅ Remove `--client-creds` from profiles add/refresh
 - ✅ Add `profiles rename` command
