@@ -342,3 +342,72 @@ Explore whether MCP provides mechanisms for servers to report status, metadata, 
 **Reference:**
 - MCP Changelog: https://modelcontextprotocol.io/specification/2025-11-25/changelog
 - Server Implementation interface in MCP spec
+
+---
+
+### Add Google Drive Tools to MCP Server
+
+**Description:**
+Extend the MCP server with Google Drive capabilities for file/folder management. This enables workflows like finding a folder, listing its contents, and uploading/downloading files.
+
+**Proposed Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `drive_search` | Search for files/folders by name, type, or query |
+| `drive_list_folder` | List contents of a folder by ID (or root) |
+| `drive_get_file_info` | Get metadata for a file/folder by ID |
+| `drive_create_folder` | Create a new folder (optionally in a parent folder) |
+| `drive_upload` | Upload a file to a folder by ID |
+| `drive_download` | Download a file by ID |
+
+**Example Workflows:**
+
+1. **Find and upload to a folder:**
+   ```
+   User: "Upload this report to my 'Project Reports' folder"
+   LLM: 1. drive_search(query="name='Project Reports' and mimeType='folder'")
+        2. drive_upload(folder_id="...", filename="report.txt", content="...")
+   ```
+
+2. **List and download:**
+   ```
+   User: "What's in my shared folder? Download the latest zip."
+   LLM: 1. drive_list_folder(folder_id="...")
+        2. drive_download(file_id="...")
+   ```
+
+**Implementation Notes:**
+
+1. **SDK Layer First:** Add `gwsa/sdk/drive.py` with core functions:
+   ```python
+   def search_files(query: str, max_results: int = 25) -> list[dict]
+   def list_folder(folder_id: str = "root") -> list[dict]
+   def get_file_metadata(file_id: str) -> dict
+   def create_folder(name: str, parent_id: str = None) -> dict
+   def upload_file(folder_id: str, filename: str, content: bytes, mime_type: str) -> dict
+   def download_file(file_id: str) -> bytes
+   ```
+
+2. **MCP Tools:** Add to `gwsa/mcp/server.py` wrapping SDK functions
+
+3. **Supported File Types for Upload:**
+   - Text files (.txt, .md, .json, .csv, etc.)
+   - Binary files (.zip, .pdf, .png, etc.)
+   - Content passed as base64 for binary
+
+4. **Google Drive API Scopes:**
+   - `https://www.googleapis.com/auth/drive.file` (files created/opened by app)
+   - Or `https://www.googleapis.com/auth/drive` (full access)
+   - May require updating `gwsa setup` to request additional scopes
+
+5. **File Size Considerations:**
+   - MCP has practical limits on response size
+   - Large file downloads should return a signed URL or stream
+   - Consider chunked upload for large files
+
+**API Reference:**
+- Google Drive API: https://developers.google.com/drive/api/v3/reference
+
+**Reasoning:**
+Google Drive is a core part of Google Workspace. Adding Drive tools enables powerful document management workflows directly from AI assistants - finding project folders, uploading deliverables, downloading shared files, and organizing content.
