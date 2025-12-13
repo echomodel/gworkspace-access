@@ -303,6 +303,48 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
 
     **Action:** Audit what `auth.mode` actually does in code vs `active_profile`. If redundant, deprecate.
 
+    ---
+
+    **Question #22: Does `profiles use` validate credentials before switching?**
+
+    **Current behavior analysis:**
+
+    | Command | Checks exists? | Validates creds? | API call? |
+    |---------|----------------|------------------|-----------|
+    | `profiles use <token>` | Yes (dir exists) | **NO** | NO |
+    | `profiles use adc` | N/A (virtual) | **NO** (staleness only) | NO |
+    | `profiles create` | Yes (prevents overwrite!) | **YES** (OAuth + tokeninfo) | YES |
+
+    **Details:**
+    - `profiles use` just checks `profile_exists()` which only verifies directory exists
+    - Does NOT attempt to load/refresh credentials
+    - Does NOT make any API call to verify creds work
+    - For ADC: checks if file hash changed ("stale") but doesn't validate the creds themselves
+    - Validation happens lazily on first actual API call (mail search, docs list, etc.)
+
+    **Question:** Should `profiles use` validate before completing?
+
+    **Options:**
+    - **A) Keep lazy (current):** Fast switch, fail on first use. User gets error later.
+    - **B) Eager validation:** `profiles use` tries to load creds, refresh if needed, call tokeninfo
+    - **C) Optional flag:** `profiles use foo --validate` for explicit validation
+    - **D) Warn but allow:** Check creds, warn if issues, but allow switch anyway
+
+    **Considerations:**
+    - Eager validation adds latency (network call on every switch)
+    - What if user is offline? Should switch fail?
+    - Lazy is consistent with current architecture (fail at point of use)
+    - But user might not know their creds are broken until important moment
+
+    **Recommendation:**
+    Option C - Keep lazy by default but add `--validate` flag.
+    This gives users explicit control without slowing down normal workflow.
+
+    **Related finding:**
+    `profiles create` in CLI correctly checks `profile_exists()` before creating (line 185-188).
+    But SDK `create_profile()` does NOT - this is the bug identified in #9.
+    The CLI has the right behavior, SDK needs to match.
+
 9.  **Create Permanent Auth/Profile Behavior Documentation:**
     -   Once all Q&A items above are resolved, document the finalized behavior in a dedicated `.md` file (e.g., `AUTH.md` or `PROFILES.md`)
     -   Include:
