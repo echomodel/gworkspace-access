@@ -167,7 +167,7 @@ async def read_email(message_id: str) -> dict[str, Any]:
 
     Returns:
         Full message content including subject, from, to, date, body (text and html),
-        snippet, and labels
+        snippet, labels, and attachments (with filename, mimeType, size, attachmentId)
     """
     try:
         message = mail.read_message(message_id)
@@ -293,6 +293,44 @@ async def send_email(
         }
     except Exception as e:
         logger.error(f"Error sending email: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def download_email_attachment(
+    message_id: str,
+    attachment_id: str,
+    save_path: str
+) -> dict[str, Any]:
+    """
+    Download an email attachment and save it to a local file.
+
+    Args:
+        message_id: The Gmail message ID containing the attachment
+        attachment_id: The attachment ID (from read_email attachments list)
+        save_path: Local file path where the attachment should be saved
+
+    Returns:
+        Dict with success status, file path, and size in bytes
+    """
+    try:
+        result = mail.get_attachment(message_id, attachment_id)
+        data = result['data']
+        size = result['size']
+
+        # Write the binary data to the specified path
+        with open(save_path, 'wb') as f:
+            f.write(data)
+
+        return {
+            "success": True,
+            "message_id": message_id,
+            "attachment_id": attachment_id,
+            "saved_to": save_path,
+            "size_bytes": size
+        }
+    except Exception as e:
+        logger.error(f"Error downloading attachment: {e}")
         return {"success": False, "error": str(e)}
 
 

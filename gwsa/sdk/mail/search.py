@@ -5,6 +5,7 @@ import base64
 from typing import List, Dict, Any, Optional, Tuple
 
 from .service import get_gmail_service
+from .read import _extract_attachments
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def search_messages(
 
     Returns:
         Tuple of (list of message dicts, metadata dict with pagination info)
-        'full' format includes: id, subject, from, to, date, labelIds, body, snippet
+        'full' format includes: id, subject, from, to, date, labelIds, body, snippet, attachments
         'metadata' format includes: id, subject, from, to, date, labelIds
         Metadata dict contains: resultSizeEstimate, nextPageToken
     """
@@ -92,12 +93,14 @@ def search_messages(
             "labelIds": label_ids
         }
 
-        # Extract body and snippet only if format='full'
+        # Extract body, snippet, and attachments only if format='full'
         if format == 'full':
             body = _extract_body(msg)
             snippet = msg.get('snippet', '')
+            attachments = _extract_attachments(msg['payload'])
             msg_dict['body'] = body
             msg_dict['snippet'] = snippet
+            msg_dict['attachments'] = attachments
 
         parsed_messages.append(msg_dict)
 
