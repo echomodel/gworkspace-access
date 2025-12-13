@@ -199,9 +199,27 @@ Audit the overlap and potential redundancy between `gwsa setup` (with its variou
         -   No config directory exists
         -   Config exists but no profiles
         -   Config exists with corrupted/invalid data
-        -   Profile exists but credentials expired
+        -   Profile exists but credentials expired (mock `creds.valid=False, refresh_token=None`)
+        -   Token refresh failure (mock `creds.refresh()` to raise)
         -   Switching to non-existent profile
-        -   Adding profile with duplicate name
+        -   **BUG: Adding profile with duplicate name** - `create_profile()` silently overwrites!
+
+6.  **Fix: Duplicate Profile Name Check:**
+    -   `create_profile()` in `gwsa/sdk/profiles.py` does NOT check if profile already exists
+    -   `mkdir(parents=True, exist_ok=True)` silently overwrites existing profile
+    -   **Required fix:** Add check before line 225:
+        ```python
+        if profile_dir.exists():
+            logger.error(f"Profile '{name}' already exists. Use a different name or delete first.")
+            return False
+        ```
+    -   Add unit test for duplicate profile rejection
+    -   Consider: Should there be an `--overwrite` flag for intentional replacement?
+
+7.  **Clarify "default" Profile:**
+    -   "default" is just a convention, not special in code
+    -   Only "adc" is reserved/built-in
+    -   Document this in README or help text to avoid user confusion
 
 **Reasoning:**
 A clear, non-overlapping CLI interface reduces cognitive load for users. If `gwsa setup` and `gwsa profiles` have ambiguous boundaries, users may use the wrong command, leading to confusion or unexpected behavior. This audit will ensure the CLI is intuitive, well-documented, and thoroughly tested.
