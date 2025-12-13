@@ -81,21 +81,19 @@ result.update(_get_profile_metadata())
 
 ---
 
-### Add Google Drive Tools to MCP Server
+### ~~Add Google Drive Tools to MCP Server~~ (DONE - v0.4.0)
 
-**Priority:** Future
+**Status:** Implemented
 
-Extend MCP server with Google Drive capabilities:
+Implemented in v0.4.0:
+- ✅ `drive_list_folder` - List contents of a folder
+- ✅ `drive_create_folder` - Create a new folder
+- ✅ `drive_upload` - Upload a file
+- ✅ `drive_find_folder` - Find folder by path
 
-| Tool | Description |
-|------|-------------|
-| `drive_search` | Search for files/folders |
-| `drive_list_folder` | List contents of a folder |
-| `drive_create_folder` | Create a new folder |
-| `drive_upload` | Upload a file |
-| `drive_download` | Download a file |
-
-**Requires:** SDK layer in `gwsa/sdk/drive.py` first, then MCP tools.
+**Remaining (future):**
+- `drive_search` - Search for files/folders by query
+- `drive_download` - Download a file
 
 ---
 

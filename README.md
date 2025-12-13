@@ -316,18 +316,22 @@ For configuration instructions, see **[MCP-SERVER.md](MCP-SERVER.md)**.
 
 ---
 
+## Google Drive Integration
+
+MCP tools for Google Drive file management (v0.4.0):
+
+| Tool | Description |
+|------|-------------|
+| **`drive_list_folder`** | List contents of a folder |
+| **`drive_create_folder`** | Create new folders |
+| **`drive_upload`** | Upload a file |
+| **`drive_find_folder`** | Find folder by path (e.g., `Projects/my-folder`) |
+
+**Not yet implemented:** `drive_search` (search by query), `drive_download` (download files)
+
+---
+
 ## Future Enhancements
-
-### Google Drive Integration
-
-Planned additions to the CLI and MCP server:
-
-- **`drive_search`** - Search for files/folders by name or query
-- **`drive_list_folder`** - List contents of a folder
-- **`drive_create_folder`** - Create new folders
-- **`drive_upload`** / **`drive_download`** - File transfers
-
-This will enable workflows like "Upload this report to my Project Reports folder" directly from AI assistants.
 
 ### Centralized API Service
 
