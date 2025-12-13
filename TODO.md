@@ -2,6 +2,68 @@
 
 ## Open Items
 
+### Google Docs API 500 Error on Shared Documents
+
+**Priority:** High (Blocking)
+**Discovered:** 2025-12-12
+
+**Issue:** The Google Docs API returns a 500 Internal Server Error when attempting to write to a document that:
+- Is shared with the user for editing (user can edit via browser)
+- Is NOT owned by the user
+- Location unclear (may be on another user's My Drive or corporate shared drive)
+
+**Workaround:** Copy the document to the user's own My Drive. API writes succeed on the copy.
+
+**Impact:** This significantly limits gwsa usefulness for work-related documents, which are often:
+- Centrally located on shared drives
+- Owned by other users or service accounts
+- Shared for collaboration with varying permissions
+
+**To Investigate:**
+- [ ] Reproduce with specific document types/locations
+- [ ] Check if this is a Shared Drive vs My Drive issue
+- [ ] Check if this is an ownership/permission issue
+- [ ] Check Google API documentation for limitations
+- [ ] Consider error handling to detect this case and provide clear guidance
+
+---
+
+### Local Markdown ↔ Google Docs Workflow
+
+**Priority:** Medium (Feature Request)
+
+**Concept:** Enable working locally with markdown files (fast, agent-friendly) and syncing to Google Docs when ready.
+
+**Use Cases:**
+- Draft documents locally with CLI tools / AI agents
+- Push to Google Docs for sharing/collaboration
+- Pull from Google Docs for local editing
+- Avoid slow browser-based editing for content creation
+
+**Design Considerations:**
+- Format compatibility: Markdown ↔ Google Docs (via pandoc or native conversion)
+- Two-way sync vs one-way push
+- Conflict resolution
+- Metadata preservation (comments, suggestions, formatting)
+
+**Potential Implementation:**
+```python
+from gwsa.sdk import docs
+
+# Push local markdown to new doc
+docs.create_from_markdown("local.md", title="My Document")
+
+# Push to existing doc (replace content)
+docs.update_from_markdown(doc_id, "local.md")
+
+# Pull doc to local markdown
+docs.export_to_markdown(doc_id, "local.md")
+```
+
+**Note:** This feature is partly blocked by the 500 error issue above for shared documents.
+
+---
+
 ### Add User Identity Metadata to MCP Tool Outputs
 
 **Priority:** Low
