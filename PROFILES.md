@@ -325,4 +325,4 @@ The MCP server (`gwsa-mcp`) uses the same profile system:
 
 - [README.md](./README.md) - Getting started and CLI usage
 - [MCP-SERVER.md](./MCP-SERVER.md) - MCP server setup
-- [AUTHENTICATION.md](./AUTHENTICATION.md) - OAuth setup details
+- [GOOGLE-API-ACCESS.md](./GOOGLE-API-ACCESS.md) - OAuth setup and GCP project configuration

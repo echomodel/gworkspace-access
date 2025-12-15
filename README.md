@@ -284,7 +284,7 @@ See **[PROFILES.md](PROFILES.md)** for complete documentation on:
 - **Error recovery**: Common issues and how to fix them
 - **Edge cases**: Deleted profiles, offline switching, etc.
 
-See **[AUTHENTICATION.md](AUTHENTICATION.md)** for initial OAuth/ADC setup:
+See **[GOOGLE-API-ACCESS.md](GOOGLE-API-ACCESS.md)** for initial OAuth/ADC setup:
 
 - **OAuth setup**: Creating client_secrets.json, first-time authentication
 - **ADC setup**: Using gcloud credentials, quota project configuration
@@ -299,7 +299,7 @@ See **[AUTHENTICATION.md](AUTHENTICATION.md)** for initial OAuth/ADC setup:
 | Gmail + security keys | OAuth Token (ADC may be blocked) |
 | Gmail + APP | OAuth Token created *before* enabling APP |
 
-For information about API quotas, billing, and the "No project ID" warning, see **[QUOTAS.md](QUOTAS.md)**.
+For information about API quotas and billing, see **[GOOGLE-API-ACCESS.md](GOOGLE-API-ACCESS.md)**.
 
 ---
 

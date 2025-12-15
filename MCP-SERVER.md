@@ -223,5 +223,5 @@ If the AI assistant needs a profile operation that isn't available, it should in
 
 - [Gemini CLI Setup](./docs/GEMINI-CLI.md) - Gemini CLI and Code Assist configuration
 - [Main README](./README.md) - CLI usage and authentication setup
-- [AUTHENTICATION.md](./AUTHENTICATION.md) - Detailed authentication guide
+- [GOOGLE-API-ACCESS.md](./GOOGLE-API-ACCESS.md) - Authentication and GCP project setup
 - [MCP Specification](https://modelcontextprotocol.io/) - Official MCP documentation
