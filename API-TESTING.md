@@ -15,11 +15,11 @@ We need to isolate which one(s) matter for each authentication method.
 
 ## Current Assumptions (Unverified)
 
-| Auth Method | Where to Enable APIs (assumed) |
-|-------------|-------------------------------|
-| Token Profile | OAuth Client Project |
-| ADC + `--client-id-file` | OAuth Client Project |
-| Pure ADC | Quota Project |
+| Authentication Method                        | Where to Enable APIs (assumed) |
+|----------------------------------------------|-------------------------------|
+| `gwsa` Profile (User-Provided OAuth Client)  | OAuth Client Project          |
+| ADC with Google's Built-in OAuth Client    | Quota Project                 |
+| ADC with a User-Provided OAuth Client      | OAuth Client Project          |
 
 **Open questions:**
 - Does `gcloud config project` ever matter?
@@ -67,6 +67,26 @@ gcloud config get-value project  # Should show PROJECT_C
 
 ---
 
+## Key Discoveries
+
+### `gcloud config` vs. `gcloud auth` Permission Validation
+
+During test setup, a critical difference in `gcloud`'s behavior was observed:
+
+-   **`gcloud config set project <PROJECT_ID>`** is **permissive**.
+    -   **User Context Checked:** The active `gcloud` CLI account (set via `gcloud config set account`).
+    -   **Permission Checked:** Performs a basic check for general project visibility (e.g., `resourcemanager.projects.get`).
+    -   **Behavior:** If the permission is missing, it only issues a strong **warning** but allows the operation to proceed. This is because it only affects the local CLI's default project flag for subsequent `gcloud` commands. The real permission check happens when those subsequent commands are run.
+
+-   **`gcloud auth application-default set-quota-project <PROJECT_ID>`** is **strict**.
+    -   **User Context Checked:** The user authenticated via `gcloud auth application-default login`.
+    -   **Permission Checked:** Performs an immediate, mandatory check for the `serviceusage.services.use` permission.
+    -   **Behavior:** If the permission is missing, the command **fails**. This is a hard requirement because this setting has direct billing and quota implications for the project, and the authorizing user must have the right to incur that usage.
+
+This distinction is crucial for understanding how to properly configure the testing environment and interpret setup errors.
+
+---
+
 ## Test Matrix
 
 Three projects involved:
@@ -78,29 +98,23 @@ For each auth mode, we test **all three permutations**: API enabled in only A, o
 
 ---
 
-### Test 1: Token Profile (Non-ADC)
+### Test 1: `gwsa` Profile (User-Provided OAuth Client)
 
-Token profiles use `client_secrets.json` directly via gwsa, not via ADC.
+`gwsa` profiles, managed via `gwsa profiles add`, use a user-provided OAuth client ID (from `client_secrets.json`). The tool manages the token generation and refresh flow itself, storing the resulting token in `~/.config/gworkspace-access/profiles/` and operating independently of the `gcloud` ADC file.
 
-**One-time setup:**
-```bash
-gwsa client import /path/to/client_secrets.json  # Created in Project A
-gwsa profiles add test-profile
-gwsa profiles use test-profile
+-   **Client Type:** Custom OAuth Client (confirmed by `gwsa.sdk.auth.get_credentials` returning a source path to `user_token.json`)
 
-# Set gcloud config project to C (to isolate it from A)
-gcloud config set project PROJECT_C
+-   **One-time setup:**
+    -   `gwsa client import /path/to/client_secrets.json` (created in Project A)
+    -   `gwsa profiles add test-profile`
+    -   `gwsa profiles use test-profile`
+    -   `gcloud config set project PROJECT_C` (to isolate it from A)
+    -   `gcloud auth application-default set-quota-project PROJECT_B` (even though not using ADC, to ensure isolation)
 
-# Set ADC quota project to B (even though we're not using ADC, to ensure isolation)
-gcloud auth application-default set-quota-project PROJECT_B
-```
-
-**Verify three distinct projects:**
-```bash
-echo "OAuth client project: PROJECT_A (from client_secrets.json)"
-echo "Quota project: $(cat ~/.config/gcloud/application_default_credentials.json | jq -r '.quota_project_id')"
-echo "Config project: $(gcloud config get-value project)"
-```
+-   **Verify three distinct projects:**
+    -   `OAuth client project: PROJECT_A` (from `client_secrets.json`)
+    -   `Quota project: $(cat ~/.config/gcloud/application_default_credentials.json | jq -r '.quota_project_id')`
+    -   `Config project: $(gcloud config get-value project)`
 
 **Scenario 1.1: API enabled ONLY in OAuth client project (A)**
 ```bash
@@ -158,31 +172,24 @@ gcloud services disable docs.googleapis.com --project=PROJECT_C --force
 
 ---
 
-### Test 2: Pure ADC (No client-id-file)
+### Test 2: ADC with Google's Built-in OAuth Client
 
-Pure ADC uses Google's built-in gcloud OAuth client. No user-controlled OAuth client project.
+This method is initiated by running `gcloud auth application-default login` **without** the `--client-id-file` flag. It uses Google's own internal OAuth client for authentication.
 
-**Note:** Pure ADC may be blocked for Workspace scopes on personal Gmail accounts. Use a corporate/Workspace account.
+-   **Client Type:** Google's Built-in ADC Client (confirmed by `google.auth.default()` returning `discovered project_id` and the absence of `--client-id-file` in the `gcloud auth application-default login` command)
 
-**One-time setup:**
-```bash
-# Login with pure ADC (no --client-id-file)
-gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/documents.readonly,openid,https://www.googleapis.com/auth/userinfo.email
+-   **Note:** Pure ADC is typically blocked for Workspace scopes when used with personal Gmail accounts. It is crucial to use a corporate/Workspace account for these tests.
 
-# Set quota project to B
-gcloud auth application-default set-quota-project PROJECT_B
+-   **One-time setup:**
+    -   `gcloud auth application-default login \
+      --scopes=https://www.googleapis.com/auth/documents.readonly,openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform`
+    -   `gcloud auth application-default set-quota-project PROJECT_B`
+    -   `gcloud config set project PROJECT_C`
 
-# Set config project to C
-gcloud config set project PROJECT_C
-```
-
-**Verify:**
-```bash
-echo "OAuth client project: N/A (using Google's gcloud client)"
-echo "Quota project: $(cat ~/.config/gcloud/application_default_credentials.json | jq -r '.quota_project_id')"
-echo "Config project: $(gcloud config get-value project)"
-```
+-   **Verify:**
+    -   `OAuth client project: N/A` (using Google's `gcloud` client)
+    -   `Quota project: $(cat ~/.config/gcloud/application_default_credentials.json | jq -r '.quota_project_id')`
+    -   `Config project: $(gcloud config get-value project)`
 
 **Scenario 2.1: API enabled ONLY in quota project (B)**
 ```bash
@@ -222,9 +229,9 @@ gcloud services disable docs.googleapis.com --project=PROJECT_C --force
 
 ---
 
-### Test 3: ADC with `--client-id-file`
+### Test 3: ADC with a User-Provided OAuth Client
 
-Uses your own OAuth client via the ADC system. Three projects in play.
+This method is initiated by running `gcloud auth application-default login` **with** the `--client-id-file` flag. It uses a custom, user-provided OAuth client, but stores the resulting credentials in the `gcloud` ADC file. Three projects are in play.
 
 **One-time setup:**
 ```bash
@@ -350,56 +357,66 @@ def test_docs_api(use_adc=False, profile=None):
 
 Fill in after testing:
 
-### Test 1: Token Profile (Non-ADC) Results
+### Test 1: `gwsa` Profile (User-Provided OAuth Client) Results
+
+**Tested on:** December 15, 2025
+Account Type: A personal Gmail account
+**Isolation Strategy:** The OAuth client project (A) was explicitly designated for client_secrets.json. The ADC Quota Project (B) and gcloud Config Project (C) were set to distinct, separate projects and did not have the API enabled. This ensured that only the OAuth client project's API enablement status would influence the outcome.
 
 | Scenario | API Enabled In | Result | Error (if any) |
 |----------|---------------|--------|----------------|
-| 1.1 | OAuth client project (A) | | |
-| 1.2 | Quota project (B) | | |
-| 1.3 | Config project (C) | | |
+| 1.1 | OAuth client project (A) | PASS (Enabled) / FAIL (Disabled) | Confirmed API not enabled error when disabled in A |
+| 1.2 | Quota project (B) | FAIL (Enabled in B, Disabled in A and C) | Expected failure: API not enabled. This confirms that enabling the API solely in the quota project (B) is not sufficient; the OAuth client project (A) remains pivotal. |
+| 1.3 | Config project (C) | FAIL (Enabled in C, Disabled in A and B) | Expected failure: API not enabled. This confirms that enabling the API solely in the gcloud config project (C) is not sufficient; the OAuth client project (A) remains pivotal. |
 
 **Conclusion for Token Profiles:**
-- Which project(s) work? ________________
-- Which project(s) fail? ________________
+- Which project(s) work? **OAuth client project**
+- Which project(s) fail? **Quota project** and **gcloud config project** are not used for API enablement checks. The call will fail if the API is not enabled in the OAuth client project.
 
-### Test 2: Pure ADC Results
+### Test 2: ADC with Google's Built-in OAuth Client Results
+
+**Tested on:** December 15, 2025
+Account Type: A corporate/Workspace account
+**Isolation Strategy:** The ADC Quota Project (B) was explicitly set via `gcloud auth application-default set-quota-project`. The gcloud Config Project (C) was set to a distinct, separate project and did not have the API enabled. This ensured that only the ADC Quota Project's API enablement status would influence the outcome.
 
 | Scenario | API Enabled In | Result | Error (if any) |
 |----------|---------------|--------|----------------|
-| 2.1 | Quota project (B) | | |
-| 2.2 | Config project (C) | | |
+| 2.1 | Quota project (B) | PASS (Enabled) / FAIL (Disabled) | Confirmed API not enabled error when disabled in B |
+| 2.2 | Config project (C) | FAIL (Enabled in C, Disabled in B) / FAIL (Disabled in B and C) | Expected failure: API not enabled. Confirmed consistent error pointing to Quota Project (B), proving gcloud config project (C) is not used for API enablement. |
 
 **Conclusion for Pure ADC:**
-- Which project(s) work? ________________
-- Which project(s) fail? ________________
+- Which project(s) work? **Quota project**
+- Which project(s) fail? **gcloud config project** is not used for API enablement checks. The call will fail if the API is not enabled in the quota project.
 
-### Test 3: ADC + client-id-file Results
+### Test 3: ADC with a User-Provided OAuth Client Results
+
+**Tested on:** December 15, 2025
+Account Type: A personal Gmail account
+**Isolation Strategy:** A user-provided OAuth client (from Project A) was used to log in. The ADC Quota Project (B) and gcloud Config Project (C) were set to distinct, separate projects. This allowed isolation of all three project types.
 
 | Scenario | API Enabled In | Result | Error (if any) |
 |----------|---------------|--------|----------------|
-| 3.1 | OAuth client project (A) | | |
-| 3.2 | Quota project (B) | | |
-| 3.3 | Config project (C) | | |
+| 3.1 | OAuth client project (A) | FAIL (Enabled in A, Disabled in B and C) | Expected failure: API not enabled. Confirmed consistent error pointing to Quota Project (B), proving OAuth client project (A) is not used. |
+| 3.2 | Quota project (B) | PASS (Enabled) / FAIL (Disabled) | Confirmed API not enabled error when disabled in B. |
+| 3.3 | Config project (C) | FAIL (Enabled in C, Disabled in B) | Expected failure: API not enabled. Confirmed consistent error pointing to Quota Project (B), proving gcloud config project (C) is not used. |
 
-**Conclusion for ADC + client-id-file:**
-- Which project(s) work? ________________
-- Which project(s) fail? ________________
+**Conclusion for ADC with a User-Provided OAuth Client:**
+- Which project(s) work? **Quota project**
+- Which project(s) fail? **OAuth client project** and **gcloud config project** are not used for API enablement checks. The call will fail if the API is not enabled in the quota project.
 
 ### Overall Summary
 
-| Auth Mode | Project That Must Have API Enabled |
-|-----------|-----------------------------------|
-| Token Profile | |
-| Pure ADC | |
-| ADC + client-id-file | |
+| Authentication Method                        | Project That Must Have API Enabled     |
+|----------------------------------------------|----------------------------------------|
+| **`gwsa` Profile (User-Provided OAuth Client)**  | **OAuth client project**               |
+| **ADC with Google's Built-in OAuth Client**    | **ADC quota project**                  |
+| **ADC with a User-Provided OAuth Client**      | **ADC quota project**                  |
 
-**Does gcloud config project ever matter?** ________________
+**Does `gcloud config project` ever matter?** No, it has no impact on API enablement checks.
 
-**Is quota project and API-enabled project always the same?** ________________
+**Is quota project and API-enabled project always the same?** For ADC-based flows, yes. The quota project serves as the project where API enablement is checked and usage is attributed.
 
----
 
-## Partial Results (From Previous Session)
 
 ### Token Profile
 - Error message explicitly named the OAuth client project number

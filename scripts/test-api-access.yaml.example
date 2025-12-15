@@ -1,0 +1,44 @@
+# This is an example configuration file for the API access validation script.
+# Copy this file to 'scripts/test-api-access.yaml' and fill in the actual
+# values for your testing environment. The 'test-api-access.yaml' file
+# is gitignored to protect sensitive information.
+
+token_profile_test:
+    # User account (e.g., a personal Gmail) for token profile testing.
+    # This user must own or have access to the specified doc_id.
+    user: "user@gmail.com"
+
+    # The name of the gwsa profile to use for the test.
+    profile_name: "test-profile"
+
+    # The ID of a Google Doc that the 'user' has at least viewer access to.
+    doc_id: "YOUR_DOC_ID_FOR_TOKEN_TESTS"
+
+    projects:
+        # Project A: The GCP project where the OAuth Client ID (client_secrets.json) was created.
+        # This is the project we hypothesize is pivotal for Token Profiles.
+        oauth_client: "your-oauth-client-project-id"
+
+        # Project B: A distinct GCP project used to isolate the ADC Quota Project setting.
+        # This user must have 'serviceusage.services.use' permission on this project.
+        adc_quota: "your-adc-quota-project-id"
+
+        # Project C: Another distinct GCP project used to isolate the gcloud config project setting.
+        gcloud_config: "your-gcloud-config-project-id"
+
+adc_test:
+    # User account (e.g., a corporate/Workspace account) for ADC testing.
+    # This user must own or have access to the specified doc_id.
+    user: "user@your-domain.com"
+
+    # The ID of a Google Doc that the 'user' has at least viewer access to.
+    doc_id: "YOUR_DOC_ID_FOR_ADC_TESTS"
+
+    projects:
+        # Project B: The GCP project to be set as the ADC Quota Project.
+        # This is the project we hypothesize is pivotal for Pure ADC.
+        # This user must have 'serviceusage.services.use' permission on this project.
+        adc_quota: "your-adc-quota-project-for-adc"
+
+        # Project C: Another distinct GCP project used to isolate the gcloud config project setting.
+        gcloud_config: "your-gcloud-config-project-for-adc"

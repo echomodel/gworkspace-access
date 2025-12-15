@@ -52,11 +52,11 @@ You need a Google Cloud Platform project with APIs enabled. There are two things
 
 ### Step 2: Which Project to Enable Them In
 
-| If you use... | Enable APIs in... |
-|---------------|-------------------|
-| Token Profile | The OAuth client project |
-| ADC with `--client-id-file` | The OAuth client project |
-| Pure ADC | Your quota project |
+| If you use...                                  | Enable APIs in...         |
+|------------------------------------------------|---------------------------|
+| **`gwsa` Profile (User-Provided OAuth Client)**  | The **OAuth client project** |
+| **ADC with Google's Built-in OAuth Client**    | Your **quota project**      |
+| **ADC with a User-Provided OAuth Client**      | Your **quota project**      |
 
 **How to find your project:**
 
@@ -79,76 +79,66 @@ gcloud services enable chat.googleapis.com --project=YOUR_PROJECT_ID
 
 ## Authentication Methods
 
-### Token Profiles (Recommended)
+There are three primary authentication flows, distinguished by the origin of the OAuth 2.0 Client ID.
 
-Uses your own OAuth client credentials. Works with all account types.
+### 1. `gwsa` Profiles (User-Provided OAuth Client)
 
-**Setup:**
-1. Go to [Google Cloud Console](https://console.developers.google.com/) → APIs & Services → Credentials
-2. Click "Create Credentials" → "OAuth client ID"
-3. Select **"Desktop app"**
-4. Download the JSON file
-5. Import into gwsa:
-   ```bash
-   gwsa client import /path/to/client_secrets.json
-   gwsa profiles add default
-   gwsa profiles use default
-   ```
+This method uses a user-provided OAuth client (`client_secrets.json`) but manages the token flow independently of `gcloud`'s ADC file. It is the most flexible and recommended method.
 
-### ADC Profiles
+-   **Pivotal Project for API Enablement:** The **OAuth client project** (where `client_secrets.json` was created).
 
-Uses gcloud's authentication.
+-   **Setup:**
+    1.  Go to [Google Cloud Console](https://console.developers.google.com/) → APIs & Services → Credentials
+    2.  Click "Create Credentials" → "OAuth client ID"
+    3.  Select **"Desktop app"**
+    4.  Download the JSON file
+    5.  Import into `gwsa`:
+        ```bash
+        gwsa client import /path/to/client_secrets.json
+        gwsa profiles add default
+        gwsa profiles use default
+        ```
 
-#### Pure ADC
+### 2. ADC with Google's Built-in OAuth Client
 
-Uses Google's built-in OAuth client.
+This method is initiated by running `gcloud auth application-default login` **without** the `--client-id-file` flag. It uses Google's own internal OAuth client.
 
-```bash
-gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email
+-   **Pivotal Project for API Enablement:** The **ADC quota project**.
 
-gwsa profiles refresh adc
-gwsa profiles use adc
-```
+-   **Setup:**
+    ```bash
+    gcloud auth application-default login --scopes=...
+    gcloud auth application-default set-quota-project YOUR_QUOTA_PROJECT
+    gwsa profiles refresh adc
+    gwsa profiles use adc
+    ```
 
-> **Note:** Pure ADC may be blocked for Workspace scopes on some accounts. If you see "This app is blocked", use a Token Profile instead.
+### 3. ADC with a User-Provided OAuth Client
 
-#### ADC with Your Own Client
+This method is initiated by running `gcloud auth application-default login` **with** the `--client-id-file` flag. It uses your own OAuth client but stores the credentials in the `gcloud` ADC file.
 
-Uses your own OAuth client via the ADC system. APIs must be enabled in the **OAuth client project** (the project where `client_secrets.json` was created), not the quota project.
+-   **Pivotal Project for API Enablement:** The **ADC quota project**. (Note: This is counter-intuitive; the OAuth client project is *not* used for API checks in this flow.)
 
-```bash
-gcloud auth application-default login \
-  --client-id-file=/path/to/client_secrets.json \
-  --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email
-```
+-   **Setup:**
+    ```bash
+    gcloud auth application-default login \
+      --client-id-file=/path/to/client_secrets.json \
+      --scopes=...
+    gcloud auth application-default set-quota-project YOUR_QUOTA_PROJECT
+    gwsa profiles refresh adc
+    gwsa profiles use adc
+    ```
 
-### Quota Project (Pure ADC only)
+### Quota Project (for ADC flows)
 
-When using **pure ADC** (without `--client-id-file`), Google needs to know which GCP project to use for API access. This is the **quota project**.
+When using any ADC-based flow (`gcloud auth application-default login`), Google needs a **quota project** to associate with your API usage for billing and quota enforcement.
 
-> **Note:** If you use ADC with `--client-id-file`, the OAuth client project is used instead - see [Which Project to Enable Them In](#step-2-which-project-to-enable-them-in).
+-   **When is it required?** It's required for both ADC with Google's client and ADC with a user-provided client, especially for corporate/Workspace accounts.
+-   **How to set it:** Use `gcloud auth application-default set-quota-project YOUR_PROJECT_ID`.
 
-**When do you need a quota project?**
-- Corporate/Workspace accounts: Required
-- Personal Gmail: Usually not required
-
-**How it gets set:**
-- `gcloud auth application-default login` may prompt you to set one
-- Or set it manually (see below)
-- If not set, API calls may fail with "API not enabled" errors
-
-**Set the quota project:**
-```bash
-gcloud auth application-default set-quota-project YOUR_PROJECT_ID
-```
-
-**Check current quota project:**
-```bash
-cat ~/.config/gcloud/application_default_credentials.json | jq -r '.quota_project_id'
-```
-
-> **Important:** `gcloud config get-value project` returns gcloud's CLI config project, which is **not** the ADC quota project.
+> **Important: `gcloud config set project` vs. `gcloud auth application-default set-quota-project`**
+> -   `gcloud config set project <PROJECT_ID>` changes only the default project for the **`gcloud` CLI**. It performs a permissive check for general project visibility (e.g., `resourcemanager.projects.get`). It allows the operation even if the user has limited permissions, issuing only a warning.
+> -   `gcloud auth application-default set-quota-project <PROJECT_ID>` directly configures **ADC**. It performs a strict, mandatory check for the `serviceusage.services.use` permission. This command will **fail** if the authenticated ADC user lacks this specific permission, as it has direct billing and quota implications.
 
 ---
 
