@@ -320,12 +320,8 @@ For configuration instructions, see **[MCP-SERVER.md](MCP-SERVER.md)**.
 
 MCP tools for Google Drive file management (v0.4.0):
 
-| Tool | Description |
-|------|-------------|
-| **`drive_list_folder`** | List contents of a folder |
-| **`drive_create_folder`** | Create new folders |
-| **`drive_upload`** | Upload a file |
-| **`drive_find_folder`** | Find folder by path (e.g., `Projects/my-folder`) |
+*   **Google Drive**: List folders, upload files, create folders.
+*   **Google Chat**: List spaces, members, and search messages. [Read the Chat Guide](CHAT.md).
 
 **Not yet implemented:** `drive_search` (search by query), `drive_download` (download files)
 

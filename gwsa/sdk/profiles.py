@@ -474,22 +474,33 @@ def update_adc_cached_metadata(email: Optional[str] = None,
 
 def check_adc_changed() -> bool:
     """
-    Check if ADC credentials have changed since last validation.
+    Check if the ADC user has changed since last validation.
 
     Returns:
-        True if ADC file hash differs from cached hash (or no cache exists)
+        True if the live ADC email differs from the cached email.
     """
-    cached = load_adc_cached_metadata()
-    cached_hash = cached.get("adc_file_hash")
+    from .auth import get_token_info
+    import google.auth
+    from google.oauth2.credentials import Credentials
 
-    if cached_hash is None:
-        return True
+    cached_email = get_adc_cached_email()
+    if not cached_email:
+        return True  # If no email is cached, we must re-validate.
 
-    current_hash = _compute_adc_file_hash()
-    if current_hash is None:
-        return True
+    try:
+        # Get the current, live ADC credentials.
+        creds, _ = google.auth.default()
+        
+        # Get the email associated with the live credentials.
+        token_info = get_token_info(creds)
+        live_email = token_info.get("email")
 
-    return cached_hash != current_hash
+        # If the emails match, the profile has not changed in a meaningful way.
+        return cached_email != live_email
+
+    except Exception as e:
+        logger.warning(f"Could not validate ADC tokeninfo: {e}")
+        return True  # If we can't check, assume it has changed.
 
 
 def get_adc_cached_email() -> Optional[str]:

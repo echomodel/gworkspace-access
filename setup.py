@@ -12,6 +12,7 @@ setup(
     install_requires=[
         'google-api-python-client',
         'google-auth-oauthlib',
+        'google-apps-chat',
         'python-dotenv',
         'click>=8.0',
         'PyYAML',

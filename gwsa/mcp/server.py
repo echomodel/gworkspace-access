@@ -14,12 +14,287 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 from googleapiclient.errors import HttpError
 
-from gwsa.sdk import profiles, mail, docs, drive, auth
+from gwsa.sdk import profiles, mail, docs, drive, auth, chat
 
 logger = logging.getLogger(__name__)
 
 # Create the MCP server
 mcp = FastMCP("gwsa")
+
+
+@mcp.tool()
+async def list_chat_spaces(
+    limit: int = 10, 
+    space_type: Optional[str] = None, 
+    verbose: bool = False, 
+    resolve_names: bool = False
+) -> dict[str, Any]:
+    """
+    List Google Chat spaces with filtering and optional detailed output.
+
+    This tool is the powerful equivalent of the 'gwsa chat spaces list' CLI command.
+    By default, it returns a simple list of spaces. Use the optional flags to
+    retrieve detailed metadata and participant names.
+
+    Args:
+        limit: Max number of spaces to return (default: 10).
+        space_type: Optional. Filter by type: 'DIRECT_MESSAGE', 'GROUP_CHAT', 'SPACE'.
+        verbose: Optional. If True, returns all available metadata for each space,
+                 such as 'lastActiveTime' and 'membershipCount'.
+        resolve_names: Optional. If True, resolves and includes participant first names
+                       for DMs and group chats (slower, but results are cached).
+
+    Returns:
+        A dictionary containing a list of space objects. The level of detail in
+        each object depends on the flags used.
+        - Default: {"name", "displayName", "type"}
+        - resolve_names=True: "displayName" is replaced with a comma-separated list of names.
+        - verbose=True: The full, rich space object from the API is returned, potentially
+          enriched with 'participant_names' if resolve_names is also True.
+
+    Examples:
+        # Get the 10 most recent spaces of any type
+        list_chat_spaces()
+
+        # Get the 5 most recent Direct Messages
+        list_chat_spaces(limit=5, space_type='DIRECT_MESSAGE')
+
+        # Get full details for the 10 most recent spaces, including member names
+        list_chat_spaces(verbose=True, resolve_names=True)
+    """
+    try:
+        chat_service = chat.get_chat_service()
+        
+        filter_query = ''
+        if space_type:
+            filter_query = f"space_type = \"{space_type.upper()}\""
+            
+        result = chat_service.spaces().list(pageSize=limit, filter=filter_query).execute()
+        spaces = result.get('spaces', [])
+
+        if resolve_names:
+            from gwsa.sdk.people import get_person_name
+            from gwsa.sdk.cache import get_cached_members, set_cached_members
+            for space in spaces:
+                if space.get('spaceType') in ['DIRECT_MESSAGE', 'GROUP_CHAT']:
+                    try:
+                        members = get_cached_members(space['name'])
+                        if not members:
+                            members_result = chat_service.spaces().members().list(parent=space['name'], pageSize=10).execute()
+                            members = members_result.get('memberships', [])
+                            set_cached_members(space['name'], members)
+                        
+                        participant_names = [
+                            get_person_name(m.get('member', {}).get('name')).split(' ')[0]
+                            for m in members
+                        ]
+                        space['participant_names'] = ", ".join(participant_names)
+                    except Exception as e:
+                        logger.warning(f"Could not resolve names for space {space['name']}: {e}")
+                        space['participant_names'] = "Error"
+
+        # If not verbose, return a simplified list. Otherwise, return the full objects.
+        if not verbose:
+            simplified_spaces = []
+            for space in spaces:
+                s = {
+                    "name": space.get("name"),
+                    "displayName": space.get("displayName", "Unknown"),
+                    "type": space.get("spaceType"),
+                }
+                if 'participant_names' in space:
+                    s['displayName'] = space['participant_names']
+                simplified_spaces.append(s)
+            return {"spaces": simplified_spaces}
+        else:
+            # For verbose output, just return the full (and potentially enriched) space objects
+            return {"spaces": spaces}
+
+    except Exception as e:
+        logger.error(f"Error listing chat spaces: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def list_chat_members(space_id: str, limit: int = 100) -> dict[str, Any]:
+    """
+    List members of a Google Chat space, using a cache for name resolution.
+
+    Args:
+        space_id: The resource name of the space (e.g., "spaces/AAA...").
+        limit: Maximum number of members to return (default 100).
+
+    Returns:
+        Dict with a list of members, including their resource name, display name, and type.
+        Results are cached to improve performance on subsequent calls for the same space.
+    """
+    try:
+        from gwsa.sdk.people import get_person_name
+        from gwsa.sdk.cache import get_cached_members, set_cached_members
+
+        members = get_cached_members(space_id)
+        if not members:
+            chat_service = chat.get_chat_service()
+            result = chat_service.spaces().members().list(parent=space_id, pageSize=limit).execute()
+            members = result.get('memberships', [])
+            set_cached_members(space_id, members)
+        
+        simplified_members = []
+        for m in members:
+            member = m.get('member', {})
+            user_id = member.get('name')
+            # The member object from the Chat API often has a displayName.
+            # We fall back to our cached People API lookup if it's missing.
+            display_name = member.get('displayName') or get_person_name(user_id)
+                
+            simplified_members.append({
+                "name": user_id,
+                "displayName": display_name,
+                "type": member.get("type"),
+            })
+            
+        return {"members": simplified_members}
+    except Exception as e:
+        logger.error(f"Error listing chat members for space {space_id}: {e}")
+        return {"error": str(e)}
+
+
+
+@mcp.tool()
+async def list_chat_messages(space_id: str, filter: str = None, page_size: int = 25) -> dict[str, Any]:
+    """
+    Lists messages in a Google Chat space, with an optional filter.
+
+    NOTE: The filter only supports filtering by 'createTime' (e.g., 'createTime > "2025-12-15T10:00:00Z"')
+    and 'thread.name' (e.g., 'thread.name = "spaces/XYZ/threads/ABC"'). It does NOT support full-text search.
+
+    Args:
+        space_id: The resource name of the space, e.g., "spaces/AAAAAAAAAAA".
+        filter: Optional. The filter query to apply.
+        page_size: The maximum number of messages to return.
+
+    Returns:
+        A dictionary containing a list of matching messages with their name, text, createTime, and author, along with a nextPageToken if more results are available.
+    """
+    try:
+        chat_service = chat.get_chat_service()
+        response = chat_service.spaces().messages().list(parent=space_id, filter=filter, pageSize=page_size).execute()
+        
+        # Simplify the output for clarity
+        from gwsa.sdk.people import get_person_name
+        
+        messages = response.get('messages', [])
+        simplified_messages = []
+        for message in messages:
+            sender = message.get("sender", {})
+            user_id = sender.get("name")
+            author_name = get_person_name(user_id)
+            
+            simplified_messages.append({
+                "name": message.get("name"),
+                "text": message.get("text"),
+                "createTime": message.get("createTime"),
+                "author": author_name,
+            })
+        
+        return {
+            "messages": simplified_messages,
+            "nextPageToken": response.get("nextPageToken"),
+        }
+    except Exception as e:
+        logger.error(f"Error listing chat messages in space '{space_id}': {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def search_chat_messages(space_id: str, query: str, limit: int = 100) -> dict[str, Any]:
+    """
+    Search for messages in a Google Chat space containing specific text.
+    
+    NOTE: This performs a client-side search by fetching the most recent messages
+    and filtering them in Python. It may be slow for deep searches.
+
+    Args:
+        space_id: The resource name of the space, e.g., "spaces/AAAAAAAAAAA".
+        query: The text string to search for (case-insensitive).
+        limit: The maximum number of recent messages to scan (default 100).
+
+    Returns:
+        A dictionary containing a list of matching messages.
+    """
+    try:
+        chat_service = chat.get_chat_service()
+        results = chat_service.spaces().messages().list(parent=space_id, pageSize=limit).execute()
+        messages = results.get('messages', [])
+        
+        matches = [msg for msg in messages if query.lower() in msg.get('text', '').lower()]
+        
+        from gwsa.sdk.people import get_person_name
+        
+        simplified_messages = []
+        for msg in matches:
+            author_name = get_person_name(msg.get('sender', {}).get('name'))
+            simplified_messages.append({
+                "name": msg.get("name"),
+                "text": msg.get("text"),
+                "createTime": msg.get("createTime"),
+                "author": author_name,
+            })
+
+        return {
+            "messages": simplified_messages,
+            "scanned_count": len(messages),
+            "matches_found": len(simplified_messages),
+        }
+    except Exception as e:
+        logger.error(f"Error searching chat messages in space '{space_id}': {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_recent_direct_messages(limit: int = 10) -> dict[str, Any]:
+    """
+    Get the most recent Direct Messages (DMs).
+
+    This is more convenient than filtering all spaces. It returns a sorted list
+    of the most recent DMs.
+
+    Args:
+        limit: The maximum number of recent DMs to return.
+
+    Returns:
+        A dictionary containing a list of the most recent DM spaces.
+    """
+    try:
+        from gwsa.sdk.chat import get_recent_chats
+        chats = get_recent_chats(chat_type='DIRECT_MESSAGE', limit=limit)
+        return {"direct_messages": chats}
+    except Exception as e:
+        logger.error(f"Error getting recent DMs: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_recent_group_chats(limit: int = 10) -> dict[str, Any]:
+    """
+    Get the most recent Group Chats.
+
+    This is more convenient than filtering all spaces. It returns a sorted list
+    of the most recent group chats.
+
+    Args:
+        limit: The maximum number of recent group chats to return.
+
+    Returns:
+        A dictionary containing a list of the most recent group chat spaces.
+    """
+    try:
+        from gwsa.sdk.chat import get_recent_chats
+        chats = get_recent_chats(chat_type='GROUP_CHAT', limit=limit)
+        return {"group_chats": chats}
+    except Exception as e:
+        logger.error(f"Error getting recent group chats: {e}")
+        return {"error": str(e)}
 
 
 # =============================================================================

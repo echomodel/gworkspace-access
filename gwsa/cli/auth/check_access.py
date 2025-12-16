@@ -119,12 +119,38 @@ def test_drive_access(creds) -> dict:
         api_logger.setLevel(old_level)
 
 
+def test_chat_access(creds) -> dict:
+    """Test Google Chat API access."""
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    api_logger = logging.getLogger('googleapiclient.http')
+    old_level = api_logger.level
+    api_logger.setLevel(logging.ERROR)
+
+    try:
+        chat = build("chat", "v1", credentials=creds)
+        # Try to list spaces (limit 1) to verify access
+        chat.spaces().list(pageSize=1).execute()
+        return {"success": True}
+    except HttpError as e:
+        if e.resp.status == 403:
+            return {"success": False, "error": "insufficient permissions"}
+        else:
+            return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        api_logger.setLevel(old_level)
+
+
 # Map of supported API names to test functions
 SUPPORTED_APIS = {
     "mail": test_gmail_access,
     "docs": test_docs_access,
     "sheets": test_sheets_access,
     "drive": test_drive_access,
+    "chat": test_chat_access,
 }
 
 

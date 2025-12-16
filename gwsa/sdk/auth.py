@@ -218,6 +218,12 @@ FEATURE_SCOPES = {
     "sheets": {"https://www.googleapis.com/auth/spreadsheets"},
     "docs": {"https://www.googleapis.com/auth/documents"},
     "drive": {"https://www.googleapis.com/auth/drive"},
+    "chat": {
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+        "https://www.googleapis.com/auth/chat.messages.readonly",
+        "https://www.googleapis.com/auth/chat.memberships.readonly",
+        "https://www.googleapis.com/auth/directory.readonly",
+    },
 }
 
 IDENTITY_SCOPES = {"https://www.googleapis.com/auth/userinfo.email", "openid"}
@@ -235,3 +241,31 @@ def get_feature_status(granted_scopes: set) -> dict:
     for feature, required_scopes in FEATURE_SCOPES.items():
         status[feature] = required_scopes.issubset(effective)
     return status
+
+
+def get_all_scopes(workspace: bool = False) -> list[str]:
+    """
+    Get all scopes required for the requested feature set.
+
+    Args:
+        workspace: If True, include scopes for Google Workspace-specific features
+                   (Chat, People API). If False, only include standard consumer
+                   scopes (Gmail, Drive, Docs, Sheets).
+
+    Returns:
+        A list of scope URLs.
+    """
+    scopes = set()
+    
+    # Standard scopes (available to all users)
+    for feature in ["mail", "sheets", "docs", "drive"]:
+        scopes.update(FEATURE_SCOPES[feature])
+    
+    # Workspace-specific scopes
+    if workspace:
+        scopes.update(FEATURE_SCOPES["chat"])
+        
+    # Always include identity scopes
+    scopes.update(IDENTITY_SCOPES)
+    
+    return sorted(list(scopes))
