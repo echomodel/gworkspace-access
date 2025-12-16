@@ -208,6 +208,8 @@ def label_command(message_id, label_name, remove):
         sys.exit(1)
 
 
+from .mail.threads import threads as threads_module
+
 # Add commands to groups using add_command()
 gwsa.add_command(status, name='status')
 gwsa.add_command(client_module, name='client')
@@ -222,6 +224,7 @@ gwsa.add_command(chat_module, name='chat')
 mail.add_command(search)
 mail.add_command(read_command, name='read')
 mail.add_command(label_command, name='label')
+mail.add_command(threads_module, name='threads')
 
 
 def main():

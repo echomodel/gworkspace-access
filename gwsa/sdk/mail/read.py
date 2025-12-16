@@ -102,6 +102,7 @@ def read_message(
 
     message_details = {
         "id": message_id,
+        "threadId": msg.get('threadId'),
         "subject": subject,
         "from": from_addr,
         "to": to_addr,
@@ -208,3 +209,50 @@ def get_attachment(
         'data': data,
         'size': attachment.get('size', len(data)),
     }
+
+def get_thread(
+    thread_id: str,
+    profile: str = None,
+    use_adc: bool = False,
+) -> Dict[str, Any]:
+    """
+    Retrieve a full Gmail thread, including all its messages.
+
+    Args:
+        thread_id: The Gmail thread ID
+        profile: Optional profile name to use
+        use_adc: Force use of Application Default Credentials
+
+    Returns:
+        Dict containing thread details, with a list of simplified messages.
+    """
+    service = get_gmail_service(profile=profile, use_adc=use_adc)
+    logger.debug(f"Retrieving thread with ID: {thread_id}")
+
+    thread = service.users().threads().get(userId='me', id=thread_id).execute()
+
+    # Simplify each message in the thread
+    simplified_messages = []
+    for msg in thread.get('messages', []):
+        headers = msg.get('payload', {}).get('headers', [])
+        subject = _get_header(headers, 'Subject')
+        from_addr = _get_header(headers, 'From')
+        to_addr = _get_header(headers, 'To')
+        date = _get_header(headers, 'Date')
+        
+        simplified_messages.append({
+            'id': msg.get('id'),
+            'subject': subject,
+            'from': from_addr,
+            'to': to_addr,
+            'date': date,
+            'snippet': msg.get('snippet', ''),
+        })
+
+    return {
+        'id': thread.get('id'),
+        'snippet': thread.get('snippet'),
+        'historyId': thread.get('historyId'),
+        'messages': simplified_messages,
+    }
+

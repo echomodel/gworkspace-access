@@ -609,6 +609,25 @@ async def download_email_attachment(
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+async def get_email_thread(thread_id: str) -> dict[str, Any]:
+    """
+    Retrieve a full Gmail thread, including all its messages.
+
+    Args:
+        thread_id: The Gmail thread ID.
+
+    Returns:
+        Dict containing thread details, with a list of simplified messages.
+    """
+    try:
+        thread = mail.get_thread(thread_id=thread_id)
+        return thread
+    except Exception as e:
+        logger.error(f"Error getting email thread '{thread_id}': {e}")
+        return {"error": str(e)}
+
+
 # =============================================================================
 # Docs Tools
 # =============================================================================
