@@ -855,6 +855,29 @@ async def drive_upload(
 
 
 @mcp.tool()
+async def drive_download(
+    file_id: str,
+    save_path: str
+) -> dict[str, Any]:
+    """
+    Download a file from Google Drive.
+
+    Args:
+        file_id: The Drive file ID to download
+        save_path: Local path where the file should be saved
+
+    Returns:
+        Dict with success status, file path, and size in bytes
+    """
+    try:
+        result = drive.download_file(file_id=file_id, save_path=save_path)
+        return result
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
 async def drive_find_folder(path: str) -> dict[str, Any]:
     """
     Find a folder by its path (e.g., 'Projects/my-project/cloud-backups').

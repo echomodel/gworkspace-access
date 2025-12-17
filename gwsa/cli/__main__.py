@@ -15,8 +15,8 @@ from gwsa.sdk.auth import get_credentials
 from . import setup_local
 from .sheets_commands import sheets as sheets_module
 from .docs_commands import docs as docs_module
+from .drive_commands import drive_group as drive_module
 from .config_commands import config_group as config_module
-from .profiles_commands import profiles as profiles_module
 from .profiles_commands import profiles as profiles_module
 from .client_commands import client as client_module
 from .chat import chat as chat_module
@@ -215,8 +215,8 @@ gwsa.add_command(config_module, name='config')
 gwsa.add_command(profiles_module, name='profiles')
 gwsa.add_command(mail)
 gwsa.add_command(sheets_module, name='sheets')
-gwsa.add_command(sheets_module, name='sheets')
 gwsa.add_command(docs_module, name='docs')
+gwsa.add_command(drive_module, name='drive')
 gwsa.add_command(chat_module, name='chat')
 
 mail.add_command(search)
