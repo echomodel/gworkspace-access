@@ -1,13 +1,16 @@
 """Google Docs reading operations."""
 
+from googleapiclient.errors import HttpError
+
 from typing import List, Dict, Any
 
 from .service import get_docs_service
+from ..drive.service import get_drive_service
 
 
 def get_document(doc_id: str) -> dict:
     """
-    Get a document's full structure.
+    Get a document's full structure after verifying it is a Google Doc.
 
     Args:
         doc_id: The Google Doc ID
@@ -18,7 +21,27 @@ def get_document(doc_id: str) -> dict:
             - title
             - body (with content array)
             - revisionId
+            
+    Raises:
+        ValueError: If the document ID is not for a Google Doc.
     """
+    drive_service = get_drive_service()
+    try:
+        file_metadata = drive_service.files().get(fileId=doc_id, fields='mimeType').execute()
+        mime_type = file_metadata.get('mimeType')
+
+        if mime_type != 'application/vnd.google-apps.document':
+            raise ValueError(
+                f"File with ID '{doc_id}' is not a Google Doc (MIME type: {mime_type}). "
+                f"Use the 'drive_download' tool for non-native formats like PDFs or images."
+            )
+    except HttpError as e:
+        # If the file doesn't exist in Drive at all, the Docs API call will fail anyway.
+        # This check is specifically to prevent trying to read non-docs files.
+        # Re-raise or handle other Drive API errors as needed.
+        # For now, we'll let it proceed and fail at the Docs API level if the file is not found.
+        pass
+
     service = get_docs_service()
     return service.documents().get(documentId=doc_id).execute()
 

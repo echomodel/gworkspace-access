@@ -658,6 +658,10 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
     """
     Read a Google Doc by ID.
 
+    NOTE: This tool is for native Google Docs only. It will fail if used with
+    PDFs, images, or other non-Google Doc files stored in Google Drive. For those
+    files, use the 'drive_download' tool to save them locally and then read them.
+
     Args:
         doc_id: The Google Doc ID
         format: "content" for metadata + text, "text" for plain text only,
@@ -676,6 +680,9 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
         else:
             content = docs.get_document_content(doc_id)
             return content
+    except ValueError as e:
+        logger.error(f"ValueError reading doc: {e}")
+        return {"error": str(e)}
     except HttpError as e:
         if e.resp.status == 403:
             logger.error(f"Permission error reading doc: {e}")
