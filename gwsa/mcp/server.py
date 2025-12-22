@@ -803,7 +803,9 @@ async def drive_list_folder(
         max_results: Maximum number of items to return (default 100)
 
     Returns:
-        Dict with list of files/folders including id, name, type, and modified_time
+        Dict with list of files/folders including id, name, type, mime_type, modified_time, size.
+        For shortcuts (mime_type: application/vnd.google-apps.shortcut), also includes
+        target_id and target_mime_type - use target_id with drive_download to get the actual file.
     """
     try:
         result = drive.list_folder(folder_id=folder_id, max_results=max_results)

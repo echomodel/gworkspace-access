@@ -32,21 +32,31 @@ def list_folder(
         q=f"'{parent_id}' in parents and trashed = false",
         pageSize=max_results,
         pageToken=page_token,
-        fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
+        fields="nextPageToken, files(id, name, mimeType, modifiedTime, size, shortcutDetails)",
         orderBy="folder,name"
     ).execute()
 
     items = []
     for file in results.get("files", []):
         is_folder = file.get("mimeType") == "application/vnd.google-apps.folder"
-        items.append({
+        is_shortcut = file.get("mimeType") == "application/vnd.google-apps.shortcut"
+
+        item = {
             "id": file.get("id"),
             "name": file.get("name"),
             "type": "folder" if is_folder else "file",
             "mime_type": file.get("mimeType"),
             "modified_time": file.get("modifiedTime"),
             "size": file.get("size")
-        })
+        }
+
+        # For shortcuts, include target info for downloading
+        if is_shortcut:
+            shortcut_details = file.get("shortcutDetails", {})
+            item["target_id"] = shortcut_details.get("targetId")
+            item["target_mime_type"] = shortcut_details.get("targetMimeType")
+
+        items.append(item)
 
     return {
         "items": items,
