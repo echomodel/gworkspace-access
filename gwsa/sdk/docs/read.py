@@ -5,6 +5,7 @@ from googleapiclient.errors import HttpError
 from typing import List, Dict, Any
 
 from .service import get_docs_service
+from .validators import validate_doc_id
 from ..drive.service import get_drive_service
 
 
@@ -24,7 +25,11 @@ def get_document(doc_id: str) -> dict:
             
     Raises:
         ValueError: If the document ID is not for a Google Doc.
+        LocalPathError: If the ID looks like a local file path.
+        InvalidDocIdError: If the ID is malformed.
     """
+    validate_doc_id(doc_id)
+
     drive_service = get_drive_service()
     try:
         file_metadata = drive_service.files().get(fileId=doc_id, fields='mimeType').execute()

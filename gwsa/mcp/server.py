@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from googleapiclient.errors import HttpError
 
 from gwsa.sdk import profiles, mail, docs, drive, auth, chat
+from gwsa.sdk.exceptions import LocalPathError, InvalidDocIdError
 
 logger = logging.getLogger(__name__)
 
@@ -635,7 +636,7 @@ async def get_email_thread(thread_id: str) -> dict[str, Any]:
 @mcp.tool()
 async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[str, Any]:
     """
-    List Google Docs accessible to the current user.
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
 
     Args:
         max_results: Maximum number of documents to return (default 25)
@@ -655,7 +656,9 @@ async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[
 @mcp.tool()
 async def create_doc(title: str, body_text: Optional[str] = None) -> dict[str, Any]:
     """
-    Create a new Google Doc.
+    Create a new Google Doc in the cloud.
+
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
 
     Args:
         title: Title for the new document
@@ -677,9 +680,7 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
     """
     Read a Google Doc by ID.
 
-    NOTE: This tool is for native Google Docs only. It will fail if used with
-    PDFs, images, or other non-Google Doc files stored in Google Drive. For those
-    files, use the 'drive_download' tool to save them locally and then read them.
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
 
     Args:
         doc_id: The Google Doc ID
@@ -699,6 +700,8 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
         else:
             content = docs.get_document_content(doc_id)
             return content
+    except (LocalPathError, InvalidDocIdError) as e:
+        return {"error": str(e)}
     except ValueError as e:
         logger.error(f"ValueError reading doc: {e}")
         return {"error": str(e)}
@@ -723,6 +726,8 @@ async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
     """
     Append text to the end of a Google Doc.
 
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
+
     Args:
         doc_id: The Google Doc ID
         text: Text to append
@@ -737,6 +742,8 @@ async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
             "document_id": doc_id,
             "write_control": result.get("writeControl", {})
         }
+    except (LocalPathError, InvalidDocIdError) as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error appending to doc: {e}")
         return {"error": str(e)}
@@ -746,6 +753,8 @@ async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
 async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> dict[str, Any]:
     """
     Insert text at a specific position in a Google Doc.
+
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
 
     Args:
         doc_id: The Google Doc ID
@@ -763,6 +772,8 @@ async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> dict[str, Any
             "inserted_at_index": index,
             "write_control": result.get("writeControl", {})
         }
+    except (LocalPathError, InvalidDocIdError) as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error inserting in doc: {e}")
         return {"error": str(e)}
@@ -777,6 +788,8 @@ async def replace_in_doc(
 ) -> dict[str, Any]:
     """
     Replace all occurrences of text in a Google Doc.
+
+    NOTE: This tool works ONLY with remote Google Docs resources in the cloud.
 
     Args:
         doc_id: The Google Doc ID
@@ -800,6 +813,8 @@ async def replace_in_doc(
             "find_text": find_text,
             "replace_with": replace_with
         }
+    except (LocalPathError, InvalidDocIdError) as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error replacing in doc: {e}")
         return {"error": str(e)}

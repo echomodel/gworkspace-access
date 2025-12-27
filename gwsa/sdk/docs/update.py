@@ -3,6 +3,7 @@
 from typing import Optional
 
 from .service import get_docs_service
+from .validators import validate_doc_id
 
 
 def insert_text(doc_id: str, text: str, index: int = 1) -> dict:
@@ -17,6 +18,7 @@ def insert_text(doc_id: str, text: str, index: int = 1) -> dict:
     Returns:
         The batchUpdate response
     """
+    validate_doc_id(doc_id)
     service = get_docs_service()
     requests = [
         {
@@ -43,6 +45,7 @@ def append_text(doc_id: str, text: str) -> dict:
     Returns:
         The batchUpdate response
     """
+    validate_doc_id(doc_id)
     service = get_docs_service()
 
     # Get the document to find the end index
@@ -86,6 +89,7 @@ def replace_text(doc_id: str, find_text: str, replace_with: str, match_case: boo
     Returns:
         The batchUpdate response with occurrencesChanged count
     """
+    validate_doc_id(doc_id)
     service = get_docs_service()
     requests = [
         {
@@ -115,6 +119,7 @@ def batch_update(doc_id: str, requests: list) -> dict:
     Returns:
         The batchUpdate response
     """
+    validate_doc_id(doc_id)
     service = get_docs_service()
     return service.documents().batchUpdate(
         documentId=doc_id,

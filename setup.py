@@ -19,6 +19,11 @@ setup(
         'click_option_group',
         'mcp>=1.0.0',
     ],
+    extras_require={
+        'dev': [
+            'pytest',
+        ],
+    },
     entry_points={
         'console_scripts': [
             'gwsa=gwsa.cli.__main__:main',

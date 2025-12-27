@@ -4,6 +4,7 @@ import json
 import click
 
 from gwsa.sdk import docs as sdk_docs
+from gwsa.sdk.exceptions import LocalPathError, InvalidDocIdError
 from .decorators import require_scopes
 
 
@@ -69,6 +70,8 @@ def read_doc(doc_id, output_format):
             text = sdk_docs.get_document_text(doc_id)
             click.echo(text)
 
+    except (LocalPathError, InvalidDocIdError) as e:
+        raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
 
@@ -83,6 +86,8 @@ def append_to_doc(doc_id, text):
         sdk_docs.append_text(doc_id, text)
         click.echo("Text appended successfully!")
 
+    except (LocalPathError, InvalidDocIdError) as e:
+        raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
 
@@ -99,6 +104,8 @@ def insert_to_doc(doc_id, text, index):
         sdk_docs.insert_text(doc_id, text, index=index)
         click.echo(f"Text inserted at index {index} successfully!")
 
+    except (LocalPathError, InvalidDocIdError) as e:
+        raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
 
@@ -124,6 +131,8 @@ def replace_in_doc(doc_id, find_text, replace_with, ignore_case):
         else:
             click.echo("Replace operation completed.")
 
+    except (LocalPathError, InvalidDocIdError) as e:
+        raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
 
