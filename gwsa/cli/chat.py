@@ -230,7 +230,9 @@ def messages():
 @messages.command("list")
 @click.argument("space_id")
 @click.option("--limit", default=25, help="Maximum number of messages to list.")
-def list_chat_messages(space_id, limit):
+@click.option("--format", default="text", type=click.Choice(['text', 'json'], case_sensitive=False), help="Output format.")
+@click.option("--order-by", default="", help="Order by field (e.g. 'createTime desc').")
+def list_chat_messages(space_id, limit, format, order_by):
     """List messages in a space."""
     try:
         profile = profiles.get_active_profile()
@@ -239,22 +241,48 @@ def list_chat_messages(space_id, limit):
             return
 
         chat_service = get_chat_service()
-        result = chat_service.spaces().messages().list(parent=space_id, pageSize=limit).execute()
-        messages = result.get('messages', [])
+        messages = []
+        page_token = None
+        
+        while len(messages) < limit:
+            remaining = limit - len(messages)
+            fetch_size = min(remaining, 1000)
+            
+            kwargs = {
+                'parent': space_id,
+                'pageSize': fetch_size,
+                'pageToken': page_token
+            }
+            if order_by:
+                kwargs['orderBy'] = order_by
+
+            result = chat_service.spaces().messages().list(**kwargs).execute()
+            
+            batch = result.get('messages', [])
+            if not batch:
+                break
+                
+            messages.extend(batch)
+            
+            page_token = result.get('nextPageToken')
+            if not page_token or len(messages) >= limit:
+                break
         
         if not messages:
             click.echo("No messages found.")
             return
 
-        from gwsa.sdk.people import get_person_name
-
-        for msg in messages:
-            sender = msg.get('sender', {})
-            user_id = sender.get('name')
-            author = get_person_name(user_id)
-            
-            text = msg.get('text', '').replace('\n', ' ')
-            click.echo(f"[{msg.get('createTime')}] {author}: {text[:100]}")
+        if format == 'json':
+            click.echo(json.dumps(messages, indent=2))
+        else:
+            from gwsa.sdk.people import get_person_name
+            for msg in messages:
+                sender = msg.get('sender', {})
+                user_id = sender.get('name')
+                author = get_person_name(user_id)
+                
+                text = msg.get('text', '').replace('\n', ' ')
+                click.echo(f"[{msg.get('createTime')}] {author}: {text[:100]}")
 
     except Exception as e:
         click.echo(f"Error listing messages: {e}", err=True)
