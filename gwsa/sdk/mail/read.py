@@ -103,6 +103,7 @@ def read_message(
     message_details = {
         "id": message_id,
         "threadId": msg.get('threadId'),
+        "messageId": _get_header(headers, 'Message-ID'),  # RFC 2822 Message-ID for replies
         "subject": subject,
         "from": from_addr,
         "to": to_addr,

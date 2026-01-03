@@ -573,6 +573,44 @@ async def send_email(
 
 
 @mcp.tool()
+async def reply_email(
+    message_id: str,
+    body: str,
+    include_quote: bool = True,
+    as_draft: bool = False,
+) -> dict[str, Any]:
+    """
+    Reply to an email message, properly threaded with quoted content.
+
+    Args:
+        message_id: The Gmail message ID to reply to (from search_emails or read_email)
+        body: Plain text body of your reply
+        include_quote: Include quoted original message (default True)
+        as_draft: Create a draft instead of sending immediately (default False)
+
+    Returns:
+        Dict with message/draft ID, thread ID, and success status
+    """
+    try:
+        result = mail.reply_message(
+            reply_to_message_id=message_id,
+            body=body,
+            include_quote=include_quote,
+            as_draft=as_draft,
+        )
+        return {
+            "success": True,
+            "id": result.get("id"),
+            "thread_id": result.get("threadId"),
+            "is_draft": result.get("is_draft", False),
+            "message": "Reply draft created" if result.get("is_draft") else "Reply sent successfully",
+        }
+    except Exception as e:
+        logger.error(f"Error replying to email: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
 async def download_email_attachment(
     message_id: str,
     attachment_id: str,

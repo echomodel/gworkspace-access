@@ -22,7 +22,7 @@ from .service import get_gmail_service
 from .search import search_messages
 from .read import read_message, get_attachment, get_thread
 from .label import modify_labels, add_label, remove_label, list_labels
-from .send import send_message, create_draft
+from .send import send_message, create_draft, reply_message
 
 __all__ = [
     "get_gmail_service",
@@ -36,9 +36,11 @@ __all__ = [
     "list_labels",
     "send_message",
     "create_draft",
+    "reply_message",
 ]
 
 # Convenience aliases
 search = search_messages
 read = read_message
 send = send_message
+reply = reply_message
