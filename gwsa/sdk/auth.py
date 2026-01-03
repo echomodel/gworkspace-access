@@ -30,6 +30,8 @@ SCOPE_ALIASES = {
     "docs": "https://www.googleapis.com/auth/documents",
     "drive-read": "https://www.googleapis.com/auth/drive.readonly",
     "drive": "https://www.googleapis.com/auth/drive",
+    "tasks": "https://www.googleapis.com/auth/tasks",
+    "tasks-read": "https://www.googleapis.com/auth/tasks.readonly",
 }
 
 # Scope implication rules (having X implies having Y)
@@ -218,6 +220,7 @@ FEATURE_SCOPES = {
     "sheets": {"https://www.googleapis.com/auth/spreadsheets"},
     "docs": {"https://www.googleapis.com/auth/documents"},
     "drive": {"https://www.googleapis.com/auth/drive"},
+    "tasks": {"https://www.googleapis.com/auth/tasks"},
     "chat": {
         "https://www.googleapis.com/auth/chat.spaces.readonly",
         "https://www.googleapis.com/auth/chat.messages.readonly",
