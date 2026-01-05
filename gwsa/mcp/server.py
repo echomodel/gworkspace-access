@@ -692,7 +692,11 @@ async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[
 
 
 @mcp.tool()
-async def create_doc(title: str, body_text: Optional[str] = None) -> dict[str, Any]:
+async def create_doc(
+    title: str,
+    body_text: Optional[str] = None,
+    folder_id: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Create a new Google Doc in the cloud.
 
@@ -701,12 +705,13 @@ async def create_doc(title: str, body_text: Optional[str] = None) -> dict[str, A
     Args:
         title: Title for the new document
         body_text: Optional initial body text to insert
+        folder_id: Optional folder ID to create the doc in (default: My Drive root)
 
     Returns:
         Dict with document id, title, and url
     """
     try:
-        result = docs.create_document(title=title, body_text=body_text)
+        result = docs.create_document(title=title, body_text=body_text, folder_id=folder_id)
         return result
     except Exception as e:
         logger.error(f"Error creating doc: {e}")
@@ -959,23 +964,62 @@ async def drive_download(
 
 
 @mcp.tool()
-async def drive_find_folder(path: str) -> dict[str, Any]:
+async def drive_find_folder(
+    path: str,
+    drive_id: str = "my_drive",
+    folder_id: Optional[str] = None,
+) -> dict[str, Any]:
     """
-    Find a folder by its path (e.g., 'Projects/my-project/cloud-backups').
+    Find a folder by navigating a path from a starting location.
 
     Args:
-        path: Folder path with '/' separators
+        path: Folder path with '/' separators (e.g., 'Projects/my-project')
+        drive_id: Starting drive - "my_drive" (default) or a Shared Drive ID.
+                  Ignored if folder_id is provided.
+        folder_id: Start from this folder ID instead of a drive root.
 
     Returns:
-        Dict with folder id, name, and path. Returns error if not found.
+        Dict with folder id, name, and path. Returns error if not found or ambiguous.
     """
     try:
-        result = drive.find_folder_by_path(path)
+        result = drive.find_folder_by_path(path, drive=drive_id, folder_id=folder_id)
         if result:
             return result
         return {"error": f"Folder not found: {path}"}
+    except drive.AmbiguousFolderError as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error finding folder: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def drive_search_folders(
+    name: str,
+    match: str = "contains",
+    limit: int = 50,
+) -> dict[str, Any]:
+    """
+    Search for folders by name across all accessible locations.
+
+    Single API call. Searches My Drive, Shared Drives, and shared-with-me folders.
+
+    Args:
+        name: Folder name to search for.
+        match: "contains" (default) or "exact" match. Case-insensitive.
+        limit: Maximum results to return (default 50).
+
+    Returns:
+        Dict with 'folders' list. Each folder has: id, name, parents (list of IDs),
+        created_time, modified_time, drive_id (None if in My Drive).
+    """
+    try:
+        if match not in ("contains", "exact"):
+            return {"error": f"Invalid match type: {match}. Use 'contains' or 'exact'."}
+        results = drive.search_folders(name, match=match, limit=limit)
+        return {"folders": results, "count": len(results)}
+    except Exception as e:
+        logger.error(f"Error searching folders: {e}")
         return {"error": str(e)}
 
 

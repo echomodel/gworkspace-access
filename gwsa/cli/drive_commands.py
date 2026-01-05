@@ -60,14 +60,57 @@ def download_file(file_id, save_path):
         raise SystemExit(1)
 
 
-@drive_group.command('find-folder')
-@click.argument('path')
+@drive_group.group('folders')
+def folders_group():
+    """Folder search and navigation."""
+    pass
+
+
+@folders_group.command('find')
+@click.option('--name', default=None, help='Search folders by name (contains match by default).')
+@click.option('--path', default=None, help='Navigate to folder by path (e.g., Projects/foo).')
+@click.option('--match', type=click.Choice(['contains', 'exact']), default='contains',
+              help='Match type for --name search.')
+@click.option('--drive', 'drive_id', default='my_drive',
+              help='Starting drive for --path: "my_drive" or Shared Drive ID.')
+@click.option('--folder-id', default=None, help='Start --path navigation from this folder ID.')
+@click.option('--limit', type=int, default=50, help='Max results for --name search.')
 @require_scopes('drive')
-def find_folder(path):
-    """Find a folder by path (e.g., 'Projects/my-project')."""
+def folders_find(name, path, match, drive_id, folder_id, limit):
+    """Find folders by name or path.
+
+    Use --name to search across all accessible folders (My Drive, Shared Drives, shared-with-me).
+
+    Use --path to navigate from a starting point (My Drive root by default).
+
+    \b
+    Examples:
+        gwsa drive folders find --name "Reports"
+        gwsa drive folders find --name "Q4" --match exact
+        gwsa drive folders find --path "Projects/my-project"
+        gwsa drive folders find --path "subfolder" --folder-id PARENT_ID
+    """
+    if name and path:
+        click.echo("Error: Use --name or --path, not both.", err=True)
+        raise SystemExit(1)
+    if not name and not path:
+        click.echo("Error: Provide --name or --path.", err=True)
+        raise SystemExit(1)
+
     try:
-        result = drive.find_folder_by_path(path)
-        click.echo(json.dumps(result, indent=2))
+        if name:
+            results = drive.search_folders(name, match=match, limit=limit)
+            click.echo(json.dumps({"folders": results, "count": len(results)}, indent=2))
+        else:
+            result = drive.find_folder_by_path(path, drive=drive_id, folder_id=folder_id)
+            if result:
+                click.echo(json.dumps(result, indent=2))
+            else:
+                click.echo(f"Folder not found: {path}", err=True)
+                raise SystemExit(1)
+    except drive.AmbiguousFolderError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
