@@ -121,6 +121,73 @@ def read_message(
     return message_details
 
 
+def read_messages(
+    message_ids: List[str],
+    profile: str = None,
+    use_adc: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve multiple Gmail messages efficiently using batching.
+
+    Args:
+        message_ids: List of Gmail message IDs
+        profile: Optional profile name to use
+        use_adc: Force use of Application Default Credentials
+
+    Returns:
+        List of message detail dicts (same format as read_message)
+    """
+    if not message_ids:
+        return []
+
+    service = get_gmail_service(profile=profile, use_adc=use_adc)
+    logger.debug(f"Retrieving {len(message_ids)} messages in batch")
+
+    results = []
+    
+    # Callback for batch requests
+    def callback(request_id, response, exception):
+        if exception:
+            logger.warning(f"Error retrieving message {request_id}: {exception}")
+            # Add a placeholder for failed message so order is somewhat maintained
+            # or caller knows it failed. For now we just don't add to results.
+        else:
+            msg_id = response['id']
+            headers = response['payload']['headers']
+            
+            # Extract basic info
+            msg_details = {
+                "id": msg_id,
+                "threadId": response.get('threadId'),
+                "subject": _get_header(headers, 'Subject'),
+                "from": _get_header(headers, 'From'),
+                "to": _get_header(headers, 'To'),
+                "date": _get_header(headers, 'Date'),
+                "snippet": response.get('snippet', ''),
+                "labelIds": response.get('labelIds', []),
+            }
+            
+            # Extract bodies and attachments
+            text_body, html_body = _extract_body_parts(response['payload'])
+            msg_details["body"] = {"text": text_body, "html": html_body}
+            msg_details["attachments"] = _extract_attachments(response['payload'])
+            
+            results.append(msg_details)
+
+    # Process in batches (Gmail API recommends batches of 100 or less)
+    batch_size = 50
+    for i in range(0, len(message_ids), batch_size):
+        batch = service.new_batch_http_request(callback=callback)
+        chunk = message_ids[i:i + batch_size]
+        
+        for msg_id in chunk:
+            batch.add(service.users().messages().get(userId='me', id=msg_id, format='full'), request_id=msg_id)
+        
+        batch.execute()
+
+    return results
+
+
 def _get_header(headers: list, name: str, default: str = 'N/A') -> str:
     """Get a header value by name."""
     for header in headers:

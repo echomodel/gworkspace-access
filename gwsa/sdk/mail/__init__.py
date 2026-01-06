@@ -20,7 +20,7 @@ Example usage:
 
 from .service import get_gmail_service
 from .search import search_messages
-from .read import read_message, get_attachment, get_thread
+from .read import read_message, read_messages, get_attachment, get_thread
 from .label import modify_labels, add_label, remove_label, list_labels
 from .send import send_message, create_draft, reply_message
 
@@ -28,6 +28,7 @@ __all__ = [
     "get_gmail_service",
     "search_messages",
     "read_message",
+    "read_messages",
     "get_attachment",
     "get_thread",
     "modify_labels",
