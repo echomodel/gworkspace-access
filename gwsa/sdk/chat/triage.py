@@ -137,8 +137,9 @@ def get_chat_mentions(
                 other_names = []
                 for m in memberships:
                     m_id = m.get('member', {}).get('name')
-                    if m_id != my_id:
-                        other_names.append(get_person_name(m_id))
+                    if my_id and m_id == my_id:
+                        continue
+                    other_names.append(get_person_name(m_id))
                 if other_names:
                     display_name = ", ".join(other_names)
                 else:
@@ -177,6 +178,7 @@ def get_chat_mentions(
                         break # Stop scanning this thread
                     continue
                 
+                # Check for actionable item
                 found_item = None
                 if is_implicit:
                     if not i_have_responded:
@@ -201,6 +203,18 @@ def get_chat_mentions(
                             "reason": "Explicit mention"
                         }
                 
+                if found_item and unanswered_only:
+                    # Check for my reaction to this message (1 extra API call)
+                    try:
+                        reac_res = service.spaces().messages().reactions().list(parent=msg.get('name')).execute()
+                        reactions = reac_res.get('reactions', [])
+                        for r in reactions:
+                            if r.get('user', {}).get('name') == my_id:
+                                found_item = None # Handled by reaction!
+                                break
+                    except Exception:
+                        pass # Continue as unreplied if check fails
+
                 if found_item:
                     results.append({
                         "type": found_item['type'],
