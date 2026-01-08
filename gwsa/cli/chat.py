@@ -222,6 +222,44 @@ def list_members(space_id):
         click.echo(f"Error listing members: {e}", err=True)
 
 
+@chat.command("mentions")
+@click.option("--limit", default=20, help="Max active spaces to scan.")
+@click.option("--format", default="text", type=click.Choice(['text', 'json'], case_sensitive=False), help="Output format.")
+@click.option("--threshold", default=3, help="Implicit mention threshold (member count).")
+def list_mentions(limit, format, threshold):
+    """Scan for actionable mentions and unreplied DMs."""
+    try:
+        from gwsa.sdk.chat.triage import get_chat_mentions
+        
+        # Use default tiers
+        result = get_chat_mentions(limit=limit, implicit_mention_threshold=threshold)
+        
+        if format == 'json':
+            click.echo(json.dumps(result, indent=2))
+        else:
+            mentions = result.get('mentions', [])
+            if not mentions:
+                click.echo("No actionable mentions or unreplied DMs found.")
+                click.echo(f"Scanned {result.get('scanned_count')} spaces.")
+                return
+
+            # Simple text table
+            click.echo(f"{'Type':<12} | {'Space':<30} | {'From':<15} | {'Preview'}")
+            click.echo("-" * 80)
+            
+            for m in mentions:
+                m_type = m.get('type', 'Chat')
+                space = m.get('space', 'Unknown')[:30]
+                sender = m.get('sender', 'Unknown')[:15]
+                text = m.get('text', '').replace('\n', ' ')[:40]
+                
+                click.echo(f"{m_type:<12} | {space:<30} | {sender:<15} | {text}")
+                
+            click.echo(f"\nSummary: Found {len(mentions)} items across {result.get('scanned_count')} active spaces.")
+
+    except Exception as e:
+        click.echo(f"Error scanning mentions: {e}", err=True)
+
 @chat.group()
 def messages():
     """Manage Chat messages."""
