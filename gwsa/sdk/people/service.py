@@ -24,6 +24,7 @@ def _fetch_person_from_api(resource_name: str, fields: str = 'names'):
         personFields=fields
     ).execute()
 
+@time_api_call
 def get_person_name(user_id: str) -> str:
     """
     Resolve a Google User ID (e.g., 'users/12345') to a display name.
@@ -60,6 +61,7 @@ def get_person_name(user_id: str) -> str:
         logger.error(f"Error fetching name for {user_id}: {e}")
         return "Unknown"
 
+@time_api_call
 def get_me() -> Dict[str, Any]:
     """
     Get the authenticated user's profile information.

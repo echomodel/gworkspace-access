@@ -18,6 +18,7 @@ setup(
         'PyYAML',
         'click_option_group',
         'mcp>=1.0.0',
+        'rich',
     ],
     extras_require={
         'dev': [

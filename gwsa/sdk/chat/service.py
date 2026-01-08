@@ -6,6 +6,7 @@ from typing import Any
 from googleapiclient.discovery import build
 
 from ..auth import get_credentials
+from ..timing import time_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ def get_chat_service(profile: str = None, use_adc: bool = False) -> Any:
     logger.debug(f"Building Chat service using credentials from: {source}")
     return build("chat", "v1", credentials=creds)
 
+@time_api_call
 def list_messages(space_id: str, filter: str = None, page_size: int = 25, page_token: str = None) -> dict:
     """
     Lists messages in a Google Chat space, with optional filtering.
@@ -57,6 +59,7 @@ def list_messages(space_id: str, filter: str = None, page_size: int = 25, page_t
     ).execute()
 
 
+@time_api_call
 def search_messages(space_id: str, query: str, limit: int = 100) -> dict:
     """
     Search for messages in a Google Chat space containing specific text.
@@ -92,14 +95,6 @@ def search_messages(space_id: str, query: str, limit: int = 100) -> dict:
         for msg in messages:
             text = msg.get('text', '')
             if query.lower() in text.lower():
-                # The user's requested edit seems to be malformed and refers to 'members'
-                # which is not defined in this context.
-                # Assuming the intent was to print the raw message JSON for debugging.
-                # If the intent was to print 'member' data, that would require
-                # fetching members separately or from a different function.
-                # For now, I'm inserting a placeholder that would print the message itself.
-                # If the user intended to print 'member' data, please provide
-                # the correct context or function where 'members' is available.
                 import json
                 print("DEBUG: Raw matching message:")
                 print(json.dumps(msg, indent=2))
@@ -128,4 +123,3 @@ def search_messages(space_id: str, query: str, limit: int = 100) -> dict:
         "matches_found": len(found_messages),
         "messages": found_messages
     }
-
