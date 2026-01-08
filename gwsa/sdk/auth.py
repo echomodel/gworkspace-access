@@ -229,7 +229,11 @@ FEATURE_SCOPES = {
     },
 }
 
-IDENTITY_SCOPES = {"https://www.googleapis.com/auth/userinfo.email", "openid"}
+IDENTITY_SCOPES = {
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid"
+}
 
 
 def get_feature_status(granted_scopes: set) -> dict:
