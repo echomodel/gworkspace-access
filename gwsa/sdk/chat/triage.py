@@ -1,3 +1,22 @@
+"""
+Advanced Chat Triage Strategy (TODO):
+
+1. **Start with most recent message** in a space.
+2. **If sender is ME**: Stop. Thread is handled.
+3. **If sender is NOT ME**:
+    a. **DM/Small Group (<= Threshold)**: Implicit Mention.
+       - Stop here (it's unreplied).
+    b. **Large Group (> Threshold)**:
+       - Walk back through messages (Newest -> Oldest).
+       - Stop at 'Lookback Days' limit.
+       - **Check for Mentions**: First message that tags me is the "Latest Mention".
+       - **Reaction Check**: Once a mention is found, check if I reacted to it.
+         - If yes -> Handled.
+         - If no -> Walk forward from that mention to Newest.
+           - If I reacted to any newer message? -> Handled.
+           - If I sent any newer message? -> Handled.
+           - Else -> Unhandled Mention.
+"""
 import logging
 import re
 from typing import List, Dict, Any, Optional
