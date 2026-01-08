@@ -23,7 +23,8 @@ def get_chat_mentions(
     limit: int = 20,
     implicit_mention_threshold: int = 3,
     tiers: Optional[List[Dict[str, Any]]] = None,
-    discovery_limit: int = 200
+    discovery_limit: int = 200,
+    unanswered_only: bool = True
 ) -> Dict[str, Any]:
     """
     Scans Google Chat for actionable mentions and unread DMs.
@@ -46,7 +47,7 @@ def get_chat_mentions(
     # Identify myself
     myself = get_me()
     my_id = myself.get('name') 
-    my_display_name = myself.get('displayName', '').split(' ')[0]
+    my_display_name = myself.get('displayName', '').split(' ')[0] if myself.get('displayName') else None
 
     # 1. Fetch Candidate Spaces
     fields = "nextPageToken,spaces(name,displayName,spaceType,lastActiveTime,membershipCount)"
@@ -128,6 +129,10 @@ def get_chat_mentions(
 
         is_implicit = members_count <= implicit_mention_threshold
         
+        # Safety: Cannot do implicit check without knowing who I am
+        if is_implicit and not my_id:
+            continue
+
         try:
             fetch_limit = 1 if is_implicit else 20
             msgs_res = service.spaces().messages().list(
@@ -149,6 +154,8 @@ def get_chat_mentions(
                 sender_id = msg.get('sender', {}).get('name')
                 if sender_id == my_id:
                     i_have_responded = True
+                    if unanswered_only:
+                        break # Stop scanning this thread
                     continue
                 
                 found_item = None
@@ -163,11 +170,12 @@ def get_chat_mentions(
                     if 'annotations' in msg:
                         for ann in msg['annotations']:
                             if ann.get('type') == 'USER_MENTION':
-                                if ann.get('userMention', {}).get('user', {}).get('name') == my_id:
+                                if my_id and ann.get('userMention', {}).get('user', {}).get('name') == my_id:
                                     mentioned = True
                                     break
                     if not mentioned and my_display_name and f"@{my_display_name}" in msg.get('text', ''):
                         mentioned = True
+                        
                     if mentioned and not i_have_responded:
                         found_item = {
                             "type": "Mention",
