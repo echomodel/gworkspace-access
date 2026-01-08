@@ -11,42 +11,38 @@ def get_chat_service():
 def get_recent_chats(chat_type: str, limit: int = 10):
     chat_service = get_chat_service()
     
-    # 1. List spaces using server-side filtering (more efficient)
+    # 1. List spaces using server-side filtering and requesting metadata
     filter_query = f"space_type = \"{chat_type}\""
+    fields = "nextPageToken,spaces(name,displayName,spaceType,lastActiveTime,membershipCount)"
     
     all_spaces = []
     page_token = None
     while True:
-        # Fetch a bit more than the limit to account for spaces we can't read.
-        results = chat_service.spaces().list(pageSize=100, pageToken=page_token, filter=filter_query).execute()
-        all_spaces.extend(results.get('spaces', []))
+        results = chat_service.spaces().list(
+            pageSize=100, 
+            pageToken=page_token, 
+            filter=filter_query,
+            fields=fields
+        ).execute()
+        
+        spaces = results.get('spaces', [])
+        all_spaces.extend(spaces)
+        
         page_token = results.get('nextPageToken')
-        if not page_token or len(all_spaces) >= limit * 2: # Stop if we have enough candidates
+        if not page_token:
             break
 
-    # 2. Fetch latest message for each space to get timestamp
-    spaces_with_timestamp = []
-    for space in all_spaces:
-        try:
-            messages_result = chat_service.spaces().messages().list(parent=space['name'], pageSize=1, orderBy="createTime desc").execute()
-            latest_message = messages_result.get('messages', [{}])[0]
-            
-            if latest_message:
-                spaces_with_timestamp.append({
-                    "space": space,
-                    "latest_message_time": latest_message.get('createTime', '1970-01-01T00:00:00Z')
-                })
-        except Exception:
-            # Ignore spaces where we can't read messages
-            continue
+    # 2. Sort by lastActiveTime (descending)
+    # Handle missing timestamps gracefully (treat as very old)
+    sorted_spaces = sorted(
+        all_spaces, 
+        key=lambda x: x.get('lastActiveTime', '1970-01-01T00:00:00Z'), 
+        reverse=True
+    )
 
-    # 3. Sort by timestamp
-    sorted_spaces = sorted(spaces_with_timestamp, key=lambda x: x['latest_message_time'], reverse=True)
-
-    # 4. Prepare and return the final list
+    # 3. Prepare and return the final list
     recent_chats = []
-    for item in sorted_spaces[:limit]:
-        space = item['space']
+    for space in sorted_spaces[:limit]:
         display_name = space.get('displayName', 'Unknown')
 
         # For DMs, try to resolve the name of the other person
