@@ -44,7 +44,7 @@ def get_chat_mentions(
     implicit_mention_threshold: int = 3,
     tiers: Optional[List[Dict[str, Any]]] = None,
     discovery_limit: int = 200,
-    unanswered_only: bool = True,
+    unanswered_only: bool = False,
     message_limit: int = 100
 ) -> Dict[str, Any]:
     """
@@ -251,8 +251,11 @@ def get_chat_mentions(
         logger.debug(f"Analyzing space: {display_name} ({space_name}) | Last Active: {last_active} | Members: {members_count} | Lookback: {lookback_days} days")
 
         # Final fallback for display_name
-        if not display_name:
-            display_name = "Unknown Space"
+        if not display_name or display_name == "Unknown Space":
+            if space.get('spaceType') == 'DIRECT_MESSAGE':
+                display_name = "Direct Message"
+            else:
+                display_name = "Unknown Space"
 
         is_implicit = members_count <= implicit_mention_threshold
         
@@ -292,17 +295,18 @@ def get_chat_mentions(
                 if sender_id == my_id:
                     logger.debug(f"     -> Is me. Thread handled.")
                     i_have_responded = True
+                    # If we only want unanswered, we can stop scanning this thread if I've responded
                     if unanswered_only:
-                        break # Stop scanning this thread
+                        break 
                     continue
                 
                 # Check for actionable item
                 found_item = _analyze_message(msg, my_id, my_display_name, is_implicit, i_have_responded)
                 
-                if found_item:
-                    current_space_stat["mentions_found"] += 1
+                # If we found a candidate mention, check if it's "answered" (responded or reacted)
+                is_answered = i_have_responded
                 
-                if found_item and unanswered_only:
+                if found_item and not is_answered:
                     logger.debug(f"     -> Checking reactions...")
                     # Check for my reaction to this message (1 extra API call)
                     try:
@@ -310,16 +314,23 @@ def get_chat_mentions(
                         reactions = reac_res.get('reactions', [])
                         for r in reactions:
                             if r.get('user', {}).get('name') == my_id:
-                                found_item = None # Handled by reaction!
+                                is_answered = True
                                 logger.debug(f"     -> Handled by reaction")
                                 break
                     except Exception as e:
                         logger.debug(f"     -> Reaction check failed: {e}")
-                        pass # Continue as unreplied if check fails
+                        pass
 
+                # Filter based on unanswered_only flag
                 if found_item:
-                    current_space_stat["unanswered_mentions"] += 1
-                    logger.debug(f"     -> Actionable item confirmed: {found_item['reason']}")
+                    current_space_stat["mentions_found"] += 1
+                    if not is_answered:
+                        current_space_stat["unanswered_mentions"] += 1
+                        
+                    if unanswered_only and is_answered:
+                        continue # Skip this item
+
+                    logger.debug(f"     -> Actionable item confirmed: {found_item['reason']} (Answered: {is_answered})")
                     
                     final_sender_name = msg.get('sender', {}).get('displayName')
                     if not final_sender_name:
@@ -330,9 +341,12 @@ def get_chat_mentions(
                     
                     # Fallback: Check for email if name is still unknown
                     if (not final_sender_name or final_sender_name == "Unknown"):
-                        email = msg.get('sender', {}).get('email')
+                        sender_obj = msg.get('sender', {})
+                        email = sender_obj.get('email')
                         if email:
                             final_sender_name = email
+                        elif sender_obj.get('type') == 'HUMAN':
+                            final_sender_name = "External User"
                         else:
                             # Note: We could try the Directory API here for external users, but it adds
                             # significant complexity/latency for a rare edge case. Sticking to "Unknown".
@@ -350,7 +364,8 @@ def get_chat_mentions(
                         "time": msg.get('createTime'),
                         "sender": final_sender_name or "Unknown",
                         "text": msg.get('text', '')[:100],
-                        "reason": found_item['reason']
+                        "reason": found_item['reason'],
+                        "answered": is_answered
                     })
                     break 
             
