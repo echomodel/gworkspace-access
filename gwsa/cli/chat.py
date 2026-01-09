@@ -1,4 +1,3 @@
-
 import click
 import json
 import os
@@ -256,8 +255,7 @@ def list_mentions(scan_spaces_limit, format, threshold, days_back, scan_messages
             implicit_mention_threshold=threshold,
             tiers=tiers,
             message_limit=scan_messages_limit,
-            unanswered_only=unanswered_only,
-            verbose=True
+            unanswered_only=unanswered_only
         )
         
         if format == 'json':
@@ -274,14 +272,26 @@ def list_mentions(scan_spaces_limit, format, threshold, days_back, scan_messages
                 click.echo(f"Scanned {result.get('scanned_count')} spaces.")
             else:
                 # Simple text table
-                click.echo(f"{'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
+                click.echo(f"{ 'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
                 click.echo("-" * 105)
                 
                 for m in mentions:
                     m_type = m.get('type', 'Chat')
                     space = m.get('space', 'Unknown')[:30]
                     sender = m.get('sender', 'Unknown')[:15]
-                    m_time = m.get('time', 'Unknown')[:20]
+                    
+                    # Format Time
+                    m_time = m.get('time')
+                    if m_time:
+                        try:
+                            m_time = m_time.replace('Z', '+00:00')
+                            dt = datetime.fromisoformat(m_time)
+                            m_time = dt.astimezone().strftime("%a %m/%d %I:%M %p")
+                        except ValueError:
+                            m_time = str(m_time)[:20]
+                    else:
+                        m_time = "Unknown"
+                    
                     text = m.get('text', '').replace('\n', ' ')[:40]
                     
                     click.echo(f"{m_type:<12} | {space:<30} | {sender:<15} | {m_time:<20} | {text}")
