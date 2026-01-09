@@ -1,4 +1,3 @@
-
 import click
 import json
 import os
@@ -273,7 +272,7 @@ def list_mentions(scan_spaces_limit, format, threshold, days_back, scan_messages
                 click.echo(f"Scanned {result.get('scanned_count')} spaces.")
             else:
                 # Simple text table
-                click.echo(f"{'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
+                click.echo(f"{ 'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
                 click.echo("-" * 105)
                 
                 for m in mentions:
