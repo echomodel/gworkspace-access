@@ -223,49 +223,120 @@ def list_members(space_id):
 
 
 @chat.command("mentions")
-@click.option("--limit", default=20, help="Max active spaces to scan.")
+@click.option("--scan-spaces-limit", default=20, help="Max active spaces to scan.")
 @click.option("--format", default="text", type=click.Choice(['text', 'json'], case_sensitive=False), help="Output format.")
 @click.option("--threshold", default=3, help="Implicit mention threshold (member count).")
-def list_mentions(limit, format, threshold):
+@click.option("--days-back", multiple=True, help='Scan rules in format "NU:ND" (e.g. "25u:1d"). NU=Max Users, ND=Days Back.')
+@click.option("--scan-messages-limit", default=100, help="Global limit on total messages scanned.")
+@click.option("--verbose", is_flag=True, help="Include detailed scanning metadata and API stats.")
+@click.option("--unanswered-only", is_flag=True, default=False, help="Show only unanswered mentions.")
+def list_mentions(scan_spaces_limit, format, threshold, days_back, scan_messages_limit, verbose, unanswered_only):
     """Scan for actionable mentions and unreplied DMs."""
     try:
         from gwsa.sdk.chat.triage import get_chat_mentions
         
-        # Use default tiers
-        result = get_chat_mentions(limit=limit, implicit_mention_threshold=threshold)
+        # Parse days_back rules
+        tiers = None
+        if days_back:
+            tiers = []
+            for rule in days_back:
+                try:
+                    parts = rule.lower().split(':')
+                    if len(parts) != 2:
+                        raise ValueError("Invalid format")
+                    max_users = int(parts[0].replace('u', ''))
+                    days = int(parts[1].replace('d', ''))
+                    tiers.append({'max_members': max_users, 'lookback_days': days})
+                except Exception:
+                    click.echo(f"Error: Invalid --days-back format '{rule}'", err=True)
+                    sys.exit(1)
+
+        result = get_chat_mentions(
+            limit=scan_spaces_limit, 
+            implicit_mention_threshold=threshold,
+            tiers=tiers,
+            message_limit=scan_messages_limit,
+            unanswered_only=unanswered_only,
+            verbose=True
+        )
         
         if format == 'json':
+            # Respect verbose flag for JSON too (filter keys if needed, but SDK result already has them)
+            # Actually for gwsa we'll just dump whatever SDK returns.
+            if not verbose:
+                result.pop('source', None)
+                result.pop('api_stats', None)
             click.echo(json.dumps(result, indent=2))
         else:
             mentions = result.get('mentions', [])
             if not mentions:
                 click.echo("No actionable mentions or unreplied DMs found.")
                 click.echo(f"Scanned {result.get('scanned_count')} spaces.")
-                return
-
-            # Simple text table
-            click.echo(f"{'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
-            click.echo("-" * 105)
-            
-            for m in mentions:
-                m_type = m.get('type', 'Chat')
-                space = m.get('space', 'Unknown')[:30]
-                sender = m.get('sender', 'Unknown')[:15]
-                m_time = m.get('time', 'Unknown')[:20]
-                text = m.get('text', '').replace('\n', ' ')[:40]
+            else:
+                # Simple text table
+                click.echo(f"{'Type':<12} | {'Space':<30} | {'From':<15} | {'Time':<20} | {'Preview'}")
+                click.echo("-" * 105)
                 
-                click.echo(f"{m_type:<12} | {space:<30} | {sender:<15} | {m_time:<20} | {text}")
-                
-            click.echo(f"\nSummary: Found {len(mentions)} items across {result.get('scanned_count')} active spaces.")
+                for m in mentions:
+                    m_type = m.get('type', 'Chat')
+                    space = m.get('space', 'Unknown')[:30]
+                    sender = m.get('sender', 'Unknown')[:15]
+                    m_time = m.get('time', 'Unknown')[:20]
+                    text = m.get('text', '').replace('\n', ' ')[:40]
+                    
+                    click.echo(f"{m_type:<12} | {space:<30} | {sender:<15} | {m_time:<20} | {text}")
+                    
+                click.echo(f"\nSummary: Found {len(mentions)} items across {result.get('scanned_count')} active spaces.")
 
-            # Display API stats
-            api_stats = result.get('api_stats', {})
-            if api_stats:
-                click.echo(f"\nAPI Stats (logical calls):")
-                total = sum(api_stats.values())
-                for call_type, count in sorted(api_stats.items()):
-                    click.echo(f"  - {call_type}: {count}")
-                click.echo(f"  - TOTAL: {total}")
+            # Verbose Metadata and Stats
+            if verbose:
+                from rich.console import Console
+                from rich.table import Table
+                console = Console()
+
+                # Source table
+                if 'source' in result:
+                    src = result['source']
+                    click.echo("\nScanning Metadata:")
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("Space Name", style="dim")
+                    table.add_column("Type")
+                    table.add_column("Users", justify="right")
+                    table.add_column("Lookback", justify="right")
+                    table.add_column("Scan", justify="right")
+                    table.add_column("Range", justify="right")
+                    table.add_column("Hits", justify="right")
+                    
+                    for s in src.get('spaces', []):
+                        table.add_row(
+                            s.get('name', 'Unknown'),
+                            s.get('type', ''),
+                            str(s.get('members', '')),
+                            f"{s.get('lookback_days', '')}d",
+                            str(s.get('messages_scanned', '')),
+                            str(s.get('messages_in_range', '')),
+                            str(s.get('mentions_found', ''))
+                        )
+                    console.print(table)
+                    click.echo(f"Total Messages Scanned: {src.get('total_messages_scanned')}")
+                    click.echo(f"Exit Reason: {src.get('exit_reason')}")
+
+                # API stats
+                api_stats = result.get('api_stats', {})
+                if api_stats:
+                    click.echo("\nAPI Stats (logical calls):")
+                    api_table = Table(show_header=True, header_style="bold cyan")
+                    api_table.add_column("API Method")
+                    api_table.add_column("Count", justify="right")
+                    total = 0
+                    for call_type, count in sorted(api_stats.items()):
+                        api_table.add_row(call_type, str(count))
+                        total += count
+                    api_table.add_row("TOTAL", str(total), style="bold")
+                    console.print(api_table)
+
+    except Exception as e:
+        click.echo(f"Error scanning mentions: {e}", err=True)
 
     except Exception as e:
         click.echo(f"Error scanning mentions: {e}", err=True)
