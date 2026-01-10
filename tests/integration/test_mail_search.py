@@ -82,7 +82,7 @@ def test_mail_search_empty_results(cli_runner):
     the response is valid JSON (empty list) rather than an error.
     """
     # Use a query unlikely to match anything
-    search_query = 'from:"nonexistent-email-address-xyz-12345@example.com"'
+    search_query = 'from:"test@fake.com"'
 
     result = cli_runner(["mail", "search", search_query])
 

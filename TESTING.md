@@ -83,7 +83,7 @@ Add a section under `profiles:` with your gwsa profile name as the key:
 ```yaml
 profiles:
   my_profile:
-    search_query: 'from:newsletters@example.com'
+    search_query: 'from:sender@example.com'
     test_label: "Test"
     min_results: 2
     days_range: 30

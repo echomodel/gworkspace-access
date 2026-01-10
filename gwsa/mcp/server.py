@@ -407,7 +407,7 @@ async def search_emails(
     Search Gmail messages using Gmail query syntax.
 
     Args:
-        query: Gmail search query (e.g., "from:someone@example.com", "subject:invoice",
+        query: Gmail search query (e.g., "from:user@example.com", "subject:invoice",
                "after:2024/01/01 before:2024/12/31", "label:important is:unread")
         max_results: Maximum number of messages to return (default 25, max 500)
         page_token: Pagination token from previous search result
@@ -937,6 +937,31 @@ async def drive_upload(
         return result
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def drive_update(
+    file_id: str,
+    local_path: str,
+    name: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    Update an existing file in Google Drive.
+
+    Args:
+        file_id: The ID of the file to update.
+        local_path: Absolute path to the local file content.
+        name: Optional new name for the file.
+
+    Returns:
+        Dict with updated file metadata.
+    """
+    try:
+        result = drive.update_file(file_id=file_id, local_path=local_path, new_name=name)
+        return result
+    except Exception as e:
+        logger.error(f"Error updating file: {e}")
         return {"error": str(e)}
 
 

@@ -22,7 +22,7 @@ def search_messages(
     Search for Gmail messages matching the given query.
 
     Args:
-        query: Gmail API query string (e.g., "from:someone@example.com")
+        query: Gmail API query string (e.g., "from:user@example.com")
         page_token: Token for pagination (None for first page)
         max_results: Maximum number of messages to return (default 25, max 500)
         format: 'full' (includes body) or 'metadata' (headers only, faster)

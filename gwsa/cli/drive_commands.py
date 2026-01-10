@@ -42,6 +42,21 @@ def upload_file(local_path, folder_id, name):
         raise SystemExit(1)
 
 
+@drive_group.command('update')
+@click.argument('file_id')
+@click.argument('local_path')
+@click.option('--name', default=None, help='New name for file in Drive.')
+@require_scopes('drive')
+def update_file(file_id, local_path, name):
+    """Update an existing file in Google Drive."""
+    try:
+        result = drive.update_file(file_id=file_id, local_path=local_path, new_name=name)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
 @drive_group.command('download')
 @click.argument('file_id')
 @click.argument('save_path')

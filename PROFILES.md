@@ -59,8 +59,8 @@ View profile states with `gwsa profiles list`:
 PROFILE            STATUS         EMAIL                          VALIDATED
 ------------------------------------------------------------------------------
   adc              unvalidated    -                              never
-* default          valid          user@gmail.com                 2h ago
-  work             valid          work@company.com               1d ago
+* home             valid          user@gmail.com                 2h ago
+  work             valid          worker@company.com             1d ago
 ------------------------------------------------------------------------------
 Ready to use.
 ```

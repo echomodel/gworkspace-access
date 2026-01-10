@@ -14,7 +14,7 @@ Example usage:
         print(f"{profile['name']}: {profile['email']}")
 
     # Search emails using active profile
-    messages, metadata = mail.search("from:someone@example.com")
+    messages, metadata = mail.search("from:user@example.com")
 """
 
 from . import config

@@ -57,3 +57,50 @@ def upload_file(
         "name": file.get("name"),
         "url": file.get("webViewLink")
     }
+
+
+def update_file(
+    file_id: str,
+    local_path: str,
+    new_name: Optional[str] = None
+) -> dict:
+    """
+    Update an existing file's content and optionally its name.
+
+    Args:
+        file_id: The ID of the file to update.
+        local_path: Path to the local file content.
+        new_name: Optional new name for the file.
+
+    Returns:
+        Dict with updated file metadata.
+    """
+    service = get_drive_service()
+
+    # Detect mime type
+    mime_type, _ = mimetypes.guess_type(local_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    file_metadata = {}
+    if new_name:
+        file_metadata["name"] = new_name
+
+    media = MediaFileUpload(
+        local_path,
+        mimetype=mime_type,
+        resumable=True
+    )
+
+    file = service.files().update(
+        fileId=file_id,
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, webViewLink"
+    ).execute()
+
+    return {
+        "id": file.get("id"),
+        "name": file.get("name"),
+        "url": file.get("webViewLink")
+    }

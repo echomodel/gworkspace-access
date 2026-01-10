@@ -8,7 +8,7 @@ from .folders import (
     search_folders,
     AmbiguousFolderError,
 )
-from .upload import upload_file
+from .upload import upload_file, update_file
 from .download import download_file
 from .search import search_drive
 
@@ -20,6 +20,7 @@ __all__ = [
     "search_folders",
     "AmbiguousFolderError",
     "upload_file",
+    "update_file",
     "download_file",
     "search_drive",
 ]
