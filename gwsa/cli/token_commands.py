@@ -12,10 +12,9 @@ from gwsa.sdk.auth import SCOPE_ALIASES
 from .setup_local import CLIENT_SECRETS_FILE
 
 # Build dynamic help string for scopes
-# Combine single aliases and feature names
 ALL_ALIAS_KEYS = set(SCOPE_ALIASES.keys()) | set(FEATURE_SCOPES.keys())
 AVAILABLE_SCOPES = ", ".join(sorted(list(ALL_ALIAS_KEYS)))
-SCOPE_HELP = f"Comma-separated list of scopes ({AVAILABLE_SCOPES}) or full URLs."
+SCOPE_HELP = f"Comma-separated list of scopes ({AVAILABLE_SCOPES}), the 'all' keyword, or full URLs."
 
 @click.group()
 def token():
@@ -35,23 +34,30 @@ def generate_cmd(source, scopes, output):
     credential JSON. It does NOT save the token to any gwsa profile.
     """
     # 1. Resolve Scopes
-    if scopes:
-        requested_scopes = resolve_scopes([s.strip() for s in scopes.split(",")])
-    else:
-        # Default to all feature scopes (same as refresh)
+    if scopes == "all":
+        # Request full feature set
         all_scopes = {s for s_set in FEATURE_SCOPES.values() for s in s_set} | IDENTITY_SCOPES
         requested_scopes = list(all_scopes)
+    elif scopes:
+        requested_scopes = resolve_scopes([s.strip() for s in scopes.split(",")])
+    else:
+        # No scopes specified
+        click.echo("Warning: No scopes specified. The resulting token may have limited functionality.", err=True)
+        requested_scopes = []
 
     token_data = None
 
     if source == "adc":
         click.echo("Initiating ADC Login via gcloud...", err=True)
-        # Add cloud-platform scope for ADC standard compatibility
-        if "https://www.googleapis.com/auth/cloud-platform" not in requested_scopes:
-            requested_scopes.append("https://www.googleapis.com/auth/cloud-platform")
-            
-        scopes_str = ",".join(sorted(requested_scopes))
-        gcloud_command = ["gcloud", "auth", "application-default", "login", f"--scopes={scopes_str}"]
+        
+        # Build command
+        gcloud_command = ["gcloud", "auth", "application-default", "login"]
+        if requested_scopes:
+            # Standard ADC standard compatibility
+            if "https://www.googleapis.com/auth/cloud-platform" not in requested_scopes:
+                requested_scopes.append("https://www.googleapis.com/auth/cloud-platform")
+            scopes_str = ",".join(sorted(requested_scopes))
+            gcloud_command.append(f"--scopes={scopes_str}")
 
         try:
             # We don't capture output here so the user sees the gcloud prompts
@@ -83,6 +89,10 @@ def generate_cmd(source, scopes, output):
             click.echo(f"Please run 'gwsa client import' first or ensure {CLIENT_SECRETS_FILE} exists.", err=True)
             sys.exit(1)
 
+        if not requested_scopes:
+            click.secho("Error: At least one scope must be specified for custom OAuth flow.", fg="red", err=True)
+            sys.exit(1)
+
         click.echo("Initiating OAuth flow via browser...", err=True)
         try:
             from google_auth_oauthlib.flow import InstalledAppFlow
@@ -107,4 +117,5 @@ def generate_cmd(source, scopes, output):
                 click.secho(f"Failed to write to {output}: {e}", fg="red", err=True)
                 sys.exit(1)
         else:
+            # This is the only part that goes to stdout
             click.echo(output_json)
