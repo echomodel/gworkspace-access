@@ -2,6 +2,9 @@
 
 import sys
 import click
+import json
+import os
+from pathlib import Path
 
 from .profiles import (
     ADC_PROFILE_NAME,
@@ -14,6 +17,7 @@ from .profiles import (
     check_adc_changed,
     is_valid_profile_name,
     get_profile_dir,
+    get_profile_token_path,
 )
 from gwsa.sdk.config import get_config_file_path
 from .decorators import format_time_ago, format_status, show_profile_guidance
@@ -80,7 +84,7 @@ def list_cmd():
 
     # Print table header
     click.echo()
-    click.echo(f"{'PROFILE':<16}  {'STATUS':<12}  {'EMAIL':<28}  {'VALIDATED':<10}")
+    click.echo(f"{ 'PROFILE':<16}  { 'STATUS':<12}  { 'EMAIL':<28}  { 'VALIDATED':<10}")
     click.echo("-" * 74)
 
     # Print rows - columns already padded, just space-separate
@@ -583,3 +587,52 @@ def rename_cmd(old_name, new_name):
     click.secho(f"Profile '{old_name}' renamed to '{new_name}'.", fg="green")
     if was_active:
         click.echo(f"Active profile updated to '{new_name}'.")
+
+
+@profiles.command("export")
+@click.argument("name", required=False)
+def export_cmd(name):
+    """Export the credentials for a profile to stdout.
+
+    NAME is the profile to export. If omitted, uses the active profile.
+    This outputs the raw JSON content of the credential file, suitable for
+    saving to a file (e.g. > creds.json) for use with GOOGLE_APPLICATION_CREDENTIALS.
+
+    For 'adc', it attempts to locate the system-wide application default credentials.
+    """
+    if not name:
+        name = get_active_profile_name()
+        if not name:
+            click.secho("No active profile selected. Please specify a profile name.", fg="red")
+            sys.exit(1)
+
+    if name == ADC_PROFILE_NAME:
+        # Standard gcloud ADC location
+        if sys.platform == "win32":
+            adc_path = Path(os.environ.get("APPDATA", "")) / "gcloud" / "application_default_credentials.json"
+        else:
+            adc_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+        
+        if not adc_path.exists():
+            click.secho(f"Error: ADC credentials file not found at {adc_path}", fg="red")
+            click.echo("Run 'gcloud auth application-default login' to create it.")
+            sys.exit(1)
+        
+        token_path = adc_path
+    else:
+        if not profile_exists(name):
+            click.secho(f"Profile not found: {name}", fg="red")
+            sys.exit(1)
+
+        token_path = get_profile_token_path(name)
+        if not token_path.exists():
+            click.secho(f"Error: Credential file missing for profile '{name}'.", fg="red")
+            sys.exit(1)
+
+    # Read and dump to stdout
+    try:
+        with open(token_path, 'r') as f:
+            click.echo(f.read())
+    except Exception as e:
+        click.secho(f"Error reading credential file: {e}", fg="red")
+        sys.exit(1)
