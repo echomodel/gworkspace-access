@@ -35,13 +35,11 @@ def generate_cmd(source, scopes, output):
     """
     # 1. Resolve Scopes
     if scopes == "all":
-        # Request full feature set
         all_scopes = {s for s_set in FEATURE_SCOPES.values() for s in s_set} | IDENTITY_SCOPES
         requested_scopes = list(all_scopes)
     elif scopes:
         requested_scopes = resolve_scopes([s.strip() for s in scopes.split(",")])
     else:
-        # No scopes specified
         click.echo("Warning: No scopes specified. The resulting token may have limited functionality.", err=True)
         requested_scopes = []
 
@@ -49,21 +47,15 @@ def generate_cmd(source, scopes, output):
 
     if source == "adc":
         click.echo("Initiating ADC Login via gcloud...", err=True)
-        
-        # Build command
         gcloud_command = ["gcloud", "auth", "application-default", "login"]
         if requested_scopes:
-            # Standard ADC standard compatibility
             if "https://www.googleapis.com/auth/cloud-platform" not in requested_scopes:
                 requested_scopes.append("https://www.googleapis.com/auth/cloud-platform")
             scopes_str = ",".join(sorted(requested_scopes))
             gcloud_command.append(f"--scopes={scopes_str}")
 
         try:
-            # We don't capture output here so the user sees the gcloud prompts
             subprocess.run(gcloud_command, check=True)
-            
-            # Locate the generated file
             if sys.platform == "win32":
                 adc_path = Path(os.environ.get("APPDATA", "")) / "gcloud" / "application_default_credentials.json"
             else:
@@ -75,10 +67,6 @@ def generate_cmd(source, scopes, output):
                 
             with open(adc_path, "r") as f:
                 token_data = json.load(f)
-                
-        except subprocess.CalledProcessError as e:
-            click.secho(f"gcloud command failed.", fg="red", err=True)
-            sys.exit(1)
         except Exception as e:
             click.secho(f"Error generating ADC token: {e}", fg="red", err=True)
             sys.exit(1)
@@ -97,7 +85,15 @@ def generate_cmd(source, scopes, output):
         try:
             from google_auth_oauthlib.flow import InstalledAppFlow
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, requested_scopes)
-            creds = flow.run_local_server(port=0)
+            
+            # CRITICAL FIX: Redirect stdout to stderr during the flow 
+            # to prevent the URL from leaking into piped stdout.
+            old_stdout = sys.stdout
+            sys.stdout = sys.stderr
+            try:
+                creds = flow.run_local_server(port=0)
+            finally:
+                sys.stdout = old_stdout
             
             token_data = json.loads(creds.to_json())
             token_data["type"] = "authorized_user"
@@ -109,13 +105,8 @@ def generate_cmd(source, scopes, output):
     if token_data:
         output_json = json.dumps(token_data, indent=2)
         if output:
-            try:
-                with open(output, "w") as f:
-                    f.write(output_json)
-                click.echo(f"Token saved to {output}", err=True)
-            except Exception as e:
-                click.secho(f"Failed to write to {output}: {e}", fg="red", err=True)
-                sys.exit(1)
+            with open(output, "w") as f:
+                f.write(output_json)
+            click.echo(f"Token saved to {output}", err=True)
         else:
-            # This is the only part that goes to stdout
             click.echo(output_json)
