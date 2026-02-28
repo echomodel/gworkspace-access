@@ -670,18 +670,35 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
 
         click.echo("Executing gcloud command to grant credentials...")
         
+        # Extract existing quota project before gcloud wipes it
+        existing_quota_project = None
+        from .profiles import get_adc_quota_project
+        try:
+            existing_quota_project = get_adc_quota_project()
+        except Exception:
+            pass
+        
         try:
             # We capture output to check for the quota project warning
             result = subprocess.run(gcloud_command, check=True, capture_output=True, text=True)
             
             if "Cannot find a quota project" in result.stderr:
-                click.secho("\nℹ️ NOTICE: Quota Project Required", fg="cyan", bold=True)
-                click.echo("\nGoogle has authenticated you, but you must set a 'quota project' for billing and usage tracking.")
-                click.echo("Please run the following command, replacing YOUR_PROJECT_ID with your Google Cloud project ID:")
-                click.secho("\n  gcloud auth application-default set-quota-project YOUR_PROJECT_ID\n", fg="yellow")
-                click.echo("After running the command above, re-run setup to finalize configuration:")
-                click.secho("\n  gwsa setup --use-adc\n", fg="cyan")
-                return False # Stop here and let the user fix their gcloud config
+                if existing_quota_project:
+                    click.secho(f"\nℹ️  Notice: Restoring previous quota project ({existing_quota_project}) to the new ADC profile...", fg="cyan")
+                    restore_cmd = ["gcloud", "auth", "application-default", "set-quota-project", existing_quota_project]
+                    try:
+                        subprocess.run(restore_cmd, check=True, capture_output=True, text=True)
+                    except subprocess.CalledProcessError as e:
+                        click.secho(f"\n❌ Error restoring quota project: {e.stderr}", fg="red")
+                        return False
+                else:
+                    click.secho("\nℹ️ NOTICE: Quota Project Required", fg="cyan", bold=True)
+                    click.echo("\nGoogle has authenticated you, but you must set a 'quota project' for billing and usage tracking.")
+                    click.echo("Please run the following command, replacing YOUR_PROJECT_ID with your Google Cloud project ID:")
+                    click.secho("\n  gcloud auth application-default set-quota-project YOUR_PROJECT_ID\n", fg="yellow")
+                    click.echo("After running the command above, re-run setup to finalize configuration:")
+                    click.secho("\n  gwsa setup --use-adc\n", fg="cyan")
+                    return False # Stop here and let the user fix their gcloud config
 
             click.echo("\ngcloud login successful. Now verifying and configuring gwsa...")
             use_adc = True 

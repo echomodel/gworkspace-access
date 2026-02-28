@@ -80,7 +80,7 @@ def check_profile_status() -> Dict[str, Any]:
 
         ready = (
             report.get("status") == "CONFIGURED"
-            and report.get("creds_valid", False)
+            and (report.get("creds_valid", False) or report.get("creds_refreshable", False))
             and not report.get("scope_validation_error")
         )
 

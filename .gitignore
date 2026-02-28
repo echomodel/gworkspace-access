@@ -10,3 +10,4 @@ __pycache__/
 build/
 test-api-access.yaml
 *.log
+temp/

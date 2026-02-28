@@ -511,3 +511,19 @@ def get_adc_cached_email() -> Optional[str]:
 def get_adc_cached_scopes() -> list:
     """Get the cached scopes for ADC profile, if available."""
     return load_adc_cached_metadata().get("validated_scopes", [])
+
+
+def get_adc_quota_project() -> Optional[str]:
+    """
+    Retrieve the quota_project_id directly from the ADC JSON file.
+    Does not use the cache, as this reads the live file state.
+    """
+    if not ADC_FILE_PATH.exists():
+        return None
+    try:
+        with open(ADC_FILE_PATH, 'r') as f:
+            data = json.load(f)
+            return data.get("quota_project_id")
+    except Exception as e:
+        logger.warning(f"Failed to read ADC quota project: {e}")
+        return None

@@ -27,6 +27,7 @@ from gwsa.sdk.profiles import (
     check_adc_changed,
     get_adc_cached_email,
     get_adc_cached_scopes,
+    get_adc_quota_project,
 )
 
 __all__ = [
@@ -55,4 +56,5 @@ __all__ = [
     "check_adc_changed",
     "get_adc_cached_email",
     "get_adc_cached_scopes",
+    "get_adc_quota_project",
 ]
