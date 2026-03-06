@@ -9,11 +9,10 @@ Profiles allow you to switch between multiple Google accounts without re-running
 ```
 ~/.config/gworkspace-access/
 ├── config.yaml              # Active profile pointer
-├── adc_cache.yaml           # ADC metadata cache
 └── profiles/
     ├── default/
     │   ├── user_token.json  # OAuth credentials
-    │   └── profile.yaml     # Metadata (email, scopes, validation timestamp)
+    │   └── profile.yaml     # Metadata (email, scopes, validation timestamp, type)
     └── work/
         ├── user_token.json
         └── profile.yaml
@@ -21,7 +20,9 @@ Profiles allow you to switch between multiple Google accounts without re-running
 
 ## Profile Types
 
-### Token Profiles
+*(Note: Both profile types rely on Google's OAuth 2.0 Identity platform. The "type" simply denotes how the token was acquired and the JSON schema it uses under the hood.)*
+
+### Token Profiles (Standard OAuth)
 
 Standard OAuth-based profiles created via browser login.
 
@@ -30,18 +31,17 @@ Standard OAuth-based profiles created via browser login.
 - Requires: `client_secrets.json` (OAuth client credentials)
 - Stored in: `~/.config/gworkspace-access/profiles/<name>/`
 
-### ADC Profile
+### ADC Profiles
 
-Built-in virtual profile using Google Cloud Application Default Credentials.
+Profiles generating Google Cloud Application Default Credentials into the isolated vault securely.
 
-- Always listed (built-in, cannot be deleted)
-- Re-authenticated with: `gwsa profiles refresh adc`
-- Runs: `gcloud auth application-default login`
+- Created with: `gwsa profiles add <name> --type=adc --quota-project=<project>`
+- Re-authenticated with: `gwsa profiles refresh <name>`
+- Runs: `gcloud auth application-default login` internally, redirected to the vault
 - Requires: Google Cloud SDK installed
-- Credentials stored by gcloud at: `~/.config/gcloud/application_default_credentials.json`
-- Metadata cached at: `~/.config/gworkspace-access/adc_cache.yaml`
+- Stored in: `~/.config/gworkspace-access/profiles/<name>/`
 
-**Note:** `gwsa profiles add adc` is never valid since ADC always exists.
+**Note:** Unlike older versions of `gwsa` (v1.x), there is no longer a magic built-in global `adc` profile. ADC profiles are explicitly created and isolated exactly like standard OAuth token profiles.
 
 ## Profile States
 
@@ -58,7 +58,7 @@ View profile states with `gwsa profiles list`:
 ```
 PROFILE            STATUS         EMAIL                          VALIDATED
 ------------------------------------------------------------------------------
-  adc              unvalidated    -                              never
+  dev-adc          valid          dev@example.com                1h ago
 * home             valid          user@gmail.com                 2h ago
   work             valid          worker@company.com             1d ago
 ------------------------------------------------------------------------------
@@ -71,7 +71,7 @@ Ready to use.
 
 List all profiles with their status.
 
-- Shows all token profiles plus the built-in ADC profile
+- Shows all configured profiles
 - Marks active profile with `*`
 - Shows validation status and timestamp
 - Provides guidance if no valid/active profile
@@ -92,15 +92,15 @@ Active profile: default
 
 Create a new token profile.
 
-- Requires client credentials configured first (`gwsa client import`)
-- Profile must NOT already exist
-- Opens browser for OAuth consent
+- For standard tokens: `gwsa profiles add <name>`
+- For ADC tokens: `gwsa profiles add <name> --type=adc --quota-project=<project>`
+- Opens browser for OAuth consent (or routes `gcloud` login for ADC)
 - Validates credentials with tokeninfo before saving
 - Atomic operation: no partial state on failure
 
 ```bash
 gwsa profiles add work
-gwsa profiles add personal
+gwsa profiles add my-adc --type=adc --quota-project=your-gcp-project-id
 ```
 
 ### `gwsa profiles refresh <name>`
@@ -115,7 +115,7 @@ Re-authenticate an existing profile.
 
 ```bash
 gwsa profiles refresh default    # Re-auth token profile
-gwsa profiles refresh adc        # Re-auth via gcloud
+gwsa profiles refresh dev-adc    # Re-auth ADC profile
 ```
 
 ### `gwsa profiles use <name>`
@@ -128,15 +128,13 @@ Switch to a different profile.
 
 ```bash
 gwsa profiles use work
-gwsa profiles use adc --no-recheck  # Trust cached status
+gwsa profiles use dev-adc --no-recheck  # Trust cached status
 ```
 
 ### `gwsa profiles rename <old_name> <new_name>`
 
 Rename a profile.
 
-- Cannot rename the built-in `adc` profile
-- Cannot rename TO `adc` (reserved name)
 - New name must be valid (alphanumeric, hyphens, underscores)
 - Atomic operation with rollback on failure
 - If renaming active profile, config is updated automatically
@@ -149,14 +147,32 @@ gwsa profiles rename work work-old
 ### `gwsa profiles delete <name>`
 
 Delete a profile.
-
-- Cannot delete the built-in `adc` profile
 - Prompts for confirmation (use `-y` to skip)
 - If deleting active profile, no profile becomes active
 
 ```bash
 gwsa profiles delete old-profile
 gwsa profiles delete temp -y  # Skip confirmation
+```
+
+### `gwsa profiles export <name>`
+
+Output the raw JSON contents of a profile's token to stdout.
+
+### `gwsa profiles path <name>`
+
+A utility command for integrating with external CI/scripts. It outputs the absolute file path to a profile's isolated token perfectly suited for command substitution.
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=$(gwsa profiles path my-adc)
+```
+
+### `gwsa profiles apply <name>`
+
+A legacy compatibility command. It sets the selected profile as the system-wide Application Default Credential by copying it to `~/.config/gcloud/application_default_credentials.json`. Used for external tooling that does not evaluate environment variables.
+
+```bash
+gwsa profiles apply my-adc
 ```
 
 ### `gwsa status`
@@ -223,7 +239,6 @@ gwsa profiles list              # See available profiles
 gwsa profiles use <name>        # Activate a valid profile
 # OR
 gwsa profiles add <name>        # Create new profile
-gwsa profiles refresh adc       # Or use ADC via gcloud
 ```
 
 ### Invalid/Stale Profile

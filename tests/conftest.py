@@ -65,8 +65,6 @@ def check_profile_status() -> Dict[str, Any]:
     """
     Check if gwsa has a valid, working profile configured.
 
-    Uses the same status check as 'gwsa setup' with no args.
-
     Returns:
         Dict with status info including:
             - ready: bool indicating if profile is usable
@@ -74,31 +72,46 @@ def check_profile_status() -> Dict[str, Any]:
             - user_email: authenticated email (if available)
             - error: error message (if any)
     """
+    import os
+    # Integration tests MUST run against the user's real configuration.
+    # If a test previously polluted the env var, temporarily unset it so
+    # we can validate the real environment.
+    original_config_dir = os.environ.get("GWSA_CONFIG_DIR")
+    if original_config_dir:
+        del os.environ["GWSA_CONFIG_DIR"]
+
     try:
-        from gwsa.cli.setup_local import _get_status_report
-        report = _get_status_report(deep_check=False)
-
-        ready = (
-            report.get("status") == "CONFIGURED"
-            and (report.get("creds_valid", False) or report.get("creds_refreshable", False))
-            and not report.get("scope_validation_error")
-        )
-
-        return {
-            "ready": ready,
-            "status": report.get("status", "UNKNOWN"),
-            "user_email": report.get("user_email"),
-            "mode": report.get("mode"),
-            "profile": report.get("profile"),
-            "feature_status": report.get("feature_status", {}),
-            "error": report.get("error_details") or report.get("scope_validation_error"),
-        }
+        from gwsa.sdk.profiles import get_active_profile_name, get_profile_status
+        active = get_active_profile_name()
+        
+        if not active:
+            result = {
+                "ready": False,
+                "status": "NOT_CONFIGURED",
+                "error": "No active profile set",
+            }
+        else:
+            status = get_profile_status(active)
+            result = {
+                "ready": status["valid"],
+                "status": "CONFIGURED" if status["valid"] else "ERROR",
+                "user_email": status.get("email"),
+                "mode": status.get("type", "oauth"),
+                "profile": active,
+                "error": status.get("reason"),
+            }
     except Exception as e:
-        return {
+        result = {
             "ready": False,
             "status": "ERROR",
             "error": str(e),
         }
+    finally:
+        # Restore if it was set
+        if original_config_dir is not None:
+            os.environ["GWSA_CONFIG_DIR"] = original_config_dir
+
+    return result
 
 
 def print_test_config_instructions(profile_name: str):

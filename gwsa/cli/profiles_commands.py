@@ -4,17 +4,16 @@ import sys
 import click
 import json
 import os
+import shutil
 from pathlib import Path
 
 from .profiles import (
-    ADC_PROFILE_NAME,
     list_profiles,
     get_active_profile_name,
     set_active_profile,
     profile_exists,
     delete_profile,
     create_profile,
-    check_adc_changed,
     is_valid_profile_name,
     get_profile_dir,
     get_profile_token_path,
@@ -160,7 +159,7 @@ def current_cmd():
 def use_cmd(name, no_recheck):
     """Switch to a different profile.
 
-    NAME is the profile to activate. Use 'adc' for Application Default Credentials.
+    NAME is the profile to activate.
 
     By default, calls Google's tokeninfo API to verify credentials are still valid.
     Use --no-recheck to trust the cached validation status instead.
@@ -169,7 +168,7 @@ def use_cmd(name, no_recheck):
     from .profiles import get_profile_status
     from .auth.check_access import get_token_info
 
-    if not is_valid_profile_name(name) and name != ADC_PROFILE_NAME:
+    if not is_valid_profile_name(name):
         click.secho(f"Invalid profile name: {name}", fg="red")
         sys.exit(1)
 
@@ -244,7 +243,9 @@ def use_cmd(name, no_recheck):
 
 @profiles.command("refresh")
 @click.argument("name")
-def refresh_cmd(name):
+@click.option("--basic-scopes/--all-scopes", default=False, 
+              help="Only request basic identity and cloud-platform scopes (useful for orgs that block Workspace scopes)")
+def refresh_cmd(name, basic_scopes):
     """Re-authenticate an existing profile.
 
     NAME is the profile to refresh. The profile must already exist.
@@ -257,88 +258,8 @@ def refresh_cmd(name):
     import os
     import json
     import subprocess
-    from .profiles import (
-        load_adc_cached_metadata,
-        update_adc_cached_metadata,
-        get_profile_token_path,
-        update_profile_metadata,
-    )
-    from .auth.check_access import FEATURE_SCOPES, IDENTITY_SCOPES, get_token_info
-    from .setup_local import CLIENT_SECRETS_FILE
+    from .profiles import load_profile_metadata
 
-    # ADC refresh
-    if name == ADC_PROFILE_NAME:
-        click.echo("Refreshing ADC credentials...")
-        click.echo("This will open a browser for Google Cloud authentication.")
-
-        # Build scopes for gcloud command
-        all_scopes = {scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES
-        all_scopes.add("https://www.googleapis.com/auth/cloud-platform")
-        scopes_str = ",".join(sorted(list(all_scopes)))
-        gcloud_command = ["gcloud", "auth", "application-default", "login", f"--scopes={scopes_str}"]
-
-        # Extract existing quota project before gcloud wipes it
-        existing_quota_project = None
-        from .profiles import get_adc_quota_project
-        try:
-            existing_quota_project = get_adc_quota_project()
-        except Exception:
-            pass
-
-        try:
-            result = subprocess.run(gcloud_command, check=True, capture_output=True, text=True)
-
-            if "Cannot find a quota project" in result.stderr:
-                if existing_quota_project:
-                    click.secho(f"\nℹ️  Notice: Restoring previous quota project ({existing_quota_project}) to the new ADC profile...", fg="cyan")
-                    restore_cmd = ["gcloud", "auth", "application-default", "set-quota-project", existing_quota_project]
-                    try:
-                        subprocess.run(restore_cmd, check=True, capture_output=True, text=True)
-                    except subprocess.CalledProcessError as e:
-                        click.secho(f"\n❌ Error restoring quota project: {e.stderr}", fg="red")
-                        sys.exit(1)
-                else:
-                    click.secho("\nℹ️  NOTICE: Quota Project Required", fg="cyan", bold=True)
-                    click.echo("\nGoogle has authenticated you, but you must set a 'quota project'.")
-                    click.echo("Run the following command, replacing YOUR_PROJECT_ID with your project ID:")
-                    click.secho("\n  gcloud auth application-default set-quota-project YOUR_PROJECT_ID\n", fg="yellow")
-                    click.echo("Then run this command again to complete validation.")
-                    sys.exit(1)
-
-            click.echo("gcloud login successful. Validating credentials...")
-
-            # Validate and cache
-            import google.auth
-            from google.auth.transport.requests import Request
-
-            creds, project = google.auth.default()
-            if not creds.valid:
-                creds.refresh(Request())
-
-            token_info = get_token_info(creds)
-            email = token_info.get("email")
-            scopes = token_info.get("scopes", [])
-
-            update_adc_cached_metadata(email=email, scopes=scopes)
-
-            click.secho(f"\nADC profile refreshed successfully!", fg="green")
-            if email:
-                click.echo(f"  Email: {email}")
-            click.echo(f"  Scopes: {len(scopes)}")
-
-        except subprocess.CalledProcessError as e:
-            click.secho(f"gcloud command failed: {e.stderr}", fg="red")
-            sys.exit(1)
-        except FileNotFoundError:
-            click.secho("Error: gcloud not found. Please install Google Cloud SDK.", fg="red")
-            sys.exit(1)
-        except Exception as e:
-            click.secho(f"Error refreshing ADC: {e}", fg="red")
-            sys.exit(1)
-
-        return
-
-    # Token profile refresh
     if not is_valid_profile_name(name):
         click.secho(f"Invalid profile name: {name}", fg="red")
         sys.exit(1)
@@ -348,58 +269,114 @@ def refresh_cmd(name):
         click.echo("Use 'gwsa profiles add' to create a new profile.")
         sys.exit(1)
 
-    # Check client secrets exist
-    if not os.path.exists(CLIENT_SECRETS_FILE):
-        click.secho("Client credentials not configured.", fg="red")
-        click.echo("\nTo configure:")
-        click.echo("  gwsa client import /path/to/client_secrets.json")
-        sys.exit(1)
+    metadata = load_profile_metadata(name)
+    profile_type = metadata.get("type", "oauth")
 
-    # Collect all scopes
-    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
-
-    click.echo(f"Refreshing profile '{name}'...")
+    click.echo(f"Refreshing {profile_type.upper()} profile '{name}'...")
     click.echo("A browser window will open for authentication.")
 
     try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
         import tempfile
         import shutil
+        from google.oauth2.credentials import Credentials
 
-        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, all_scopes)
-        creds = flow.run_local_server(port=0)
+        # Work in a temp file so we don't destroy the current token until validation succeeds
+        token_path = get_profile_token_path(name)
+        temp_fd, temp_path = tempfile.mkstemp(dir=token_path.parent, suffix='.tmp')
+        os.close(temp_fd)
 
-        # FIRST: Validate with tokeninfo before making any changes
-        # If this fails, we haven't touched the existing profile
+        if profile_type == "adc":
+            # Backup central ADC file to prevent gcloud from clobbering it
+            central_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+            backup_path = None
+            if central_adc.exists():
+                backup_path = central_adc.with_suffix(".json.gwsa-backup")
+                shutil.copy2(str(central_adc), str(backup_path))
+
+            try:
+                if basic_scopes:
+                    all_scopes = list(IDENTITY_SCOPES)
+                    click.echo("Using basic identity scopes only.")
+                else:
+                    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
+                    
+                all_scopes.append("https://www.googleapis.com/auth/cloud-platform")
+                scopes_str = ",".join(sorted(set(all_scopes)))
+                
+                login_cmd = [
+                    "gcloud", "auth", "application-default", "login",
+                    f"--scopes={scopes_str}",
+                ]
+                click.echo("Running gcloud to refresh Application Default Credentials...")
+                result = subprocess.run(login_cmd)
+                if result.returncode != 0:
+                    click.secho("Error: gcloud auth application-default login failed.", fg="red")
+                    sys.exit(1)
+                
+                # Rehydrate existing quota project from the old token file
+                with open(token_path, 'r') as f:
+                    old_token = json.load(f)
+                existing_quota = old_token.get("quota_project_id")
+                
+                if existing_quota:
+                    click.echo(f"Restoring quota project '{existing_quota}'...")
+                    quota_cmd = ["gcloud", "auth", "application-default", "set-quota-project", existing_quota]
+                    result = subprocess.run(quota_cmd)
+                    if result.returncode != 0:
+                        click.secho(f"Warning: Failed to restore quota project '{existing_quota}'.", fg="yellow")
+
+                # Load the new token from the central ADC path, then save to our temporary validate path
+                with open(central_adc, 'r') as f:
+                    token_data = json.load(f)
+                creds = Credentials.from_authorized_user_info(token_data)
+                
+                with open(temp_path, 'w') as f:
+                    json.dump(token_data, f, indent=2)
+
+            finally:
+                # Restore the original central ADC file
+                if backup_path and backup_path.exists():
+                    shutil.move(str(backup_path), str(central_adc))
+                    click.echo("Restored original central ADC credentials.")
+                elif not backup_path:
+                    # There was no original file; remove the one gcloud created
+                    if central_adc.exists():
+                        central_adc.unlink()
+
+        else:
+            # OAuth flow
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                click.secho("Client credentials not configured.", fg="red")
+                click.echo("\nTo configure:")
+                click.echo("  gwsa client import /path/to/client_secrets.json")
+                sys.exit(1)
+
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, all_scopes)
+            creds = flow.run_local_server(port=0)
+
+            token_data = json.loads(creds.to_json())
+            token_data["type"] = "authorized_user"
+            with open(temp_path, 'w') as f:
+                json.dump(token_data, f, indent=2)
+
+        # Validate with tokeninfo
         click.echo("Validating new credentials...")
         token_info = get_token_info(creds)
         email = token_info.get("email")
         scopes = token_info.get("scopes", [])
 
         if not email:
-            click.secho("Error: Could not retrieve email from credentials.", fg="red")
-            click.echo("Your existing profile has not been modified.")
-            sys.exit(1)
-
-        # Prepare token data
-        token_data = json.loads(creds.to_json())
-        token_data["type"] = "authorized_user"
-
-        # Write to temp file first, then atomic move
-        token_path = get_profile_token_path(name)
-        temp_fd, temp_path = tempfile.mkstemp(dir=token_path.parent, suffix='.tmp')
-        try:
-            with os.fdopen(temp_fd, 'w') as f:
-                json.dump(token_data, f, indent=2)
-            # Atomic replace
-            shutil.move(temp_path, token_path)
-        except Exception:
-            # Clean up temp file if move failed
+            click.secho("Error: Could not retrieve email from credentials or missing email scope.", fg="red")
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            raise
+            sys.exit(1)
 
-        # Update metadata (only after token file is successfully written)
+        # Atomic replace of the token file
+        shutil.move(temp_path, token_path)
+
+        # Update metadata
         update_profile_metadata(name, email=email, scopes=scopes)
 
         click.secho(f"\nProfile '{name}' refreshed successfully!", fg="green")
@@ -409,31 +386,35 @@ def refresh_cmd(name):
     except Exception as e:
         click.secho(f"Error refreshing profile: {e}", fg="red")
         click.echo("Your existing profile has not been modified.")
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
         sys.exit(1)
 
 
 @profiles.command("add")
 @click.argument("name")
-def add_cmd(name):
-    """Create a new token profile.
+@click.option("--type", "profile_type", type=click.Choice(["oauth", "adc"]), default="oauth", help="Type of profile to create.")
+@click.option("--quota-project", help="Quota project to apply (required for ADC profiles).")
+@click.option("--basic-scopes/--all-scopes", default=False, 
+              help="Only request basic identity and cloud-platform scopes (useful for orgs that block Workspace scopes)")
+def add_cmd(name, profile_type, quota_project, basic_scopes):
+    """Add a new Google identity profile to the vault.
 
-    NAME is the profile name (alphanumeric, hyphens, underscores allowed).
+    This creates a new profile context for authentication.
     The profile must NOT already exist. Use 'refresh' to update existing profiles.
 
-    This will open a browser for OAuth consent.
-
-    Requires client credentials to be configured first via 'gwsa client import'.
+    If --type=oauth (default), opens a browser for standard OAuth consent.
+    If --type=adc, runs gcloud auth application-default login to create an isolated token.
     """
     import json
+    import os
+    import tempfile
+    import subprocess
     from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.oauth2.credentials import Credentials
     from .auth.check_access import FEATURE_SCOPES, IDENTITY_SCOPES, get_token_info
     from .setup_local import CLIENT_SECRETS_FILE
-    import os
-
-    if name == ADC_PROFILE_NAME:
-        click.secho("Cannot add 'adc' - it is a built-in profile.", fg="red")
-        click.echo("Use 'gwsa profiles refresh adc' to re-authenticate ADC.")
-        sys.exit(1)
+    from gwsa.sdk.profiles import ProfileType
 
     if not is_valid_profile_name(name):
         click.secho(f"Invalid profile name: {name}", fg="red")
@@ -445,22 +426,82 @@ def add_cmd(name):
         click.echo("Use 'gwsa profiles refresh' to re-authenticate existing profiles.")
         sys.exit(1)
 
-    # Check client secrets exist
-    if not os.path.exists(CLIENT_SECRETS_FILE):
+    if profile_type == "adc" and not quota_project:
+        click.secho("Error: --quota-project is required when creating an ADC profile.", fg="red")
+        sys.exit(1)
+
+    # Check client secrets exist (only required for OAuth)
+    if profile_type == "oauth" and not os.path.exists(CLIENT_SECRETS_FILE):
         click.secho("Client credentials not configured.", fg="red")
         click.echo("\nTo configure:")
         click.echo("  gwsa client import /path/to/client_secrets.json")
         sys.exit(1)
 
-    # Collect all scopes
-    all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
+    # Collect all scopes (cloud-platform is required for ADC)
+    if basic_scopes:
+        all_scopes = list(IDENTITY_SCOPES)
+        click.echo("Using basic identity scopes only.")
+    else:
+        all_scopes = list({scope for scope_set in FEATURE_SCOPES.values() for scope in scope_set} | IDENTITY_SCOPES)
+        
+    all_scopes.append("https://www.googleapis.com/auth/cloud-platform")
+    all_scopes = sorted(set(all_scopes))
 
-    click.echo(f"Creating profile '{name}'...")
+    click.echo(f"Creating {profile_type.upper()} profile '{name}'...")
     click.echo("A browser window will open for authentication.")
 
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, all_scopes)
-        creds = flow.run_local_server(port=0)
+        if profile_type == "adc":
+            # gcloud always writes to the central ADC location, so we
+            # backup the existing file, let gcloud write, copy to vault,
+            # then restore the original.
+            central_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+            backup_path = None
+            if central_adc.exists():
+                backup_path = central_adc.with_suffix(".json.gwsa-backup")
+                shutil.copy2(str(central_adc), str(backup_path))
+
+            try:
+                scopes_str = ",".join(all_scopes)
+                login_cmd = [
+                    "gcloud", "auth", "application-default", "login",
+                    f"--scopes={scopes_str}",
+                ]
+                click.echo("Running gcloud to generate Application Default Credentials...")
+                result = subprocess.run(login_cmd)
+                if result.returncode != 0:
+                    click.secho("Error: gcloud auth application-default login failed.", fg="red")
+                    sys.exit(1)
+
+                # Set quota project
+                click.echo(f"Setting quota project to '{quota_project}'...")
+                quota_cmd = [
+                    "gcloud", "auth", "application-default", "set-quota-project", quota_project
+                ]
+                result = subprocess.run(quota_cmd)
+                if result.returncode != 0:
+                    click.secho("Error: Failed to set quota project.", fg="red")
+                    sys.exit(1)
+
+                # Read the generated file from the central location
+                with open(central_adc, 'r') as f:
+                    token_data = json.load(f)
+                creds = Credentials.from_authorized_user_info(token_data)
+            finally:
+                # Restore the original central ADC file
+                if backup_path and backup_path.exists():
+                    shutil.move(str(backup_path), str(central_adc))
+                    click.echo("Restored original central ADC credentials.")
+                elif not backup_path:
+                    # There was no original file; remove the one gcloud created
+                    if central_adc.exists():
+                        central_adc.unlink()
+        else:
+            # OAuth flow
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, all_scopes)
+            creds = flow.run_local_server(port=0)
+            token_data = json.loads(creds.to_json())
+            token_data["type"] = "authorized_user"
 
         # FIRST: Validate with tokeninfo before creating profile
         # If this fails, no profile is created
@@ -474,12 +515,9 @@ def add_cmd(name):
             click.echo("No profile was created.")
             sys.exit(1)
 
-        # Prepare token data
-        token_data = json.loads(creds.to_json())
-        token_data["type"] = "authorized_user"
-
         # Create profile only after validation succeeds
-        if create_profile(name, token_data, email=email, scopes=scopes):
+        ptype = ProfileType.ADC if profile_type == "adc" else ProfileType.OAUTH
+        if create_profile(name, token_data, profile_type=ptype, email=email, scopes=scopes):
             click.secho(f"\nProfile '{name}' created successfully!", fg="green")
             click.echo(f"  Email: {email}")
             click.echo(f"  Scopes: {len(scopes)}")
@@ -500,12 +538,8 @@ def add_cmd(name):
 def delete_cmd(name, yes):
     """Delete a profile.
 
-    NAME is the profile to delete. Cannot delete the built-in 'adc' profile.
+    NAME is the profile to delete.
     """
-    if name == ADC_PROFILE_NAME:
-        click.secho("Cannot delete built-in 'adc' profile.", fg="red")
-        sys.exit(1)
-
     if not profile_exists(name):
         click.secho(f"Profile not found: {name}", fg="red")
         sys.exit(1)
@@ -537,20 +571,9 @@ def rename_cmd(old_name, new_name):
     OLD_NAME is the current profile name.
     NEW_NAME is the new name for the profile.
 
-    Cannot rename the built-in 'adc' profile.
     """
     import shutil
     import yaml
-
-    # Fail fast: can't rename ADC
-    if old_name == ADC_PROFILE_NAME:
-        click.secho("Cannot rename built-in 'adc' profile.", fg="red")
-        sys.exit(1)
-
-    # Fail fast: can't rename TO adc
-    if new_name == ADC_PROFILE_NAME:
-        click.secho("Cannot use reserved name 'adc'.", fg="red")
-        sys.exit(1)
 
     # Fail fast: invalid new name
     if not is_valid_profile_name(new_name):
@@ -614,8 +637,6 @@ def export_cmd(name):
     NAME is the profile to export. If omitted, uses the active profile.
     This outputs the raw JSON content of the credential file, suitable for
     saving to a file (e.g. > creds.json) for use with GOOGLE_APPLICATION_CREDENTIALS.
-
-    For 'adc', it attempts to locate the system-wide application default credentials.
     """
     if not name:
         name = get_active_profile_name()
@@ -623,28 +644,14 @@ def export_cmd(name):
             click.secho("No active profile selected. Please specify a profile name.", fg="red")
             sys.exit(1)
 
-    if name == ADC_PROFILE_NAME:
-        # Standard gcloud ADC location
-        if sys.platform == "win32":
-            adc_path = Path(os.environ.get("APPDATA", "")) / "gcloud" / "application_default_credentials.json"
-        else:
-            adc_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-        
-        if not adc_path.exists():
-            click.secho(f"Error: ADC credentials file not found at {adc_path}", fg="red")
-            click.echo("Run 'gcloud auth application-default login' to create it.")
-            sys.exit(1)
-        
-        token_path = adc_path
-    else:
-        if not profile_exists(name):
-            click.secho(f"Profile not found: {name}", fg="red")
-            sys.exit(1)
+    if not profile_exists(name):
+        click.secho(f"Profile not found: {name}", fg="red")
+        sys.exit(1)
 
-        token_path = get_profile_token_path(name)
-        if not token_path.exists():
-            click.secho(f"Error: Credential file missing for profile '{name}'.", fg="red")
-            sys.exit(1)
+    token_path = get_profile_token_path(name)
+    if not token_path.exists():
+        click.secho(f"Error: Credential file missing for profile '{name}'.", fg="red")
+        sys.exit(1)
 
     # Read and dump to stdout
     try:
@@ -652,4 +659,44 @@ def export_cmd(name):
             click.echo(f.read())
     except Exception as e:
         click.secho(f"Error reading credential file: {e}", fg="red")
+        sys.exit(1)
+@profiles.command("apply")
+@click.argument("name", required=False)
+def apply_cmd(name):
+    """Apply a profile's credentials to the global gcloud ADC path.
+
+    NAME is the profile to apply. If omitted, uses the active profile.
+    This copies the profile's credential file to the standard gcloud location
+    (~/.config/gcloud/application_default_credentials.json), making it the
+    default identity for all standard Google Cloud SDKs and tools on this machine.
+    """
+    if not name:
+        name = get_active_profile_name()
+        if not name:
+            click.secho("No active profile selected. Please specify a profile name.", fg="red")
+            sys.exit(1)
+
+    if not profile_exists(name):
+        click.secho(f"Profile not found: {name}", fg="red")
+        sys.exit(1)
+
+    token_path = get_profile_token_path(name)
+    if not token_path.exists():
+        click.secho(f"Error: Credential file missing for profile '{name}'.", fg="red")
+        sys.exit(1)
+
+    # Determine global gcloud ADC path
+    central_adc_dir = Path.home() / ".config" / "gcloud"
+    central_adc_file = central_adc_dir / "application_default_credentials.json"
+    
+    # Ensure directory exists
+    central_adc_dir.mkdir(parents=True, exist_ok=True)
+    
+    import shutil
+    try:
+        shutil.copy2(str(token_path), str(central_adc_file))
+        click.secho(f"Successfully applied profile '{name}' to global gcloud ADC.", fg="green")
+        click.echo(f"  Target: {central_adc_file}")
+    except Exception as e:
+        click.secho(f"Error applying profile to global ADC path: {e}", fg="red")
         sys.exit(1)

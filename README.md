@@ -220,24 +220,51 @@ LOG_LEVEL=DEBUG gwsa mail search "after:2025-11-27"
 
 ### Multiple Profiles
 
-Create additional profiles for different Google accounts:
+### Multiple Profiles
 
+Create additional profiles for different Google accounts or use cases:
+
+**Option 1: Standard OAuth Profile**
 ```bash
-gwsa profiles add work
 gwsa profiles add personal
+```
+
+**Option 2: Isolated ADC Profile (Recommended for Service Accounts/ADC workflows)**
+```bash
+gwsa profiles add work-adc --type=adc --quota-project=your-gcp-project-id
 ```
 
 Switch between them:
 
 ```bash
-gwsa profiles use work
 gwsa profiles use personal
+gwsa profiles use work-adc
 ```
 
 List all profiles:
 
 ```bash
 gwsa profiles list
+```
+
+### External Tooling (Terraform, Scripts, etc.)
+
+`gwsa` isolated profiles can be effortlessly consumed by external systems without overwriting your global machine state.
+
+**Option 1: Inject via Environment (Recommended)**
+Use the `path` command for Unix command substitution to inject the isolated profile path directly into standard Google Cloud variables.
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=$(gwsa profiles path my-adc)
+terraform apply
+```
+
+**Option 2: System-wide Default (Legacy)**
+If you prefer managing a single global system identity, or if a legacy tool does not respect environment variables, use the `apply` command to set a profile as your default Google Application Credential natively.
+
+```bash
+gwsa profiles apply my-adc
+legacy-tool run
 ```
 
 ### Re-authenticating

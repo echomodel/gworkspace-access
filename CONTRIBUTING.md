@@ -37,7 +37,7 @@ pip install -e ".[dev]"
 
 ## Running Tests
 
-The integration test suite requires a configured environment (`gwsa setup` must have been run).
+The integration test suite requires a configured environment (an active profile via `gwsa profiles add <name>` must exist).
 
 Run all tests:
 ```bash

@@ -106,11 +106,11 @@ def get_credentials(
     import google.auth
     from google.oauth2.credentials import Credentials
     from .profiles import (
-        ADC_PROFILE_NAME, get_active_profile_name, profile_exists,
+        get_active_profile_name, profile_exists,
         get_profile_token_path
     )
 
-    # Explicit ADC flag
+    # Explicit ADC flag — bypass vault entirely
     if use_adc:
         creds, project = google.auth.default()
         source = "Application Default Credentials (from flag)"
@@ -120,13 +120,7 @@ def get_credentials(
 
     # Explicit profile override
     if profile:
-        if profile == ADC_PROFILE_NAME:
-            creds, project = google.auth.default()
-            source = f"Application Default Credentials (profile: {profile})"
-            if project:
-                source += f" (project: {project})"
-            return creds, source
-        elif profile_exists(profile):
+        if profile_exists(profile):
             token_path = get_profile_token_path(profile)
             creds = Credentials.from_authorized_user_file(str(token_path))
             return creds, f"Profile '{profile}': {token_path}"
@@ -136,20 +130,14 @@ def get_credentials(
     # Use active profile
     active_profile = get_active_profile_name()
     if active_profile:
-        if active_profile == ADC_PROFILE_NAME:
-            creds, project = google.auth.default()
-            source = f"Application Default Credentials (profile: {active_profile})"
-            if project:
-                source += f" (project: {project})"
-            return creds, source
-        elif profile_exists(active_profile):
+        if profile_exists(active_profile):
             token_path = get_profile_token_path(active_profile)
             creds = Credentials.from_authorized_user_file(str(token_path))
             return creds, f"Profile '{active_profile}': {token_path}"
         else:
             raise ValueError(f"Active profile not found: {active_profile}")
 
-    raise ValueError("No active profile configured. Run 'gwsa setup' or 'gwsa profiles create' first.")
+    raise ValueError("No active profile configured. Run 'gwsa setup' or 'gwsa profiles add' first.")
 
 
 def refresh_credentials(creds) -> bool:

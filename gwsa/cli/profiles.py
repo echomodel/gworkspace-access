@@ -2,9 +2,7 @@
 
 # Re-export everything from SDK profiles
 from gwsa.sdk.profiles import (
-    ADC_PROFILE_NAME,
     PROFILE_NAME_PATTERN,
-    ADC_FILE_PATH,
     get_profiles_dir,
     is_valid_profile_name,
     get_profile_dir,
@@ -21,19 +19,10 @@ from gwsa.sdk.profiles import (
     create_profile,
     delete_profile,
     update_profile_metadata,
-    get_adc_metadata_path,
-    load_adc_cached_metadata,
-    update_adc_cached_metadata,
-    check_adc_changed,
-    get_adc_cached_email,
-    get_adc_cached_scopes,
-    get_adc_quota_project,
 )
 
 __all__ = [
-    "ADC_PROFILE_NAME",
     "PROFILE_NAME_PATTERN",
-    "ADC_FILE_PATH",
     "get_profiles_dir",
     "is_valid_profile_name",
     "get_profile_dir",
@@ -50,11 +39,4 @@ __all__ = [
     "create_profile",
     "delete_profile",
     "update_profile_metadata",
-    "get_adc_metadata_path",
-    "load_adc_cached_metadata",
-    "update_adc_cached_metadata",
-    "check_adc_changed",
-    "get_adc_cached_email",
-    "get_adc_cached_scopes",
-    "get_adc_quota_project",
 ]

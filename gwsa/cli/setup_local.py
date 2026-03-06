@@ -453,7 +453,8 @@ def _get_status_report(deep_check: bool = False) -> Dict:
     Gathers all status information and returns it as a dictionary.
     This function contains the core logic and is designed to be tested.
     """
-    from .profiles import ADC_PROFILE_NAME, get_active_profile_name
+    from .profiles import get_active_profile_name
+    from gwsa.sdk.profiles import load_profile_metadata
 
     config_file = get_config_file_path()
     if not config_file.exists():
@@ -463,8 +464,9 @@ def _get_status_report(deep_check: bool = False) -> Dict:
     if not active_profile:
         return {"status": "NOT_CONFIGURED"}
 
-    # Determine mode from profile type
-    auth_mode = "adc" if active_profile == ADC_PROFILE_NAME else "token"
+    # Determine mode from profile metadata
+    metadata = load_profile_metadata(active_profile)
+    auth_mode = metadata.get("type", "oauth")
     report = {"status": "CONFIGURED", "mode": auth_mode, "profile": active_profile}
 
     try:
@@ -728,19 +730,7 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
                 is_ready = is_ready and all(report["feature_status"].values())
 
             if is_ready:
-                # Cache ADC metadata (email, scopes, file hash for change detection)
-                from .profiles import update_adc_cached_metadata, ADC_PROFILE_NAME
-                update_adc_cached_metadata(
-                    email=report.get("user_email"),
-                    scopes=list(report.get("granted_scopes", []))
-                )
-                # Set active profile to ADC
-                set_config_value("active_profile", ADC_PROFILE_NAME)
-                # Also keep legacy config for backward compatibility
-                set_config_value("auth.mode", "adc")
-                set_config_value("auth.validated_scopes", list(report.get("granted_scopes", [])))
-                set_config_value("auth.last_scope_check", datetime.now().isoformat())
-                logger.info("ADC configured and validated. Cached email, scopes, and file hash.")
+                logger.info("ADC credentials validated successfully.")
                 _display_status_report(report, is_ready=True)
                 return True
             else:
@@ -807,9 +797,9 @@ def run_setup(new_user: bool = False, client_creds: str = None, use_adc: bool = 
             return False
 
         # Re-authenticate using existing client secrets into active profile or "default"
-        from .profiles import get_active_profile_name, ADC_PROFILE_NAME
+        from .profiles import get_active_profile_name
         active_profile = get_active_profile_name()
-        if not active_profile or active_profile == ADC_PROFILE_NAME:
+        if not active_profile:
             profile_name = "default"
         else:
             profile_name = active_profile

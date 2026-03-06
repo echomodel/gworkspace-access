@@ -103,16 +103,6 @@ class TestProfilesAdd:
         assert result.exit_code == 1
         assert "already exists" in result.output.lower()
 
-    def test_add_reserved_name_adc_rejected(self, isolated_config):
-        """Adding profile named 'adc' should fail (reserved name)."""
-        isolated_config["create_client_secrets"]()
-
-        runner = CliRunner()
-        result = runner.invoke(gwsa, ["profiles", "add", "adc"])
-
-        assert result.exit_code == 1
-        assert "built-in" in result.output.lower() or "adc" in result.output.lower()
-
     def test_add_without_client_secrets_rejected(self, isolated_config):
         """Adding profile without client secrets configured should fail."""
         # Don't create client_secrets.json
@@ -127,24 +117,6 @@ class TestProfilesAdd:
 
 class TestProfilesRename:
     """Tests for 'gwsa profiles rename' command validation."""
-
-    def test_rename_adc_rejected(self, isolated_config):
-        """Renaming the built-in 'adc' profile should fail."""
-        runner = CliRunner()
-        result = runner.invoke(gwsa, ["profiles", "rename", "adc", "something"])
-
-        assert result.exit_code == 1
-        assert "cannot rename" in result.output.lower() or "built-in" in result.output.lower()
-
-    def test_rename_to_adc_rejected(self, isolated_config):
-        """Renaming any profile TO 'adc' should fail (reserved name)."""
-        isolated_config["create_profile"]("myprofile")
-
-        runner = CliRunner()
-        result = runner.invoke(gwsa, ["profiles", "rename", "myprofile", "adc"])
-
-        assert result.exit_code == 1
-        assert "reserved" in result.output.lower() or "adc" in result.output.lower()
 
     def test_rename_nonexistent_rejected(self, isolated_config):
         """Renaming a profile that doesn't exist should fail."""
@@ -168,14 +140,6 @@ class TestProfilesRename:
 
 class TestProfilesDelete:
     """Tests for 'gwsa profiles delete' command validation."""
-
-    def test_delete_adc_rejected(self, isolated_config):
-        """Deleting the built-in 'adc' profile should fail."""
-        runner = CliRunner()
-        result = runner.invoke(gwsa, ["profiles", "delete", "adc", "-y"])
-
-        assert result.exit_code == 1
-        assert "cannot delete" in result.output.lower() or "built-in" in result.output.lower()
 
     def test_delete_nonexistent_rejected(self, isolated_config):
         """Deleting a profile that doesn't exist should fail."""
