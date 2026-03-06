@@ -539,6 +539,7 @@ async def send_email(
     body: str,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
+    html_body: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Send an email via Gmail.
@@ -549,6 +550,7 @@ async def send_email(
         body: Plain text body of the email
         cc: Optional CC recipients (comma-separated)
         bcc: Optional BCC recipients (comma-separated)
+        html_body: Optional HTML body of the email
 
     Returns:
         Dict with message ID and thread ID of the sent email
@@ -560,6 +562,7 @@ async def send_email(
             body=body,
             cc=cc,
             bcc=bcc,
+            html_body=html_body,
         )
         return {
             "success": True,
@@ -607,6 +610,48 @@ async def reply_email(
         }
     except Exception as e:
         logger.error(f"Error replying to email: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def create_email_draft(
+    to: str,
+    subject: str,
+    body: str,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    html_body: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Create a draft email in Gmail.
+
+    Args:
+        to: Recipient email address (comma-separated for multiple recipients)
+        subject: Email subject line
+        body: Plain text body of the email
+        cc: Optional CC recipients (comma-separated)
+        bcc: Optional BCC recipients (comma-separated)
+        html_body: Optional HTML body of the email
+
+    Returns:
+        Dict with draft ID and message details
+    """
+    try:
+        result = mail.create_draft(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc,
+            bcc=bcc,
+            html_body=html_body,
+        )
+        return {
+            "success": True,
+            "draft_id": result.get("id"),
+            "message": "Draft created successfully",
+        }
+    except Exception as e:
+        logger.error(f"Error creating email draft: {e}")
         return {"success": False, "error": str(e)}
 
 
