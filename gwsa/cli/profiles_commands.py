@@ -258,7 +258,9 @@ def refresh_cmd(name, basic_scopes):
     import os
     import json
     import subprocess
-    from .profiles import load_profile_metadata
+    from .profiles import load_profile_metadata, update_profile_metadata
+    from .auth.check_access import FEATURE_SCOPES, IDENTITY_SCOPES, get_token_info
+    from .setup_local import CLIENT_SECRETS_FILE
 
     if not is_valid_profile_name(name):
         click.secho(f"Invalid profile name: {name}", fg="red")
