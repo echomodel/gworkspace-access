@@ -100,24 +100,17 @@ For more details on Gemini CLI configuration, see **[docs/GEMINI-CLI.md](./docs/
 
 ### Claude Code (CLI)
 
-Quick setup (mounts your existing token config):
+Quick setup using the pipx-installed `gwsa-mcp` command:
 
 ```bash
-claude mcp add --scope user gwsa -- docker run -i --rm \
-  -v ~/.config/gwsa:/root/.config/gwsa:ro \
-  gwsa-mcp-server:latest python server-stdio.py
+claude mcp add --scope user gwsa gwsa-mcp
 ```
 
 For detailed configuration options, scope levels, and troubleshooting, see **[docs/CLAUDE-CODE.md](./docs/CLAUDE-CODE.md)**.
 
 ### Other MCP Clients
 
-For HTTP transport, connect to `http://localhost:8000/mcp` with the Docker container running.
-
-For stdio transport, configure the client to execute:
-```bash
-docker run -i --rm -e GWSA_TOKEN="$TOKEN" gwsa-mcp-server:latest python server-stdio.py
-```
+For stdio transport, configure the client to execute `gwsa-mcp` directly (no arguments required for the default stdio mode).
 
 ## Local Development
 

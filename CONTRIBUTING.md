@@ -95,4 +95,4 @@ _Further contributing guidelines can be added here._
 
 ## Related
 
-This project follows a CLI/MCP/SDK layered architecture pattern. For documentation of this pattern and exploration of common utilities, see [mcp-app-pattern](https://github.com/krisrowe/mcp-app-pattern).
+This project follows a CLI/MCP/SDK layered architecture pattern, with all behavior implemented in the SDK and thin wrappers in the CLI and MCP layers.
