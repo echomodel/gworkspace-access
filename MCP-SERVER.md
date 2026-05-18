@@ -1,220 +1,148 @@
-# Google Workspace MCP Server (`gwsa-mcp`)
+# MCP Server (`gwsa-mcp`)
 
-A **Model Context Protocol (MCP)** server that exposes Google Workspace data to AI assistants and agentic tools via the `gwsa` CLI.
+`gwsa-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io/)
+server that exposes Google Workspace operations to AI assistants. It's
+installed alongside `gwsa` (see [README](README.md#install)) and uses
+the same credentials managed by `gwsa-admin`.
 
-## What is MCP?
+## Prerequisites
 
-The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard that enables AI assistants to securely connect to external data sources and tools. MCP allows LLMs to:
+You must have a gwsa account configured before registering the MCP
+server. The MCP server reads credentials from the mcp-app user store
+populated by `gwsa-admin accounts add`. Without that, every tool call
+returns an authentication error.
 
-- **Read data** from your applications (emails, documents, spreadsheets)
-- **Take actions** on your behalf (label emails, modify documents)
-- **Maintain context** across conversations
-
-By running the `gwsa-mcp` Server, you give AI assistants like Claude Desktop, Gemini CLI, and other MCP-compatible tools direct access to your Google Workspace data—enabling powerful workflows like:
-
-- "Show me my unread emails from the last day"
-- "Find all documents titled 'Project Phoenix'"
-- "Add the 'Processed' label to this email"
-
-## Features
-
-### Tools (Actions)
-
-| Tool | Description |
-|------|-------------|
-| `gmail_search` | Search for emails with a Gmail query |
-| `gmail_read` | Read the content of a specific email |
-| `gmail_label` | Add or remove labels from an email |
-| `docs_list` | List Google Docs with a search query |
-| `docs_create` | Create a new Google Doc |
-| `docs_read` | Read the text content of a Google Doc |
-| `docs_append` | Append text to a Google Doc |
-| `docs_insert` | Insert text at a specific location in a Doc |
-| `docs_replace` | Find and replace text in a Google Doc |
-
-### Resources (Read-only Data)
-
-This server primarily exposes its capabilities through tools, not static resources.
-
-For detailed documentation, see the main project [README.md](./README.md).
-
-## Quick Start
-
-### Prerequisites
-
-1. **`gwsa` CLI installed and configured**:
-   ```bash
-   pipx install git+https://github.com/krisrowe/gworkspace-access.git
-   gwsa client import /path/to/client_secrets.json
-   gwsa profiles add default
-   gwsa profiles use default
-   ```
-   The MCP server uses your gwsa profiles for authentication. Without a configured profile, all tools will return: *"No active profile configured."*
-
-2. **MCP Client**: Gemini CLI, Claude Code, or a similar MCP-compatible tool.
-
-### Step 1: Verify gwsa is configured
-
-Confirm you have an active profile before proceeding:
+Walk through the [README quick start](README.md#quick-start-one-google-account)
+first. Confirm with:
 
 ```bash
-gwsa profiles list
-# Should show at least one profile with an email address
+gwsa-admin accounts list
 ```
 
-If you see only the built-in `adc` profile or get errors, create a profile first with `gwsa profiles add`.
+If you have at least one account listed, the MCP server has what it
+needs.
 
-### Step 2: Register the Server with Gemini CLI
+## Transport
 
-Register the `gwsa-mcp` server with your Gemini CLI client. This command makes the tool available globally for your user.
+`gwsa-mcp` uses **stdio**. The MCP client starts the process when a
+session begins and terminates it when the session ends — no port
+allocation, no persistent server, no manual lifecycle management.
+
+HTTP transport (for cloud deployments) is part of Phase 2; see
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) §8.
+
+## Registering with clients
+
+Every registration must include `stdio --user KEY`. The key is an
+opaque local-store handle, **not a Google email** — the Google
+account emails live on each `GoogleAccount` inside the user's
+profile. `gwsa-admin migrate` creates a single user keyed `local`
+by default.
+
+### Claude Code
 
 ```bash
-gemini mcp add gwsa gwsa-mcp --stdio --scope user
+claude mcp add --scope user gwsa -- gwsa-mcp stdio --user local
+claude mcp list                                          # verify
 ```
 
-The server uses **stdio transport**, which means the Gemini client will automatically start and stop the `gwsa-mcp` process for each session. No manual server management or port configuration is needed.
+`--scope user` (the first one — Claude's own flag) makes `gwsa`
+available in every Claude Code session on this machine, not just
+the current project. Detailed config options and troubleshooting
+are in [Claude Code Configuration](docs/CLAUDE-CODE.md).
 
-### Step 3: Verify
-
-Check the status to ensure the client can connect to the newly registered server.
+### Gemini CLI / Gemini Code Assist
 
 ```bash
-gemini mcp list
+gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
+gemini mcp list                                          # verify
 ```
 
-You should see `gwsa` listed with a "Connected" status.
+A successful registration shows the server with a `Connected` status.
+Detailed config in [Gemini CLI Configuration](docs/GEMINI-CLI.md).
 
-## Configuring MCP Clients
+### Other MCP clients
 
-The recommended setup for both Gemini CLI and Claude is to use the **stdio transport**, which allows the client to manage the server's lifecycle automatically.
+Configure the client to execute `gwsa-mcp stdio --user local` (or
+the user key you chose when migrating). The binary is on `$PATH`
+after `pipx install`.
 
-### Gemini CLI and Gemini Code Assist
+## Tool inventory
 
-The `gemini mcp add` command shown in the Quick Start is the only step needed. It registers the `gwsa-mcp` command globally for your user.
+29 tools across four domains, one module per Google API. mcp-app
+auto-discovers public async functions from each module:
 
-```bash
-gemini mcp add gwsa gwsa-mcp --stdio --scope user
-```
+- **`gwsa.mcp.tools.mail`** (10): search_emails, read_email,
+  add_email_label, remove_email_label, list_email_labels,
+  send_email, reply_email, create_email_draft,
+  download_email_attachment, get_email_thread
+- **`gwsa.mcp.tools.docs`** (6): list_docs, create_doc, read_doc,
+  append_to_doc, insert_in_doc, replace_in_doc
+- **`gwsa.mcp.tools.drive`** (7): drive_list_folder,
+  drive_create_folder, drive_upload, drive_update, drive_download,
+  drive_find_folder, drive_search_folders
+- **`gwsa.mcp.tools.chat`** (6): list_chat_spaces, list_chat_members,
+  list_chat_messages, search_chat_messages,
+  get_recent_direct_messages, get_recent_group_chats
 
-For more details on Gemini CLI configuration, see **[docs/GEMINI-CLI.md](./docs/GEMINI-CLI.md)**.
+Sheets is CLI-only today (`gwsa sheets ...`); MCP coverage is
+pending. The composition root in `gwsa/__init__.py` wires the four
+modules into `App(tools_modules=[...])`.
 
-### Claude Code (CLI)
+## Account selection
 
-Quick setup using the pipx-installed `gwsa-mcp` command:
+The MCP server runs in stdio mode as one human (you). Credentials
+are resolved from your mcp-app user record. Within that record, the
+**default account** (set with `gwsa-admin accounts use <name>`) is
+used implicitly.
 
-```bash
-claude mcp add --scope user gwsa gwsa-mcp
-```
-
-For detailed configuration options, scope levels, and troubleshooting, see **[docs/CLAUDE-CODE.md](./docs/CLAUDE-CODE.md)**.
-
-### Other MCP Clients
-
-For stdio transport, configure the client to execute `gwsa-mcp` directly (no arguments required for the default stdio mode).
-
-## Local Development
-
-Run without Docker for development:
-
-```bash
-# Install dependencies
-pip install -e ".[mcp]"
-
-# HTTP transport
-uvicorn server:mcp_app --host 0.0.0.0 --port 8000
-
-# Stdio transport
-python server.py --stdio
-```
-
-## Transport Options
-
-| Transport | Description | Use Case |
-|-----------|-------------|----------|
-| **HTTP** | Server runs persistently, clients connect via HTTP | Multiple clients, persistent connection |
-| **Stdio** | Server starts/stops with each client session | Single client, automatic lifecycle |
-
-## Local Development
-
-The `pipx install -e .` command installs the server in editable mode. Any changes you make to the source code will be reflected the next time the Gemini client starts the `gwsa-mcp` process.
-
-To test the server directly, you can run it with the `--stdio` flag:
-```bash
-gwsa-mcp --stdio
-```
-
-## Transport Options
-
-| Transport | Description | Use Case |
-|-----------|-------------|----------|
-| **Stdio** | Server starts/stops with each client session | Recommended for Gemini CLI, Claude, and other clients that manage the tool's lifecycle. |
-| **HTTP** | Server runs persistently, clients connect via HTTP | Useful for development or when multiple clients need to connect to a single, persistent server instance. |
+Per-call account override at the tool level is planned but not yet
+wired on the migrated tools; for now, the default account governs
+every tool call. To temporarily use a different account, run
+`gwsa-admin accounts use <name>` before starting the session.
 
 ## Troubleshooting
 
-### Authentication Issues
+**"No user configured" or "no accounts" errors:** the gwsa account
+store is empty. Run `gwsa-admin connect local` and
+`gwsa-admin accounts add ...` (or `gwsa-admin migrate` if you used
+gwsa before the mcp-app migration). See
+[README quick start](README.md#quick-start-one-google-account).
 
-**"No active profile configured" or credential errors:**
-- Ensure you have created a profile with `gwsa profiles add` and activated it with `gwsa profiles use`.
-- Check your active profile with `gwsa profiles current`.
-- The `gwsa-mcp` server uses the same credentials as the `gwsa` CLI. If the CLI works, the server should too.
+**"This token was issued by gcloud's well-known OAuth client..."**:
+the account was added without a quota project. Re-add with
+`--quota-project YOUR_GCP_PROJECT`, or set it on the underlying blob
+with `gcloud auth application-default set-quota-project`.
 
-### Client Connection Issues
+**Refresh-token expired during a tool call:** re-acquire the token
+(`gwsa-admin acquire-token ...`) and replace the account on the
+profile. See README troubleshooting for the full sequence.
 
-1. Verify the server is registered correctly: `gemini mcp list`
-2. Run the server directly to check for errors: `gwsa-mcp --stdio`
-3. Ensure `gwsa-mcp` is in your `PATH` (the `pipx` installation should handle this automatically).
+**Client connection issues:** run the server directly to confirm
+it boots: `gwsa-mcp stdio --user local` (use the user key you
+migrated with) and check stderr for messages. Confirm the binary
+is on `$PATH` (`which gwsa-mcp`); a `pipx` install places it
+there automatically.
 
-## Architecture
+## Security
 
-The MCP server uses the same SDK and authentication logic as the CLI:
+- **Credentials never travel to the MCP client.** The server reads
+  them from the local user store on its own.
+- **Local process only.** Stdio means no network ports, no remote
+  exposure.
+- **One identity per session.** The server serves exactly the gwsa
+  user whose store it's reading from. There is no in-session
+  identity switching.
 
-```
-┌──────────────────┐     ┌──────────────────┐
-│   Claude/Gemini  │     │       CLI        │
-│   (MCP Client)   │     │      (gwsa)      │
-└────────┬─────────┘     └────────┬─────────┘
-         │                        │
-         ▼                        ▼
-┌──────────────────────────────────────────┐
-│              GWSA SDK                    │
-│    Profiles, Auth, Mail, Docs, Sheets    │
-└──────────────────────────────────────────┘
-```
+## Related
 
-This ensures consistent behavior and credential management across all entry points.
-
-## Security Considerations
-
-- **Credential Storage**: `gwsa-mcp` reads from the secure credential store at `~/.config/gworkspace-access/`. It never needs credentials passed to it directly.
-- **Local only**: The server runs as a local process under your user account and does not expose any network ports by default.
-
-## Limitations
-
-The MCP server intentionally does **not** support certain operations that require interactive authentication or could be destructive:
-
-| Operation | MCP Support | Workaround |
-|-----------|-------------|------------|
-| List profiles | ✓ `list_profiles` | - |
-| Get active profile | ✓ `get_active_profile` | - |
-| Switch profile | ✓ `switch_profile` | - |
-| **Create profile** | ✗ | `gwsa profiles add <name>` |
-| **Refresh/re-auth** | ✗ | `gwsa profiles refresh <name>` |
-| **Rename profile** | ✗ | `gwsa profiles rename <old> <new>` |
-| **Delete profile** | ✗ | `gwsa profiles delete <name>` |
-| **Retrieve credentials** | ✗ | Not supported |
-
-**Why these limitations?**
-
-- **Create/Refresh** require an OAuth browser flow - interactive authentication cannot be performed via MCP
-- **Rename/Delete** are destructive write operations that should require explicit user action via CLI
-- **Credentials** are never exposed through MCP for security reasons
-
-If the AI assistant needs a profile operation that isn't available, it should instruct the user to run the appropriate `gwsa profiles` CLI command.
-
-## Related Documentation
-
-- [Gemini CLI Setup](./docs/GEMINI-CLI.md) - Gemini CLI and Code Assist configuration
-- [Main README](./README.md) - CLI usage and authentication setup
-- [GOOGLE-API-ACCESS.md](./GOOGLE-API-ACCESS.md) - Authentication and GCP project setup
-- [MCP Specification](https://modelcontextprotocol.io/) - Official MCP documentation
+- [README](README.md) — install, account setup, daily usage.
+- [Claude Code Configuration](docs/CLAUDE-CODE.md) — Claude-specific
+  setup details and troubleshooting.
+- [Gemini CLI Configuration](docs/GEMINI-CLI.md) — Gemini-specific
+  setup details.
+- [Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) — the
+  locked design that governs how identity, accounts, and tool
+  surfaces fit together; the Phase 2 cloud HTTP plan.
+- [MCP specification](https://modelcontextprotocol.io/) — protocol
+  reference.

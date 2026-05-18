@@ -11,22 +11,9 @@ from ..timing import time_api_call
 logger = logging.getLogger(__name__)
 
 
-def get_chat_service(profile: str = None, use_adc: bool = False) -> Any:
-    """
-    Get an authenticated Google Chat API service object.
-
-    Args:
-        profile: Optional profile name to use (defaults to active profile)
-        use_adc: Force use of Application Default Credentials
-
-    Returns:
-        Google Chat API service object
-
-    Raises:
-        ValueError: If no profile configured
-        Exception: If authentication fails
-    """
-    creds, source = get_credentials(profile=profile, use_adc=use_adc)
+def get_chat_service() -> Any:
+    """Build an authenticated Google Chat API service for the current user."""
+    creds, source = get_credentials()
     logger.debug(f"Building Chat service using credentials from: {source}")
     return build("chat", "v1", credentials=creds)
 

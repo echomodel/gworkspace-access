@@ -10,21 +10,26 @@ This approach offers several advantages:
 - **No Manual Server Management**: You don't need to start or stop a background process.
 - **No Port Conflicts**: Communication happens over standard I/O, not network ports.
 - **Automatic Lifecycle**: Ensures a clean state for every session.
-- **Uses Existing `gwsa` Config**: The server automatically uses the active profile and credentials from your `gwsa` CLI setup.
+- **Uses Existing `gwsa` Credentials**: The server reads from the same mcp-app user store populated by `gwsa-admin accounts add`. The default account on your profile governs every tool call.
 
 ## Quick Setup
 
 This single command registers the `gwsa-mcp` server globally for your user, making it available in any Gemini CLI session, regardless of your current directory.
 
 ```bash
-gemini mcp add gwsa gwsa-mcp --stdio --scope user
+gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
 ```
+
+The `--user` flag pins this registration to one local-store user.
+`local` is the default user key created by `gwsa-admin migrate`.
+The key is an opaque local handle, **not a Google email** — the
+Google account emails live inside the user's profile.
 
 ## How It Works
 
 When you run a command like `gemini -t gwsa "show my unread mail"`, the Gemini client:
 1.  Looks up the `gwsa` server in its configuration.
-2.  Finds the registered command: `gwsa-mcp --stdio`.
+2.  Finds the registered command: `gwsa-mcp stdio --user local`.
 3.  Executes that command, starting a new `gwsa-mcp` process.
 4.  Communicates with the process over stdin/stdout.
 5.  Terminates the process when the interaction is complete.
@@ -53,7 +58,7 @@ To use it, open the chat in the VS Code sidebar and use the `@gwsa` handle to di
 
 - **Connection Errors**:
   - Ensure `gwsa-mcp` is in your `PATH`. The `pipx install` should handle this. You can verify by running `which gwsa-mcp`.
-  - Test your main `gwsa` configuration by running a command like `gwsa profiles current`. If the CLI isn't configured, the MCP server won't work either. Follow the setup instructions in the main [README.md](./README.md).
+  - Confirm gwsa has at least one account configured: `gwsa-admin accounts list`. If empty, follow the [README quick start](../README.md#quick-start-one-google-account).
 
 - **"Unknown argument: scope"**:
   - You may have an older version of Gemini CLI. Ensure your client is up to date. The `--scope` flag is the correct way to create a user-level (global) registration.

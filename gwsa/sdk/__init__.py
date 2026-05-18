@@ -1,27 +1,25 @@
-"""GWSA SDK - Core library for Google Workspace API access.
+"""GWSA SDK — Core library for Google Workspace API access.
 
-This SDK provides programmatic access to Google Workspace APIs with
-multi-profile authentication support. It can be used by:
-- The gwsa CLI
-- The gwsa MCP server
-- Third-party applications
+Credential resolution flows through mcp-app's ``current_user``
+ContextVar. The gwsa CLI bootstraps this from the local user store
+(see ``gwsa.cli.__main__``); the MCP server gets it from
+``mcp_app.App``'s HTTP middleware or stdio bootstrap.
+
+The ``profiles`` submodule still exists for the one-shot
+``gwsa-admin migrate`` read path, but is no longer used at runtime
+and is not re-exported here.
 
 Example usage:
-    from gwsa.sdk import profiles, mail
+    from gwsa.sdk import mail
 
-    # List available profiles
-    for profile in profiles.list_profiles():
-        print(f"{profile['name']}: {profile['email']}")
-
-    # Search emails using active profile
+    # Inside a request context (current_user set):
     messages, metadata = mail.search("from:user@example.com")
 """
 
 from . import config
-from . import profiles
 from . import auth
 from . import mail
 from . import docs
 from . import drive
 
-__all__ = ["config", "profiles", "auth", "mail", "docs", "drive"]
+__all__ = ["config", "auth", "mail", "docs", "drive"]

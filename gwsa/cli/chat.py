@@ -6,7 +6,6 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from gwsa.sdk.chat import get_chat_service
-from gwsa.sdk import profiles
 from gwsa.sdk.timing import time_api_call
 
 # Configure logging to respect LOG_LEVEL environment variable
@@ -51,11 +50,6 @@ def spaces():
 def list_spaces(limit, space_type, format, verbose, names):
     """List available Chat spaces."""
     try:
-        profile = profiles.get_active_profile()
-        if not profile:
-            click.echo("Error: No active profile configured.", err=True)
-            return
-
         chat_service = get_chat_service()
         
         filter_query = ''
@@ -187,11 +181,6 @@ def list_spaces(limit, space_type, format, verbose, names):
 def list_members(space_id):
     """List members of a Chat space."""
     try:
-        profile = profiles.get_active_profile()
-        if not profile:
-            click.echo("Error: No active profile configured.", err=True)
-            return
-
         chat_service = get_chat_service()
         # Use a reasonable page size
         members = chat_service.spaces().members().list(parent=space_id, pageSize=100).execute()
@@ -364,11 +353,6 @@ def messages():
 def list_chat_messages(space_id, limit, format, order_by):
     """List messages in a space."""
     try:
-        profile = profiles.get_active_profile()
-        if not profile:
-            click.echo("Error: No active profile configured.", err=True)
-            return
-
         chat_service = get_chat_service()
         messages = []
         page_token = None
@@ -423,11 +407,6 @@ def list_chat_messages(space_id, limit, format, order_by):
 def search_chat_messages(space_id, query, limit):
     """Search for messages containing QUERY in a space."""
     try:
-        profile = profiles.get_active_profile()
-        if not profile:
-            click.echo("Error: No active profile configured.", err=True)
-            return
-
         click.echo(f"Searching for '{query}' in {space_id} (scanning last {limit} messages)...")
         
         chat_service = get_chat_service()

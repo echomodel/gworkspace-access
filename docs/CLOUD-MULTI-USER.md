@@ -164,9 +164,9 @@ The crux of the migration. Each row is one gwsa concept and how (or whether) it 
 | Profile (a Google identity, nickname + credential) | One element in `Profile.accounts: list[GoogleAccount]` on a mcp-app user record | Identified by user-chosen `name` field within the accounts list. |
 | Profile's nickname | `GoogleAccount.name` | Same idea, renamed. Field name "name" is used consistently — never "nickname". |
 | OAuth token (`user_token.json`) | `GoogleAccount.token` (opaque dict) | Stored as the Google authorized_user blob; round-trips through `Credentials.from_authorized_user_info()`. |
-| ADC token | `GoogleAccount.token` | Same shape from Google's perspective. The difference is captured by `refresh_method`. |
-| Profile type (oauth vs adc) | `GoogleAccount.refresh_method: Literal["oauth", "adc"]` | Provenance metadata. Routes the re-auth flow when refresh_token expires (browser OAuth vs gcloud). Not a behavioral switch elsewhere. |
-| `--quota-project` for ADC | `GoogleAccount.quota_project: str \| None` | Required for `refresh_method="adc"`; optional for `oauth` (sets x-goog-user-project). |
+| ADC token | `GoogleAccount.token` | Same shape. There's only one method (OAuth); the only real distinction is whether the blob was issued by gcloud's well-known client or by an OAuth client the user owns. That's derivable from `token["client_id"]` — no separate field needed. |
+| Profile type (oauth vs adc) | *Not stored.* Detected from `token["client_id"]` when needed (re-acquisition routing, quota_project guard). | One source of truth; no field drift. |
+| `--quota-project` for ADC | `GoogleAccount.quota_project: str \| None` | Required when the token was issued by gcloud's well-known client (no host project of its own). Optional otherwise. |
 | Cached email | `GoogleAccount.email` | Reported by tokeninfo at validation time. Distinct from the mcp-app user record's email (which is the *human's* identity). |
 | Cached `validated_scopes` / `last_validated` | `GoogleAccount.validated_scopes` / `GoogleAccount.last_validated` | Same idea, on the account record. |
 | Profile validation states (valid/stale/unvalidated/error) | App-level | Compute on-demand from token contents + last_validated. The "stale" state from today's ADC vault doesn't carry over — the new model doesn't have externally-mutable credentials. |
@@ -175,14 +175,14 @@ The crux of the migration. Each row is one gwsa concept and how (or whether) it 
 | Active-profile pointer in `config.yaml` | **Removed.** Replaced by `Profile.default_account: str \| None` on the user record | Identity is established per-process (stdio `--user`) or per-request (HTTP JWT). |
 | `gwsa profiles use` | **Removed.** Replaced by `gwsa-admin accounts use <name>` (writes `default_account` on the profile) | Profile mutation belongs in the admin CLI per mcp-app convention. |
 | `gwsa profiles add` | **Removed.** Replaced by `gwsa-admin acquire-token …` followed by `gwsa-admin accounts add <name> --token=@file …` | Two-step: acquire interactively, then register. |
-| `gwsa profiles refresh` | `gwsa-admin acquire-token …` followed by `gwsa-admin users update-profile … accounts '<JSON>'` (or via the `accounts` subgroup) | Refresh routine routes the interactive flow by `refresh_method`. |
+| `gwsa profiles refresh` | `gwsa-admin acquire-token …` followed by `gwsa-admin users update-profile … accounts '<JSON>'` (or via the `accounts` subgroup) | Re-acquisition uses the appropriate flow (browser or `gcloud auth application-default login`) depending on the account's `client_id`. |
 | `gwsa profiles delete` | `gwsa-admin accounts remove <name>` | Removes one account from the user's accounts list. `gwsa-admin users revoke <email>` removes the whole user. |
 | `gwsa profiles rename` | **Dropped.** Account names are user-chosen; renaming = remove and re-add | Rarely needed. |
 | `gwsa profiles export` | `gwsa-admin users get-profile <email> --json` | Returns the profile blob including all accounts. |
 | `gwsa profiles path` | `gwsa-admin profile-path <name>` (custom admin subcommand) | Plain helper; reads from the local store. Outside the framework's standard surface but trivially added. |
 | `gwsa profiles apply` | `gwsa-admin apply-system-adc <name>` (custom admin subcommand) | Same — reads token, writes to system gcloud ADC. Custom because it touches state outside the store. |
 | `gwsa client import/show` | `gwsa-admin oauth-client import/show` (custom admin subcommand) | One-time setup, server-level. |
-| `gwsa token generate` | `gwsa-admin acquire-token oauth\|adc --output …` | Standalone token acquisition step that feeds the `accounts add` flow. |
+| `gwsa token generate` | `gwsa-admin acquire-token --client-secrets … [--out FILE]` | Standalone OAuth acquisition step that emits a token JSON (stdout by default, pipeable into `accounts add --token=-`). For gcloud-issued tokens, operators run `gcloud auth application-default login` directly. |
 | `gwsa config set auth.mode` | **Dropped.** Legacy; unused under new model | — |
 | `gwsa status` | `gwsa-admin probe` (framework) + `gwsa-admin api-check` (custom subcommand, app-specific Google-API probes) | Framework probe covers MCP transport health; deep API probes stay on the gwsa side. |
 | MCP tool: `list_profiles` | **Dropped** | Replaced by `list_google_accounts` (returns current user's own accounts, not anyone else's). |
@@ -248,19 +248,10 @@ One mcp-app user record represents one **human**, identified by their email. Tha
 class GoogleAccount(BaseModel):
     name: str = Field(description="Friendly handle: 'personal', 'work', etc. Alphanumeric/hyphen/underscore, 1–32 chars.")
     email: str = Field(description="The Google account email, as reported by tokeninfo.")
-    refresh_method: Literal["oauth", "adc"] = Field(
-        description=(
-            "How the credential was obtained. Routes re-authentication when the "
-            "refresh_token can't refresh anymore. 'oauth' = browser OAuth via "
-            "user-provided client_secrets.json. 'adc' = `gcloud auth "
-            "application-default login` (Google's built-in OAuth client). Both "
-            "produce OAuth 2.0 authorized_user credentials at the protocol level."
-        )
-    )
-    token: dict = Field(description="Google authorized_user blob — stored opaquely, round-trips through google-auth-python.")
+    token: dict = Field(description="Google authorized_user blob — stored opaquely, round-trips through google-auth-python. Steady-state refresh is automatic; re-acquisition (when refresh_token dies) is a manual operator step routed by token['client_id'].")
     quota_project: str | None = Field(
         default=None,
-        description="GCP project for billing. Required for refresh_method=adc; optional override for oauth (sets x-goog-user-project)."
+        description="GCP project for billing (sets x-goog-user-project). Required when the token was issued by gcloud's well-known OAuth client (no host project); optional otherwise."
     )
     validated_scopes: list[str] = Field(default_factory=list, description="Scopes the token actually carries per last tokeninfo call.")
     last_validated: datetime | None = Field(default=None, description="When the token last passed tokeninfo. None = never validated.")
@@ -289,7 +280,7 @@ There is no `gwsa profiles`, no `gwsa accounts`, no `gwsa client`, no `gwsa toke
 `app.admin_cli` returns a Click `Group`, which Click groups support `add_command`. gwsa extends the framework-generated admin CLI with a custom `accounts` subgroup that hides list-mutation operations behind clean verbs:
 
 ```
-gwsa-admin accounts add <name> [--user EMAIL] --token=@FILE --refresh-method oauth|adc [--quota-project ID]
+gwsa-admin accounts add <name> --email EMAIL --token=<- | @FILE | JSON> [--quota-project ID] [--user EMAIL]
 gwsa-admin accounts list [--user EMAIL]
 gwsa-admin accounts get <name> [--user EMAIL]
 gwsa-admin accounts remove <name> [--user EMAIL]
@@ -314,7 +305,7 @@ Both paths converge on the same write API. Power users can use either.
 gwsa also adds a few small admin subcommands for operations the framework doesn't cover:
 
 ```
-gwsa-admin acquire-token oauth|adc [--quota-project ID] --output FILE   # interactive OAuth/ADC flow → token JSON file
+gwsa-admin acquire-token --client-secrets PATH [--scopes mail,drive,...] [--out FILE]   # OAuth browser flow → token JSON on stdout (or --out file)
 gwsa-admin oauth-client import PATH                                     # imports the OAuth client_secrets.json
 gwsa-admin oauth-client show
 gwsa-admin profile-path <name> [--user EMAIL]                           # prints path to a stored token file
@@ -457,16 +448,17 @@ Pattern for every command: one-line summary, then examples (simplest first, mult
 > Add a new Google account to a user's profile.
 >
 > Examples:
->   gwsa-admin accounts add personal --token=@/tmp/t.json --refresh-method oauth
->   gwsa-admin accounts add work --token=@/tmp/t.json --refresh-method adc --quota-project proj-id
+>   gwsa-admin accounts add personal --email me@example.com --token=@/tmp/t.json
+>   gwsa-admin acquire-token --client-secrets ~/cs.json | gwsa-admin accounts add work --email me@example.org --token=-
+>   gwsa-admin accounts add adc-account --email me@example.com --token=@~/.config/gcloud/application_default_credentials.json --quota-project my-proj
 >
 > Arguments:
 >   NAME                        Account name (used to select it later).
 >
 > Options:
->   --token=@FILE                Token JSON. Acquire via `gwsa-admin acquire-token`.
->   --refresh-method oauth|adc   How to re-auth when the token can't refresh.
->   --quota-project ID           GCP project for billing. Required for adc.
+>   --email EMAIL                Google account email (as reported by tokeninfo).
+>   --token=<- | @FILE | JSON>   Token blob. - for stdin, @path for a file, or inline.
+>   --quota-project ID           GCP project for billing. Required for gcloud-issued tokens.
 >   --user EMAIL                 Target user. Omit if you have one user (typical).
 
 ### 7.4 MCP tool docstrings
@@ -570,7 +562,7 @@ A typical deployment serves anywhere from 1 to a small number of humans, each wi
 These remain unresolved and need decisions or further investigation. The architectural questions are now locked (§6 — profile shape, CLI surface split, custom admin subgroup pattern, flag resolution rules) and the documentation discipline is committed (§7). What's left is mostly Phase 2 concerns and small post-migration housekeeping.
 
 1. **OAuth client identity in cloud (§5).** BYOC vs service-published vs hybrid. Leaning BYOC for compliance and billing-flow reasons (each user's GCP project pays for their API calls, no service-level OAuth verification burden), but the operator UX of "every user supplies their own client_secrets" is friction. Phase 2 decision.
-2. **ADC in cloud.** Today's ADC profiles use `gcloud` subprocesses. In a cloud deployment, there's no `gcloud` running for the user — they'd run gcloud locally to acquire a token, then push it. Does cloud actually support `refresh_method=adc` end-to-end, or are cloud users restricted to `oauth`? Phase 2 design.
+2. **Gcloud-issued tokens in cloud.** Today some users register credentials issued by `gcloud auth application-default login` (i.e., tokens whose `client_id` is gcloud's well-known OAuth client). In a cloud deployment, there's no `gcloud` running on the server — re-acquisition (when refresh_token dies) requires the user to re-run `gcloud auth application-default login` locally and push the new blob. Need to document the re-acquisition story for cloud users with gcloud-issued tokens, or restrict cloud users to user-owned OAuth client tokens. Phase 2 design.
 3. **Refresh token storage at rest in cloud.** Encryption strategy, KMS-backed envelope, key rotation cadence. Phase 2.
 4. **Refresh cadence in cloud.** Google refresh tokens expire after 6 months of inactivity. A daily refresh job per user keeps them alive. Schedule, observability, failure handling all need design. Phase 2.
 5. **Tool-arg reliability under multi-account.** How often will agents forget to pass `account=` or pass the wrong name? Mitigations are in place (`list_google_accounts` discovery tool, consistent docstring shape, `default_account` fallback) but reliability needs real-world testing once migrated. May surface a need for tool-call guard rails.

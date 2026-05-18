@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gwsa"
+version = "0.10.2"
+description = "Google Workspace Access - SDK, CLI, and MCP server for Gmail and Google APIs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = [
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-apps-chat",
+    "python-dotenv",
+    "click>=8.0",
+    "PyYAML",
+    "click_option_group",
+    "mcp>=1.0.0",
+    "rich",
+    "pydantic>=2",
+    "mcp-app @ git+https://github.com/echomodel/mcp-app.git",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[project.scripts]
+gwsa = "gwsa.cli.__main__:main"
+gwsa-mcp = "gwsa:app.mcp_cli"
+gwsa-admin = "gwsa:app.admin_cli"
+
+[project.entry-points."mcp_app.apps"]
+gwsa = "gwsa:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gwsa*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--ignore=tests/integration"

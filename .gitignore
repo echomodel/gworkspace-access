@@ -11,3 +11,11 @@ build/
 test-api-access.yaml
 *.log
 temp/
+
+# Agent context dirs — selectively versioned (only the settings files
+# are shared; everything else is local-only cache / session state).
+# Note: use `dir/*` not `dir/` so the negation can re-include specific
+# files; an ignored directory blocks negation on its contents.
+.claude/
+.gemini/*
+!.gemini/settings.json

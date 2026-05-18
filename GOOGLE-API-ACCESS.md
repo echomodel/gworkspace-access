@@ -1,35 +1,13 @@
 # Google API Access Guide
 
-This guide covers setting up access to Google Workspace APIs (Gmail, Docs, Sheets, Drive, Chat) with `gwsa`.
+Reference for the GCP project setup behind `gwsa` — which Google APIs
+to enable, which scopes you'll need, and how billing flows for OAuth
+clients vs. gcloud-issued tokens.
 
-For profile management (creating, switching, deleting profiles), see **[PROFILES.md](PROFILES.md)**.
-
----
-
-## Quick Start
-
-### Option 1: Token Profile (Recommended)
-
-```bash
-# Import client credentials (one-time)
-gwsa client import /path/to/client_secrets.json
-
-# Create a profile
-gwsa profiles add default
-gwsa profiles use default
-```
-
-### Option 2: ADC Profile
-
-```bash
-# Authenticate with gcloud (with required scopes)
-gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email
-
-# Activate ADC profile
-gwsa profiles refresh adc
-gwsa profiles use adc
-```
+For step-by-step account setup, see the
+[README quick start](README.md#quick-start-one-google-account). For
+account management commands (`gwsa-admin accounts ...`), see the
+[README's `gwsa-admin` command surface](README.md#gwsa-admin-command-surface).
 
 ---
 
@@ -81,52 +59,59 @@ gcloud services enable chat.googleapis.com --project=YOUR_PROJECT_ID
 
 There are three primary authentication flows, distinguished by the origin of the OAuth 2.0 Client ID.
 
-### 1. `gwsa` Profiles (User-Provided OAuth Client)
+### 1. User-Owned OAuth Client (default, recommended)
 
-This method uses a user-provided OAuth client (`client_secrets.json`) but manages the token flow independently of `gcloud`'s ADC file. It is the most flexible and recommended method.
+Token issued by an OAuth client the user created in the Cloud
+Console. Tokens are stored in the mcp-app user store; refresh is
+automatic via the stored refresh_token.
 
 -   **Pivotal Project for API Enablement:** The **OAuth client project** (where `client_secrets.json` was created).
 
 -   **Setup:**
-    1.  Go to [Google Cloud Console](https://console.developers.google.com/) → APIs & Services → Credentials
-    2.  Click "Create Credentials" → "OAuth client ID"
-    3.  Select **"Desktop app"**
-    4.  Download the JSON file
-    5.  Import into `gwsa`:
+    1.  Cloud Console → APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop app.
+    2.  Download the JSON.
+    3.  Acquire and register:
         ```bash
-        gwsa client import /path/to/client_secrets.json
-        gwsa profiles add default
-        gwsa profiles use default
+        gwsa-admin acquire-token --client-secrets /path/to/client_secrets.json |
+          gwsa-admin accounts add personal --email me@example.com --token=-
         ```
 
-### 2. ADC with Google's Built-in OAuth Client
+### 2. Gcloud's Well-Known Client
 
-This method is initiated by running `gcloud auth application-default login` **without** the `--client-id-file` flag. It uses Google's own internal OAuth client.
+A token issued by `gcloud auth application-default login` (no
+`--client-id-file` flag). Uses Google's built-in OAuth client.
 
 -   **Pivotal Project for API Enablement:** The **ADC quota project**.
 
 -   **Setup:**
     ```bash
-    gcloud auth application-default login --scopes=...
+    gcloud auth application-default login
     gcloud auth application-default set-quota-project YOUR_QUOTA_PROJECT
-    gwsa profiles refresh adc
-    gwsa profiles use adc
+    gwsa-admin accounts add gcloud-account \
+      --email me@example.com \
+      --token=@~/.config/gcloud/application_default_credentials.json
     ```
 
-### 3. ADC with a User-Provided OAuth Client
+    `--quota-project` is required if you skipped
+    `set-quota-project`. gcloud's well-known client has no host
+    project of its own, so the API call needs a billing project
+    explicitly.
 
-This method is initiated by running `gcloud auth application-default login` **with** the `--client-id-file` flag. It uses your own OAuth client but stores the credentials in the `gcloud` ADC file.
+### 3. User-Owned OAuth Client via Gcloud (BYOC-ADC)
 
--   **Pivotal Project for API Enablement:** The **ADC quota project**. (Note: This is counter-intuitive; the OAuth client project is *not* used for API checks in this flow.)
+`gcloud auth application-default login --client-id-file=PATH` — uses
+your own OAuth client but writes through gcloud's ADC path.
+
+-   **Pivotal Project for API Enablement:** The **ADC quota project**. (Note: counter-intuitive; the OAuth client project is *not* used for API checks in this flow.)
 
 -   **Setup:**
     ```bash
     gcloud auth application-default login \
-      --client-id-file=/path/to/client_secrets.json \
-      --scopes=...
+      --client-id-file=/path/to/client_secrets.json
     gcloud auth application-default set-quota-project YOUR_QUOTA_PROJECT
-    gwsa profiles refresh adc
-    gwsa profiles use adc
+    gwsa-admin accounts add my-account \
+      --email me@example.com \
+      --token=@~/.config/gcloud/application_default_credentials.json
     ```
 
 ### Quota Project (for ADC flows)
@@ -205,25 +190,26 @@ The API needs to be enabled in the correct project:
 1. **Identify your project** (see [Which Project to Enable Them In](#step-2-which-project-to-enable-them-in))
 2. **Enable the API**: `gcloud services enable <api> --project=<your-project>`
 
-### "This app is blocked" (Pure ADC only)
+### "This app is blocked" (gcloud's well-known client only)
 
-Google's OAuth client is blocked for Workspace scopes on your account. Use a **Token Profile** or **ADC with your own client** instead.
+Workspace org policy is rejecting gcloud's well-known OAuth client
+for sensitive scopes. Use a user-owned OAuth client instead — either
+flow 1 (own client, own management) or flow 3 (own client via gcloud
+ADC). See [Workspace org constraints in README](README.md#workspace-org-constraints).
 
-### "No active profile configured"
+### "No user registered" / "no accounts" errors
 
-```bash
-gwsa client import /path/to/client_secrets.json
-gwsa profiles add default
-gwsa profiles use default
-```
+The gwsa account store is empty. Walk through the
+[README quick start](README.md#quick-start-one-google-account) or
+run `gwsa-admin migrate` if you have a legacy vault.
 
-### Credentials expired
+### Credentials expired (refresh_token died)
 
-```bash
-gwsa profiles refresh <name>
-```
-
-For more, see **[PROFILES.md](PROFILES.md)**.
+Re-acquire the token (`gwsa-admin acquire-token ...` or re-run
+`gcloud auth application-default login` for gcloud-issued tokens),
+remove the stale account
+(`gwsa-admin accounts remove <name>`), and add the fresh one
+(`gwsa-admin accounts add <name> ...`).
 
 ---
 
@@ -231,4 +217,4 @@ For more, see **[PROFILES.md](PROFILES.md)**.
 
 - [Quota project overview](https://cloud.google.com/docs/quotas/quota-project)
 - [Troubleshoot ADC setup](https://cloud.google.com/docs/authentication/troubleshoot-adc)
-- [API-TESTING.md](API-TESTING.md) - Test methodology for API enablement requirements
+- [API Testing Methodology](API-TESTING.md) — test methodology for API enablement requirements.

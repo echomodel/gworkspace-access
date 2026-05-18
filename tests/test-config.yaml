@@ -1,20 +1,15 @@
 # GWSA Integration Test Configuration
 #
-# Maps gwsa profile names to test settings. The active gwsa profile
-# determines which settings are used. Tests requiring emails are
-# skipped if the active profile is not configured here.
+# Maps gwsa account names (as shown by `gwsa-admin accounts list`)
+# to per-account test settings. Tests requiring real emails are
+# skipped if the active account is not configured here.
 
-profiles:
-  # Token-based profile - USPS daily digests
-  default:
+accounts:
+  # Example: a personal Gmail account that receives USPS Informed
+  # Delivery digests. Adjust the search query to a routine,
+  # low-risk pattern that exists in your account.
+  personal:
     search_query: 'subject:"Your Daily Digest" from:"USPS Informed Delivery"'
     test_label: "Test"
     min_results: 2
     days_range: 60
-
-  # ADC profile - daily newsletter
-  adc:
-    search_query: 'subject:"Daily Insider"'
-    test_label: "Test"
-    min_results: 3
-    days_range: 7

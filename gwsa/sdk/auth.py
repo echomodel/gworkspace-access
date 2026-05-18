@@ -56,6 +56,25 @@ def resolve_scope_alias(alias: str) -> str:
     return SCOPE_ALIASES.get(alias, alias)
 
 
+def resolve_scopes(scopes: list[str]) -> list[str]:
+    """Resolve a list of aliases / feature names / full URLs into unique full URLs.
+
+    Accepts:
+    - Full scope URLs (passed through)
+    - Single-URL aliases from SCOPE_ALIASES (e.g. ``mail-read``)
+    - Multi-URL feature names from FEATURE_SCOPES (e.g. ``chat``)
+    """
+    resolved = set()
+    for scope in scopes:
+        if scope in FEATURE_SCOPES:
+            resolved.update(FEATURE_SCOPES[scope])
+        elif scope in SCOPE_ALIASES:
+            resolved.add(SCOPE_ALIASES[scope])
+        else:
+            resolved.add(scope)
+    return list(resolved)
+
+
 def get_effective_scopes(granted_scopes: list) -> set:
     """
     Get effective scopes including implied ones.
@@ -85,59 +104,147 @@ def has_scope(granted_scopes: list, required_scope: str) -> bool:
     return required_url in effective
 
 
-def get_credentials(
-    profile: str = None,
-    use_adc: bool = False,
-) -> Tuple[Any, str]:
-    """
-    Load credentials based on profile or explicit flags.
+def get_credentials() -> Tuple[Any, str]:
+    """Load credentials for the current mcp-app user.
 
-    Args:
-        profile: Explicit profile name to use (overrides active profile)
-        use_adc: Force use of Application Default Credentials
+    Delegates to :func:`resolve_credentials_for_current_user`, which
+    reads the active ``current_user`` ContextVar set by mcp-app's
+    HTTP middleware, the stdio bootstrap, or — for the gwsa CLI —
+    the user-context bootstrap in ``gwsa.cli.__main__``.
 
     Returns:
-        Tuple of (credentials object, source description)
+        Tuple of (credentials object, source description).
 
     Raises:
-        ValueError: If no profile is configured or profile not found
-        FileNotFoundError: If token file not found
+        LookupError: No user is set on the ContextVar. Caller is
+            invoking the SDK outside any request context — a
+            programmer error.
+        NoAccountsConfiguredError: User exists but has no Google
+            accounts. Direct the operator to ``gwsa-admin accounts add``.
+        AmbiguousAccountError: User has multiple accounts and no
+            ``default_account``. Direct them to ``gwsa-admin accounts use``.
+        AccountNotFoundError: Stale ``default_account`` on the profile.
     """
-    import google.auth
+    from mcp_app.context import current_user
+
+    user = current_user.get()
+    creds, account = resolve_credentials_for_current_user()
+    return creds, f"mcp-app user {user.email} / account '{account.name}'"
+
+
+class AccountNotFoundError(ValueError):
+    """Raised when a named account is not present on the current user's profile."""
+
+
+class NoAccountsConfiguredError(ValueError):
+    """Raised when the current user has no Google accounts in their profile."""
+
+
+class AmbiguousAccountError(ValueError):
+    """Raised when no account selector was given, no default is set, and the
+    user has more than one account — so the resolver can't pick one."""
+
+
+def resolve_credentials_for_current_user(account: Optional[str] = None):
+    """Resolve google-auth Credentials for the active mcp-app user.
+
+    Selects a ``GoogleAccount`` from ``current_user.get().profile.accounts``
+    using this order:
+
+    1. If ``account`` is given, find that name on the profile. Raise
+       :class:`AccountNotFoundError` if not present.
+    2. Otherwise, if ``profile.default_account`` is set, use it. Raise
+       :class:`AccountNotFoundError` if the default points to a name
+       that's no longer on the profile (stale default).
+    3. Otherwise, if the profile has exactly one account, use it
+       (single-account auto-inference, per docs/CLOUD-MULTI-USER.md §6).
+    4. Otherwise raise :class:`AmbiguousAccountError` — the user must
+       set a default or pass an explicit ``account`` argument.
+
+    Builds a ``google.oauth2.credentials.Credentials`` from the chosen
+    account's ``token`` (an authorized_user blob — same shape that
+    ``Credentials.from_authorized_user_info`` consumes). Applies the
+    account's ``quota_project`` if set, which becomes the
+    ``x-goog-user-project`` header billed for the API call (mandatory
+    for ADC-sourced credentials).
+
+    Returns:
+        Tuple of (credentials, account) where ``account`` is the
+        ``GoogleAccount`` model that was selected — useful for the
+        caller to inspect ``account.email``, ``account.quota_project``,
+        or ``account.validated_scopes`` without re-reading the profile.
+
+    Raises:
+        LookupError: No user is set on the current_user ContextVar.
+            Means the caller is invoking the SDK outside any request
+            (no HTTP middleware ran, stdio didn't pass --user). This
+            is a programmer error, not a user error.
+        NoAccountsConfiguredError: User exists but profile is empty —
+            an operator registered the user but didn't add any Google
+            accounts yet. Direct the user to ``gwsa-admin accounts add``.
+        AccountNotFoundError: ``account`` was given (or a stale
+            ``default_account`` points) to a name that isn't on the
+            profile.
+        AmbiguousAccountError: Multiple accounts and no selector / default.
+    """
     from google.oauth2.credentials import Credentials
-    from .profiles import (
-        get_active_profile_name, profile_exists,
-        get_profile_token_path
-    )
+    from mcp_app.context import current_user
 
-    # Explicit ADC flag — bypass vault entirely
-    if use_adc:
-        creds, project = google.auth.default()
-        source = "Application Default Credentials (from flag)"
-        if project:
-            source += f" (project: {project})"
-        return creds, source
+    from gwsa import Profile
 
-    # Explicit profile override
-    if profile:
-        if profile_exists(profile):
-            token_path = get_profile_token_path(profile)
-            creds = Credentials.from_authorized_user_file(str(token_path))
-            return creds, f"Profile '{profile}': {token_path}"
-        else:
-            raise ValueError(f"Profile not found: {profile}")
+    user = current_user.get()  # LookupError if not set
+    profile = user.profile
 
-    # Use active profile
-    active_profile = get_active_profile_name()
-    if active_profile:
-        if profile_exists(active_profile):
-            token_path = get_profile_token_path(active_profile)
-            creds = Credentials.from_authorized_user_file(str(token_path))
-            return creds, f"Profile '{active_profile}': {token_path}"
-        else:
-            raise ValueError(f"Active profile not found: {active_profile}")
+    if isinstance(profile, dict):
+        profile = Profile(**profile)
 
-    raise ValueError("No active profile configured. Run 'gwsa setup' or 'gwsa profiles add' first.")
+    if profile is None or not getattr(profile, "accounts", None):
+        raise NoAccountsConfiguredError(
+            f"User {user.email} has no Google accounts configured. "
+            f"Add one with: gwsa-admin accounts add <name> --user {user.email}"
+        )
+
+    accounts = profile.accounts
+    chosen = None
+
+    if account is not None:
+        for a in accounts:
+            if a.name == account:
+                chosen = a
+                break
+        if chosen is None:
+            available = ", ".join(a.name for a in accounts) or "(none)"
+            raise AccountNotFoundError(
+                f"Account '{account}' not found for {user.email}. "
+                f"Available: {available}"
+            )
+    elif profile.default_account is not None:
+        for a in accounts:
+            if a.name == profile.default_account:
+                chosen = a
+                break
+        if chosen is None:
+            available = ", ".join(a.name for a in accounts) or "(none)"
+            raise AccountNotFoundError(
+                f"default_account='{profile.default_account}' for {user.email} "
+                f"is stale — that account is no longer on the profile. "
+                f"Available: {available}. Set a new default with: "
+                f"gwsa-admin accounts use <name> --user {user.email}"
+            )
+    elif len(accounts) == 1:
+        chosen = accounts[0]
+    else:
+        names = ", ".join(a.name for a in accounts)
+        raise AmbiguousAccountError(
+            f"{user.email} has multiple accounts ({names}) and no default. "
+            f"Pick one with the account argument or set a default with: "
+            f"gwsa-admin accounts use <name> --user {user.email}"
+        )
+
+    creds = Credentials.from_authorized_user_info(chosen.token)
+    if chosen.quota_project:
+        creds = creds.with_quota_project(chosen.quota_project)
+    return creds, chosen
 
 
 def refresh_credentials(creds) -> bool:

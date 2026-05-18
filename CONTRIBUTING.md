@@ -1,98 +1,132 @@
-## Project Structure
+# Contributing
+
+## Project structure
 
 ```
-/gworkspace-access/
-├── .env                          # Project configuration (git-ignored)
-├── .gitignore                    # Specifies ignored files like .env, credentials.json, user_token.json, *.log
-├── credentials.json              # Client credentials (git-ignored), OAuth client for profiles
-├── README.md                     # Main project documentation
-├── CONTRIBUTING.md               # This file - contribution guidelines and project structure
-├── pyproject.toml                # Project metadata and build configuration for packaging
-├── gwsa_cli/                     # Main CLI package
-│   ├── __main__.py               # Main CLI entry point and command dispatcher
-│   ├── setup_local.py            # Core setup logic for authentication and credential management
-│   └── mail/                     # Python package for Gmail operations
-│       ├── __init__.py           # Initializes the mail package, contains shared authentication logic
-│       ├── search.py             # Implements the 'mail search' command logic
-│       ├── read.py               # Implements the 'mail read' command logic (returns {id, subject, sender, date, snippet, body: {text, html}, labelIds, raw})
-│       └── label.py              # Implements the 'mail label' command logic
-├── tests/                        # Integration test suite
-│   ├── config.yaml               # Centralized test configuration (search query, days_range, label name, test data expectations)
-│   ├── conftest.py               # pytest configuration and shared fixtures
-│   └── integration/              # Integration tests for CLI commands
-│       ├── test_mail_search.py    # Tests for 'gwsa mail search' command
-│       ├── test_mail_read.py      # Tests for 'gwsa mail read' command
-│       └── test_mail_modify.py    # Tests for 'gwsa mail label' command (apply and remove)
-├── user_token.json               # User credentials (git-ignored), managed by `gwsa setup` during OAuth flow
-└── test_results.log              # Test output log (git-ignored)
+gworkspace-access/
+├── README.md                     # User-facing overview, install, quick start.
+├── CONTRIBUTING.md               # This file — dev workflow + repo layout.
+├── MCP-SERVER.md                 # MCP client registration.
+├── pyproject.toml                # Build + entry points + dependencies.
+├── gwsa/
+│   ├── __init__.py               # App composition root (declares mcp-app App, profile model, admin extensions).
+│   ├── sdk/                      # All behavior. Layered access to Google APIs.
+│   │   ├── auth.py               # Credential resolution (bridges mcp-app + legacy vault).
+│   │   ├── mail/, docs/, drive/, chat/, people/
+│   │   └── profiles.py, config.py    # Legacy vault — read path during migration.
+│   ├── cli/                      # Thin Click wrappers over the SDK. Domain commands only.
+│   │   ├── __main__.py           # gwsa entry point (mail / sheets / docs / drive / chat).
+│   │   ├── mail/, docs_commands.py, drive_commands.py, sheets_commands.py, chat.py
+│   │   └── decorators.py         # require_scopes, status formatting.
+│   ├── mcp/
+│   │   ├── tools.py              # mcp-app-native tool module (auto-discovered).
+│   │   └── server.py             # Legacy FastMCP server. Still serves gwsa-mcp during migration.
+│   └── admin/                    # gwsa-admin extensions (accounts subgroup, acquire-token, migrate).
+├── tests/
+│   ├── framework/                # mcp-app conformance test pack (App wiring, auth, tool protocol).
+│   ├── unit/                     # SDK + admin CLI unit tests.
+│   └── integration/              # Live-API tests (Gmail, Drive, Docs). Require valid token.
+└── docs/
+    └── CLOUD-MULTI-USER.md       # Locked architecture + migration plan.
 ```
 
-## Development Setup
+## Architecture rules
 
-Install the project in editable mode with development dependencies:
+**All behavior lives in the SDK** (`gwsa/sdk/`). CLI commands and MCP
+tools are thin wrappers that parse input, call the SDK, and format
+output. If you find yourself writing logic in `gwsa/cli/` or
+`gwsa/mcp/`, move it to the SDK.
+
+**Profile / account / token management lives exclusively in
+`gwsa-admin`.** The user-facing `gwsa` CLI is Google Workspace
+domain operations only.
+
+**MCP tool surface lives in `gwsa/mcp/tools.py`.** Plain async
+functions, no decorators — name becomes tool name, docstring becomes
+schema description, type hints drive parameter schemas. mcp-app
+discovers them automatically.
+
+## Development setup
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-## Running Tests
+## Testing
 
-The integration test suite requires a configured environment (an active profile via `gwsa profiles add <name>` must exist).
+**Unit + framework tests** run offline with no credentials:
 
-Run all tests:
-```bash
-python -m pytest tests/integration/ -v
-```
+    make setup       # bootstrap venv (once)
+    pytest           # run unit + framework tests
 
-Tests use configuration from `tests/config.yaml` to be generic and reusable for different email sources. Adjust the search query, label name, and test data expectations in that file.
+Or from a fresh clone:
 
-## Contributing Guidelines
+    make test        # creates venv + runs unit + framework tests
 
-### Version Management
+Bare `pytest` ignores `tests/integration/` by default (see
+`pyproject.toml` `[tool.pytest.ini_options]`).
 
-**Single source of truth:** `gwsa/__init__.py` contains `__version__`
+**Integration tests** require additional setup:
 
-**When to bump versions:**
+| Suite | Path | Prerequisites |
+|-------|------|--------------|
+| real-user | `tests/integration/real-user/` | A configured local gwsa account (`gwsa-admin connect local` + `gwsa-admin accounts add`). Each contributor uses their own Google identity. |
 
-| Change Type | Bump | Example |
+Run explicitly:
+
+    make integration-test
+    # or:
+    pytest tests/integration/real-user/
+
+### Test philosophy (sociable)
+
+Tests run real collaborators end-to-end against isolated temp
+directories. The only mocked boundaries are uncontrollable network
+calls (e.g., `InstalledAppFlow.run_local_server` in
+`test_acquire_token.py`). CLI tests use Click's `CliRunner` —
+in-process invocation against `gwsa.app.admin_cli`, not subprocess.
+
+Storage isolation uses `monkeypatch.setenv` to redirect
+`HOME` / `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `APP_USERS_PATH` /
+`GWSA_CONFIG_DIR` to per-test `tmp_path` directories. Nothing touches
+the real filesystem.
+
+The mcp-app test pack lives under `tests/framework/` and verifies the
+`App` declaration, auth enforcement, and tool protocol compliance
+against our actual `App` instance.
+
+## Pre-commit
+
+A precommit hook scans for credentials and PII before allowing the
+commit. Don't bypass it; if a finding is a false positive, surface it
+and we'll work around it.
+
+## Version management
+
+**Single source of truth:** `gwsa/__init__.py` `__version__`.
+
+| Change type | Bump | Example |
 |-------------|------|---------|
-| Bug fix, minor tweak | Patch | 0.2.0 → 0.2.1 |
-| New feature (backwards compatible) | Minor | 0.2.0 → 0.3.0 |
-| Breaking change | Major | 0.2.0 → 1.0.0 |
+| Bug fix | Patch | 0.7.0 → 0.7.1 |
+| Backwards-compatible feature | Minor | 0.7.0 → 0.8.0 |
+| Breaking change | Major | 0.7.0 → 1.0.0 |
 
-**Release workflow:**
+Don't bump to 1.0.0 without explicit approval — 0.x → 1.0.0 is a
+product decision, not a mechanical version increment.
 
-1. Make changes, commit normally
-2. When ready to release:
-   ```bash
-   # Update version in gwsa/__init__.py
-   # Commit the version bump
-   git add gwsa/__init__.py
-   git commit -m "chore: bump version to X.Y.Z"
+**Release:**
 
-   # Tag the release
-   git tag vX.Y.Z
-
-   # Push with tags
-   git push && git push --tags
-   ```
-
-**Why version bumps matter:**
-
-- `pip install --upgrade` only installs if version number is higher
-- Same version number = pip thinks nothing changed, skips update
-- PyPI rejects re-uploads of same version
-- Editable installs (`pip install -e .`) always use live code regardless of version
-
-**For development:** Use editable install to avoid version concerns:
 ```bash
-pipx install -e .   # or: pip install -e .
+# 1. Bump version in gwsa/__init__.py and pyproject.toml (keep in sync).
+git add gwsa/__init__.py pyproject.toml
+git commit -m "chore: bump version to X.Y.Z"
+
+# 2. Tag and push.
+git tag vX.Y.Z
+git push && git push --tags
 ```
 
-### Code Changes
-
-_Further contributing guidelines can be added here._
-
-## Related
-
-This project follows a CLI/MCP/SDK layered architecture pattern, with all behavior implemented in the SDK and thin wrappers in the CLI and MCP layers.
+Editable installs (`pip install -e .`) always use the working tree
+regardless of version, so dev iteration doesn't need bumps.

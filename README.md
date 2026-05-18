@@ -1,430 +1,458 @@
-# Google Workspace Access CLI (`gwsa`)
+# Google Workspace Access (`gwsa`)
 
-A CLI tool for managing Gmail, Google Docs, and Sheets via the Google Workspace APIs. Supports multiple Google account profiles for easy switching between identities.
+A CLI and MCP server for working with Gmail, Google Drive, Docs, Sheets,
+and Chat from the command line or from AI agents. Built on the
+[mcp-app](https://github.com/echomodel/mcp-app) framework so the same
+binary works locally (stdio, one human) and as a hosted multi-user
+service (HTTP, JWT-authenticated).
+
+> **Status:** the framework migration on this branch
+> (`feat/use-mcp-app-framework`) is in Phase 1 — local stdio only.
+> Cloud HTTP deployment is Phase 2.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed and configured:
+- **Python 3.10+** (3.11 recommended).
+- **A Google Cloud project you can configure.** gwsa needs an OAuth
+  2.0 Client ID — either one you create in the Cloud Console (the
+  default path, gives you control over billing and scopes) or
+  gcloud's well-known client (faster setup, billed via
+  `--quota-project`). The
+  [Authenticating with Google](#authenticating-with-google) section
+  below walks through the Console steps.
+- **For the gcloud variant:** the `gcloud` CLI installed and
+  authenticated (`gcloud auth application-default login`).
 
-1.  **Google Cloud CLI (`gcloud`)**:
-    *   Install the `gcloud` CLI: [https://cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install)
-    *   Initialize `gcloud` and authenticate:
-        ```bash
-        gcloud init
-        gcloud auth application-default login
-        ```
-2.  **Python 3 (Recommended: 3.11 or higher)**:
-    *   Ensure Python 3 is installed. For optimal compatibility and to avoid potential issues with Google Cloud client libraries, Python 3.11 or higher is recommended.
+> **Workspace (corp) accounts:** if your Google identity is part of a
+> Workspace org with strict OAuth policies (allowlisted clients,
+> sensitive-scope review, Context-Aware Access), the Cloud-Console
+> OAuth-client path may not work for that identity. See
+> [Workspace org constraints](#workspace-org-constraints) before
+> spending time creating a client.
 
-    *   **Upgrading Python with `pyenv` (Recommended)**:
-        `pyenv` allows you to easily switch between multiple Python versions.
-        If you don't have `pyenv` installed, follow its official installation guide: [https://github.com/pyenv/pyenv#installation](https://github.com/pyenv/pyenv#installation)
-
-        Once `pyenv` is installed, you can upgrade Python and set it globally with:
-        ```bash
-        pyenv install 3.11
-        pyenv global 3.11
-        python3 --version # Verify the active Python version
-        ```
-3.  **`pip`**:
-    *   Python's package installer.
-
-## Quick Start
+## Install
 
 ```bash
-# Install
-pipx install git+https://github.com/krisrowe/gworkspace-access.git
-
-# Import your OAuth client credentials (one-time)
-gwsa client import /path/to/client_secrets.json
-
-# Create your first profile (opens browser for OAuth)
-gwsa profiles add default
-
-# Activate it
-gwsa profiles use default
-
-# Verify
-gwsa status
+pipx install git+https://github.com/echomodel/gworkspace-access.git@feat/use-mcp-app-framework
 ```
 
-This installs two commands:
-- **`gwsa`** - The CLI tool for direct command-line use
-- **`gwsa-mcp`** - The MCP server for AI assistant integration (see [MCP Server](#mcp-server-for-ai-assistants))
+Installs three commands:
 
-> **Note:** If you don't have `pipx`, you can use `pip install` instead, though `pipx` is recommended for CLI tools as it creates isolated environments.
+| Command       | What it does |
+|---------------|--------------|
+| `gwsa`        | Google Workspace domain operations (mail, drive, docs, sheets, chat). |
+| `gwsa-mcp`    | MCP server for AI assistant integration. |
+| `gwsa-admin`  | Setup, credentials, user/account management. |
 
-### Upgrading
+## Quick start (one Google account)
 
-To upgrade to the latest version:
+This is the headline path. If you have one Google identity you want to
+access, do exactly this.
+
+### 1. Authenticating with Google
+
+Pick **one** of the two paths.
+
+#### Path A — Your own OAuth client (default, recommended)
+
+In the [Google Cloud Console](https://console.cloud.google.com/):
+
+1. **Select or create a project.** This project becomes the billing
+   home for every API call gwsa makes for this account; no
+   `--quota-project` is needed for tokens issued by this client.
+2. **Enable APIs** you'll use: Gmail API, Google Drive API, Google
+   Docs API, Sheets API, and (if you want chat tools) Google Chat
+   API and People API. `APIs & Services → Enabled APIs → ENABLE APIS
+   AND SERVICES`.
+3. **Configure the OAuth consent screen** (only on first OAuth client
+   in the project): set publishing status to *Testing*, add your
+   Google email under *Test users*. This lets your own account
+   consent without app verification. Submit nothing.
+4. **Create the OAuth client.** `APIs & Services → Credentials →
+   Create credentials → OAuth client ID → Application type: Desktop
+   app`. Download the JSON; this is your `client_secrets.json`. Put
+   it anywhere on disk — gwsa reads it once, on demand.
+
+#### Path B — gcloud's well-known client
+
+If you don't want to manage a Cloud Console OAuth client:
 
 ```bash
-pipx upgrade gwsa
+gcloud auth application-default login
+gcloud auth application-default set-quota-project YOUR_GCP_PROJECT
 ```
 
-Or with pip:
-```bash
-pip install --upgrade git+https://github.com/krisrowe/gworkspace-access.git
-```
+This produces a token at
+`~/.config/gcloud/application_default_credentials.json` issued by
+gcloud's well-known OAuth client. Skip step 3 below and jump to the
+[gcloud variant](#gcloud-variant) in step 4 — you don't run
+`acquire-token`, you hand the existing blob directly to
+`accounts add`.
 
-> **Important:** Without `--upgrade`, pip will skip installation if any version is already installed, even if a newer version is available.
-
----
-
-## First-Time Setup
-
-This process walks through installing the `gwsa` tool and configuring it for the first time.
-
-### 1. Choose a Project Identification Method
-
-The `gwsa` tool needs to know which Google Cloud Project to use. You have two options:
-
-**Option A: Project Labels (Recommended)**
-
-Label your Google Cloud project. The setup script will automatically discover and save the project ID for you. This is the easiest method and simplifies setting up other workstations later.
+### 2. Tell `gwsa-admin` where to look on local disk
 
 ```bash
-gcloud alpha projects update YOUR_GCP_PROJECT_ID --update-labels=gws-access=default
-```
-> Replace `YOUR_GCP_PROJECT_ID` with your actual project ID.
-
-**Option B: Manual `.env` Configuration**
-
-If you prefer not to label your project, you can create a file named `.env` in the root of this directory and add your project ID to it.
-
-```dotenv
-# .env
-WORKSPACE_ACCESS_PROJECT="YOUR_GCP_PROJECT_ID"
+gwsa-admin connect local
 ```
 
-### 2. Generate and Secure Client Credentials
+This writes a one-line setup file so subsequent admin commands know to
+read and write the local user store (not a remote URL).
 
-Next, you need to get OAuth 2.0 client credentials from the Google Cloud Console.
-
-1.  Navigate to your project in the [Google Cloud Console](https://console.developers.google.com/).
-2.  Ensure the **Gmail API** and **Secret Manager API** are enabled.
-3.  Go to "APIs & Services" -> "Credentials".
-4.  Click "Create Credentials" -> "OAuth client ID".
-5.  Select **"Desktop app"** as the Application type and give it a name.
-6.  Click "Create". On the next screen, click **"Download JSON"**.
-7.  Rename the downloaded file to `credentials.json` and place it in the root of this project directory.
-
-> **Important:** You can only download the `credentials.json` file once. Keep a backup in a secure location.
-
-### 3. Install the CLI Tool
-
-Install the `gwsa` tool and its dependencies using `pip`.
+### 3. Acquire a token and register an account
 
 ```bash
-# Recommended for development (your code changes are reflected immediately)
-pip install -e .
+gwsa-admin acquire-token --client-secrets /path/to/client_secrets.json |
+  gwsa-admin accounts add personal --email me@example.com --token=-
 ```
 
-> **Troubleshooting `externally-managed-environment` error:**
-> If you encounter this error, it means your system's Python distribution prevents direct package installation. The recommended solution is to use `pipx`, which installs CLI tools in isolated environments.
->
-> ```bash
-> # First, ensure pipx is installed
-> python3 -m pip install --user pipx
-> python3 -m pipx ensurepath
->
-> # Then, install the tool in editable mode using pipx
-> pipx install -e .
-> ```
+`acquire-token` opens a browser, runs the OAuth consent flow, and writes
+the resulting token JSON to stdout. `accounts add` reads it from stdin
+and stores it. On a fresh install the user record is auto-created from
+`--email` and the new account becomes the default — no separate "users
+add" ceremony.
+
+### 4. Confirm it worked
 
 ```bash
-# For a regular installation
-# pip install .
+gwsa-admin accounts list
+gwsa mail search "newer_than:1d"
 ```
 
-### 4. Import Client Credentials and Create a Profile
+That's it. Everything below is optional — adding more accounts,
+registering the MCP server with an AI client, or operating on the
+cloud variant.
 
-Import your OAuth client credentials (one-time setup):
+### gcloud variant
+
+If you'd rather use a token issued by `gcloud auth
+application-default login`:
 
 ```bash
-gwsa client import /path/to/credentials.json
+gcloud auth application-default login
+gwsa-admin accounts add gcloud-account \
+  --email me@example.com \
+  --token=@~/.config/gcloud/application_default_credentials.json \
+  --quota-project YOUR_GCP_PROJECT
 ```
 
-Then create your first profile:
+`--quota-project` is required because gcloud's well-known OAuth client
+has no host project of its own; API calls need a billing project. If
+you ran `gcloud auth application-default set-quota-project` first, the
+project is already in the blob and `--quota-project` becomes optional.
+
+## Adding more Google accounts
+
+A gwsa **user** is one human (you). Inside your user record is a list
+of **accounts** — one entry per Google identity you own (personal,
+work, etc.). One of them is marked as `default_account`; gwsa CLI calls
+and MCP tools use it implicitly.
+
+Add a second account the same way as the first, plus a name to tell
+them apart later:
 
 ```bash
-gwsa profiles add default
+gwsa-admin acquire-token --client-secrets /path/to/work.json |
+  gwsa-admin accounts add work --email me@example.org --token=-
 ```
 
-This opens a browser for Google OAuth consent. After authenticating, activate the profile:
+Switch which account is the default:
 
 ```bash
-gwsa profiles use default
+gwsa-admin accounts use work    # now 'work' is implicit
 ```
 
-Verify everything is working:
+Inspect, remove, or override:
 
 ```bash
-gwsa status
+gwsa-admin accounts list        # see all accounts, marked with (default)
+gwsa-admin accounts get work    # detail one
+gwsa-admin accounts remove personal
 ```
 
-For detailed profile management, see **[PROFILES.md](PROFILES.md)**.
+For per-call override on the gwsa CLI, the `--account` flag (e.g.
+`gwsa mail search "..." --account work`) is planned but not yet wired
+on the domain commands in this branch; for now the default account
+applies to every call.
 
-## Using the `gwsa` CLI Tool
+## Daily usage
 
-Once setup is complete, you can use the `gwsa` tool. All `mail` sub-commands output their results in JSON format, allowing for easy parsing and integration with other tools like `jq`.
+### CLI
 
-**Search for Emails:**
-```bash
-gwsa mail search "after:2025-11-27 -label:Processed"
-```
-
-**Pagination:**
-The search command supports Gmail API pagination for handling large result sets. By default, the tool returns 25 results per page.
-
-Control the page size with `--max-results`:
-```bash
-gwsa mail search label:Inbox --max-results 50
-```
-Note: `--max-results` reflects Gmail API terminology. Maximum allowed is 500, though larger values may be slower due to body extraction overhead.
-
-Fetch subsequent pages using the `--page-token` from the previous response:
-```bash
-# First page returns metadata with nextPageToken in the logs
-gwsa mail search label:Inbox --max-results 20
-# Output includes: "More pages available. Use --page-token XXXXXX to fetch next page"
-
-# Fetch the next page using the token
-gwsa mail search label:Inbox --max-results 20 --page-token XXXXXX
-```
-
-**Read a Specific Email:**
-```bash
-gwsa mail read MESSAGE_ID
-```
-> Replace `MESSAGE_ID` with an ID from the search results.
-
-**Label an Email:**
-To add a label:
-```bash
-gwsa mail label MESSAGE_ID MyCustomLabel
-```
-To remove a label:
-```bash
-gwsa mail label MESSAGE_ID MyCustomLabel --remove
-```
-
-**Debugging:**
-You can set the `LOG_LEVEL` environment variable to `DEBUG` to get detailed logging output.
-```bash
-LOG_LEVEL=DEBUG gwsa mail search "after:2025-11-27"
-```
-
----
-## Advanced Usage
-
-### Multiple Profiles
-
-### Multiple Profiles
-
-Create additional profiles for different Google accounts or use cases:
-
-**Option 1: Standard OAuth Profile**
-```bash
-gwsa profiles add personal
-```
-
-**Option 2: Isolated ADC Profile (Recommended for Service Accounts/ADC workflows)**
-```bash
-gwsa profiles add work-adc --type=adc --quota-project=your-gcp-project-id
-```
-
-Switch between them:
+Single-user installs (one user in the local store) need nothing
+extra — every command resolves credentials through that user's
+default account:
 
 ```bash
-gwsa profiles use personal
-gwsa profiles use work-adc
+gwsa mail search "from:bob after:2026-01-01"
+gwsa drive list
+gwsa docs read DOC_ID
+gwsa chat spaces list
 ```
 
-List all profiles:
+If the local store has multiple users, pass `--user` once on the
+top-level command:
 
 ```bash
-gwsa profiles list
+gwsa --user me@example.com mail search "newer_than:1d"
 ```
 
-### External Tooling (Terraform, Scripts, etc.)
+The `--user` flag selects the gwsa user; the user's `default_account`
+selects which Google identity inside that user's profile to use.
+The planned per-call `--account` override on the domain commands
+is not yet wired on this branch.
 
-`gwsa` isolated profiles can be effortlessly consumed by external systems without overwriting your global machine state.
+### MCP server (AI assistants)
 
-**Option 1: Inject via Environment (Recommended)**
-Use the `path` command for Unix command substitution to inject the isolated profile path directly into standard Google Cloud variables.
+`gwsa-mcp` is a stdio MCP server exposing 29 tools across mail,
+docs, drive, and chat. (Sheets is CLI-only for now.) Tools are
+discovered by mcp-app from `gwsa.mcp.tools.{mail,docs,drive,chat}`.
 
+The stdio entry point takes a `--user KEY` selector identifying
+which registered local user it should run as. The key is an opaque
+local-store handle — **not a Google email**. The Google account
+emails live on each `GoogleAccount` inside the user's profile and
+never need to surface in MCP registrations.
+
+`gwsa-admin migrate` creates a single user keyed `local` by default.
+Use that key in all registrations below.
+
+Register with your client:
+
+**Claude Code:**
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=$(gwsa profiles path my-adc)
-terraform apply
+claude mcp add --scope user gwsa -- gwsa-mcp stdio --user local
+claude mcp list                           # verify
 ```
 
-**Option 2: System-wide Default (Legacy)**
-If you prefer managing a single global system identity, or if a legacy tool does not respect environment variables, use the `apply` command to set a profile as your default Google Application Credential natively.
-
+**Gemini CLI / Gemini Code Assist:**
 ```bash
-gwsa profiles apply my-adc
-legacy-tool run
+gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
+gemini mcp list                           # verify
 ```
 
-### Re-authenticating
+**Claude.ai web (custom connector — Phase 2):** requires the cloud
+HTTP variant. Local stdio doesn't apply.
 
-If credentials expire or become invalid:
+Client-specific quirks, troubleshooting, and detailed transport
+options live in [Claude Code Configuration](docs/CLAUDE-CODE.md) and
+[Gemini CLI Configuration](docs/GEMINI-CLI.md). The combined story
+across all clients is in [MCP Server Setup](MCP-SERVER.md).
 
-```bash
-gwsa profiles refresh <profile-name>
-gwsa profiles refresh adc  # For ADC profile
-```
+## Reference
 
-### Setting Up a New Workstation
+### Storage paths
 
-1. Install the tool: `pipx install git+https://github.com/krisrowe/gworkspace-access.git`
-2. Copy your `client_secrets.json` to the new machine
-3. Import credentials: `gwsa client import /path/to/client_secrets.json`
-4. Create a profile: `gwsa profiles add default`
-5. Activate it: `gwsa profiles use default`
+| Path | Purpose |
+|------|---------|
+| `~/.local/share/gwsa/users/<email>/auth.json`    | Per-user auth record. |
+| `~/.local/share/gwsa/users/<email>/profile.json` | Per-user profile (accounts list). |
+| `~/.config/gwsa/setup.json`                      | `connect local` / `connect <url>` config. |
+| `~/.config/gworkspace-access/profiles/<name>/`   | **Legacy** vault (pre-mcp-app). Read-only after `gwsa-admin migrate`; delete manually when satisfied. |
 
-## Credential Storage
-
-All credentials are stored in `~/.config/gworkspace-access/`:
-
-```
-~/.config/gworkspace-access/
-├── config.yaml           # Active profile setting
-├── client_secrets.json   # OAuth client credentials
-└── profiles/
-    └── <profile-name>/
-        ├── user_token.json  # OAuth token
-        └── profile.yaml     # Metadata
-```
-
-This centralized storage makes it easy to use `gwsa` from any directory.
-
----
-
-## Authentication & Profiles
-
-See **[PROFILES.md](PROFILES.md)** for complete documentation on:
-
-- **Profile management**: Creating, switching, refreshing, deleting profiles
-- **Profile states**: Valid, stale, unvalidated - what they mean
-- **Error recovery**: Common issues and how to fix them
-- **Edge cases**: Deleted profiles, offline switching, etc.
-
-See **[GOOGLE-API-ACCESS.md](GOOGLE-API-ACCESS.md)** for initial OAuth/ADC setup:
-
-- **OAuth setup**: Creating client_secrets.json, first-time authentication
-- **ADC setup**: Using gcloud credentials, quota project configuration
-- **Account compatibility**: Workspace, Gmail, security keys, APP
-
-**Quick summary:**
-
-| Account Type | Recommended Method |
-|--------------|-------------------|
-| Google Workspace | ADC or OAuth Token |
-| Regular Gmail | Either works |
-| Gmail + security keys | OAuth Token (ADC may be blocked) |
-| Gmail + APP | OAuth Token created *before* enabling APP |
-
-For information about API quotas and billing, see **[GOOGLE-API-ACCESS.md](GOOGLE-API-ACCESS.md)**.
-
----
-
-## MCP Server for AI Assistants
-
-The `gwsa` package includes an MCP (Model Context Protocol) server that exposes Google Workspace operations to AI assistants like Claude and Gemini.
-
-```bash
-# The MCP server is included with gwsa - no separate install needed
-gwsa-mcp  # Starts the MCP server (typically called by your AI assistant)
-```
-
-For configuration instructions, see **[MCP-SERVER.md](MCP-SERVER.md)**.
-
----
-
-## Google Drive Integration
-
-MCP tools for Google Drive file management (v0.4.0):
-
-*   **Google Drive**: List folders, upload files, create folders.
-*   **Google Chat**: List spaces, members, and search messages. [Read the Chat Guide](CHAT.md).
-
-**Not yet implemented:** `drive_search` (search by query), `drive_download` (download files)
-
----
-
-## Future Enhancements
-
-### Centralized API Service
-
-While `gwsa` currently functions as a CLI tool, the architecture is designed with a broader vision in mind: **a centralized API service** that can be consumed by any application, not just command-line users.
-
-Projects that need programmatic access to Google Workspace APIs (like a Gmail automation service) currently must:
-- Shell out to CLI commands, which is fragile and inefficient
-- Manage their own OAuth credentials and token refresh logic
-- Handle the complexity of Google's OAuth client verification process
-- Duplicate credential management across multiple deployments
-
-#### The API Vision
-
-The goal is to host `gwsa` as a **REST API on Google Cloud Run**, providing:
-
-1. **Centralized Credential Management** - OAuth client credentials and token refresh handled in one place, not scattered across consuming applications
-2. **Simplified Authentication** - Clients authenticate to the API using Google Cloud identity tokens (easily acquired from any GCP environment), not OAuth flows
-3. **No Client Verification Required** - Google's OAuth client verification only applies to the hosted service, not to every consuming application
-4. **User Authentication Without OAuth Complexity** - Consuming apps authenticate users through Cloud Run's built-in IAM/identity mechanisms, entirely under our control
-5. **Full Workspace API Coverage** - Once the pattern is established for Gmail, it extends naturally to Calendar, Drive, Docs, and the entire Google Workspace suite
-
-### Authentication Model
-
-```
-┌─────────────────┐     Google Identity Token      ┌─────────────────┐
-│  Consuming App  │  ─────────────────────────────▶│   gwsa API      │
-│  (gmail-manager)│                                │  (Cloud Run)    │
-└─────────────────┘                                └────────┬────────┘
-                                                           │
-                                                   OAuth 2.0 (managed)
-                                                           │
-                                                           ▼
-                                                   ┌─────────────────┐
-                                                   │  Google APIs    │
-                                                   │  (Gmail, etc.)  │
-                                                   └─────────────────┘
-```
-
-- **Consuming applications** authenticate to the API using Google Cloud identity tokens - no OAuth dance, no client secrets, no token refresh to manage
-- **The API service** handles all OAuth complexity internally - client credentials stored in Secret Manager, automatic token refresh, proper scope management
-- **User context** is derived from the authenticated identity, not from per-app credential storage
-
-### SDK as a Thin Client
-
-With a stable API in place, an SDK becomes a thin HTTP client rather than a credential-management library:
+### Profile schema
 
 ```python
-# Future SDK usage - no credentials to manage
-from gwsa import GwsaClient
+class GoogleAccount(BaseModel):
+    name: str                 # 'personal', 'work', ...
+    email: str                # Google account email
+    token: dict               # authorized_user blob (refresh_token, client_id, ...)
+    quota_project: str | None # required for gcloud-issued tokens; optional otherwise
+    validated_scopes: list[str]
+    last_validated: datetime | None
 
-client = GwsaClient()  # Auto-discovers identity from environment
-emails = client.mail.search("after:2024-01-01 label:Inbox")
+class Profile(BaseModel):
+    accounts: list[GoogleAccount]
+    default_account: str | None
 ```
 
-The SDK would:
-- Automatically acquire identity tokens from the runtime environment (Cloud Run, GCE, local `gcloud` auth)
-- Provide typed interfaces to the API
-- Handle retries and error mapping
-- Remain lightweight since all credential complexity lives server-side
+### `gwsa-admin` command surface
 
-### Operational Benefits
+```
+gwsa-admin connect local
+gwsa-admin connect <url> --signing-key <key>     # for hosted instance (Phase 2)
+gwsa-admin acquire-token --client-secrets PATH [--scopes ...] [--out FILE]
+gwsa-admin accounts add NAME --email EMAIL --token=<-|@FILE|JSON> [--quota-project ID] [--user KEY]
+gwsa-admin accounts list   [--user KEY]
+gwsa-admin accounts get    NAME [--user KEY] [--show-token]
+gwsa-admin accounts remove NAME [--user KEY]
+gwsa-admin accounts use    NAME [--user KEY]
+gwsa-admin migrate [--user-key KEY] [--skip-broken] [--dry-run]    # one-shot legacy → mcp-app
+gwsa-admin users list
+gwsa-admin users revoke KEY
+```
 
-Centralizing on a hosted API provides:
+`gwsa-admin --help` lists every command. Each subcommand has its own
+`--help`.
 
-- **Single point of credential rotation** - Update OAuth credentials once, not in every deployment
-- **Unified audit logging** - All API access flows through one service
-- **Consistent token refresh** - No more expired token bugs in consuming apps
-- **Easier compliance** - OAuth client verification and consent screens managed centrally
-- **Horizontal scaling** - Cloud Run handles load balancing and scaling automatically
+## Upgrading from the legacy vault
 
-This approach transforms Google Workspace API access from a per-application burden into a shared, managed service.
+If you used gwsa before this branch (profiles in
+`~/.config/gworkspace-access/profiles/`), run:
 
----
+```bash
+gwsa-admin migrate --dry-run   # preview
+gwsa-admin migrate             # do it
+gwsa-admin accounts list       # verify
+rm -rf ~/.config/gworkspace-access/profiles   # delete when satisfied
+```
+
+Each legacy profile becomes one `GoogleAccount` on a single user
+record (one human, many accounts). The active legacy profile becomes
+`default_account`. The legacy directory is left in place until you
+remove it.
+
+## Workspace org constraints
+
+If the Google identity you want to register is a corporate Workspace
+account (not a free `@gmail.com` consumer account), the
+Console-OAuth-client path (Path A above) may be blocked by your
+org's policies. The common failure modes:
+
+- **OAuth client allowlist.** Many corp orgs only allow IT-blessed
+  app IDs to request user consent. Your personal-project OAuth
+  client gets refused at the consent screen.
+- **Sensitive-scope review.** Gmail/Drive/Calendar scopes are
+  classified "sensitive" by Google; many orgs require admin
+  allowlisting per app even when the client itself is permitted.
+- **Context-Aware Access.** Policies that gate auth flows on device
+  posture or network can refuse the flow entirely.
+
+What actually works varies by org:
+
+- **gcloud variant (Path B) sometimes routes around the OAuth
+  allowlist** because gcloud uses Google's own well-known client.
+  Context-Aware Access can still block it.
+- **You may have one GCP project for your personal identity and
+  zero for your corp identity.** Phase-2 cloud deployments shouldn't
+  assume "the user's GCP project" as a singular thing.
+
+This is one of the reasons each account on a gwsa user's profile
+carries its own `quota_project` and was acquired with its own
+OAuth client config — different identities may *have* to use
+different projects, not just prefer to. See §5 of
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) for the
+phase-2 design implications.
+
+## Rotating tokens (when refresh fails)
+
+OAuth refresh tokens can die without warning. The most common
+cause on personal-use installs is the **Testing-mode 7-day
+expiry**: if the OAuth client whose `client_secrets.json` you
+used is set to "Testing" in the Google Cloud Console, every
+refresh token it issues expires exactly 7 days after consent,
+regardless of use.
+
+**Symptom:** any gwsa CLI or MCP tool call fails with
+`invalid_grant: Bad Request` from `google-auth`'s token refresh.
+
+### Diagnose: what mode is your OAuth client in?
+
+Find the project number — it's the leading digits of any
+`client_id` in your stored token, and also of the
+`installed.client_id` field in your `client_secrets.json`.
+Then open:
+
+```
+https://console.cloud.google.com/auth/audience?project=<project-number>
+```
+
+If the page shows **Publishing status: Testing**, you're on the
+7-day clock. If it shows **In production**, refresh tokens last
+indefinitely (or until manually revoked) — the failure is from
+something else (the client was deleted, the secret was rotated,
+or the user revoked access at myaccount.google.com).
+
+### Stop the bleeding: publish to Production
+
+In the audience page above, click **Publish app**. New refresh
+tokens minted after that won't expire from the 7-day rule. Apps
+that request sensitive scopes (Gmail, Drive, Docs, Sheets) can
+publish without going through Google's verification; users see
+an "unverified app" warning at consent but the token works fine
+for personal use.
+
+Tokens that already died from the 7-day clock stay dead — only
+new tokens minted post-publish benefit. You still need to
+re-acquire.
+
+### Re-acquire and replace
+
+Single-user installs auto-resolve to the only user in the store,
+so `--user` is unnecessary in every step below. Add
+`--user <key>` only if you have multiple users locally.
+
+```bash
+gwsa-admin accounts remove personal
+gwsa-admin acquire-token \
+  --client-secrets ~/.config/gworkspace-access/client_secrets.json \
+  --out /tmp/gwsa-token.json
+gwsa-admin accounts add personal --email you@example.com \
+  --token=@/tmp/gwsa-token.json
+rm /tmp/gwsa-token.json
+```
+
+`acquire-token` opens a browser, you consent, the fresh token
+JSON lands in `/tmp/gwsa-token.json`, and `accounts add` reads it
+from there. The pipe form (`acquire-token | accounts add
+--token=-`) is equivalent and supported as of version 0.10.1;
+earlier versions had a stdout-flush bug that could swallow the
+token mid-pipe.
+
+Verify with any read:
+
+```bash
+gwsa mail search "newer_than:1d" --max-results 1
+```
+
+## Multi-user on one local machine
+
+Rare. If you genuinely have multiple humans sharing one workstation
+and one gwsa install, add `--user <key>` to every `gwsa-admin`
+command that's not unambiguous. The cloud variant (Phase 2) is the
+right answer when multi-user is the actual deployment shape.
+
+## Cloud deployment (Phase 2)
+
+The mcp-app framework supports HTTP serving with JWT auth, an admin
+REST surface, and remote stores out of the box. Documenting the
+end-to-end cloud workflow is Phase 2 work — see §8 of
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md), which
+captures the locked design for moving from local stdio to a hosted
+multi-user service and lists the open Phase 2 questions.
+
+## Troubleshooting
+
+**"No active profile" / "User not found":** you haven't run
+`gwsa-admin connect local` yet, or you haven't added any accounts.
+
+**"This token was issued by gcloud's well-known OAuth client...":**
+pass `--quota-project YOUR_GCP_PROJECT` (or run `gcloud auth
+application-default set-quota-project` and re-export the blob).
+
+**Token refresh errors during a CLI call** (`invalid_grant: Bad
+Request`): the stored refresh_token died — revoked, expired, or
+caught by the Testing-mode 7-day clock. See
+[Rotating tokens](#rotating-tokens-when-refresh-fails) for
+diagnosis (including how to check the OAuth client's publishing
+status) and the exact recovery sequence.
+
+**Old `gwsa profiles` / `gwsa client` / `gwsa setup` commands gone:**
+intentional. See [Upgrading from the legacy vault](#upgrading-from-the-legacy-vault).
+
+## Architecture and design
+
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) is the
+canonical design doc — covers the user/profile/account model, the
+mcp-app framework adoption, the credential resolution flow, and the
+phased migration plan from the legacy per-profile vault.
+
+## Release history
+
+See [Release Notes](docs/RELEASE_NOTES.md) for per-version highlights,
+breaking changes, and migration steps.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, repo
+layout, architecture rules (SDK-first), test conventions, and the
+version-management workflow.

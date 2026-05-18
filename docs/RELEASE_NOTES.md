@@ -1,66 +1,91 @@
 # Release Notes
 
-## v2.0 - Unified Identity Vault (Upcoming Release)
+## v0.7.0 — mcp-app framework adoption
 
-The upcoming v2.0 release marks a major architectural shift for `gwsa` (Google Workspace Access) from a simple CLI tool into the **Unified Identity Vault**. This shift allows for the secure, isolated management of multiple Google Cloud identities and scopes without polluting or overwriting global system state by default.
+`gwsa` is now built on the
+[mcp-app](https://github.com/echomodel/mcp-app) framework, which
+unifies the CLI / MCP server / admin surfaces around a single
+`App(...)` composition root, a typed user profile model, and a
+filesystem user store. The same binary serves local stdio (one
+human) and (in Phase 2) a hosted HTTP multi-user deployment.
 
-### Key Architectural Changes
+### What changed for users
 
-Prior to v2.0, `gwsa` relied on the global Application Default Credentials file (`~/.config/gcloud/application_default_credentials.json`). Activating the "adc" profile would overwrite this global file, causing conflicts with other tools (like Terraform) that also rely on the global ADC state.
+**Identity model.** Each gwsa user record represents one human; the
+human's profile holds a list of Google accounts. The "active
+profile" pointer is gone — there's a `default_account` on the
+user's profile instead.
 
-In v2.0, **all profiles are isolated**. When you create an active ADC profile in `gwsa`, it is generated and stored exclusively within the `~/.config/gworkspace-access/profiles/<name>` directory. 
+**CLI split.**
 
-External tools no longer rely on `gwsa` overwriting the global ADC file. Instead, they consume isolated credentials declaratively using standard Google Cloud environment variables via the new `gwsa profiles path` command.
+- `gwsa` is now Google Workspace domain operations only
+  (`mail`, `drive`, `docs`, `sheets`, `chat`).
+- `gwsa-admin` owns everything else: account setup
+  (`accounts add/list/get/remove/use`), OAuth token acquisition
+  (`acquire-token`), local/remote routing (`connect`), one-shot
+  migration (`migrate`), plus the framework-provided
+  `users / tokens / probe / health / register` surface.
 
-### CLI Interface Changes
+**One-step solo install.** On a fresh box,
+`gwsa-admin accounts add <name> --email <e> --token=@<f>`
+auto-creates the user record using the account's email — no
+separate `users add` ceremony.
 
-The CLI structure has been updated to explicitly support arbitrary ADC profiles, replacing the legacy built-in singleton `adc` profile.
+**Stdin token piping.** `gwsa-admin acquire-token` writes the
+token JSON to stdout (progress chatter to stderr), so
 
-| Command | v1.x (Legacy) | v2.x (Unified Vault) | Change Description |
-| :--- | :--- | :--- | :--- |
-| **Add Profile** | `gwsa profiles add <name>` | `gwsa profiles add <name> [--type=oauth|adc] [--quota-project=PROJECT_ID]` | Added the `--type` flag. You can now generate as many distinct ADC profiles as you need directly into the vault, passing the required `--quota-project`. |
-| **Refresh Profile** | `gwsa profiles refresh adc` | `gwsa profiles refresh <name>` | The magical built-in `adc` name is gone. You now refresh specific ADC profiles by their user-defined names. |
-| **Export Profile** | `gwsa profiles export adc` | `gwsa profiles export <name>` | Now exports the contents of the isolated vault token, rather than searching for the global standard file. |
-| **Built-in `adc`** | `gwsa profiles use adc` | *Removed* | The hardcoded `adc` profile name is retired. You must explicitly create an ADC profile using `add --type=adc`. |
-| **[NEW] Resolve Path**| *N/A* | `gwsa profiles path <name>` | A new command designed purely for Unix command substitution. It prints the absolute path to a profile's isolated token file. |
-| **[NEW] Apply Globally**| *N/A* | `gwsa profiles apply <name>` | Sets the selected profile as the system's global ADC (`~/.config/gcloud/...`). This is a fully supported Google approach that provides native compatibility with software that doesn't utilize environment variables. |
-
-### The `gwsa profiles path` Command
-
-The new `gwsa profiles path <name>` command is the linchpin of v2.0's external tool integration.
-
-**How it works:**
-It accepts a profile name (or uses the active profile if omitted). It verifies that the profile exists and that its token is currently valid (not expired/stale). 
-
-If valid, it outputs *only* the absolute string path to the token file (e.g., `/Users/<user>/.config/gworkspace-access/profiles/my-adc/user_token.json`) and exits with a `0` code. If invalid, it outputs nothing and exits with a `1`.
-
-**How to use it:**
-Because it outputs a raw path string, it is perfectly suited for Unix command substitution (`$()`). You use it to inject a specific profile path into the standard `GOOGLE_APPLICATION_CREDENTIALS` environment variable for external tools.
-
-For Example, to run Terraform using an isolated profile named `dev-identity`:
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=$(gwsa profiles path dev-identity)
-terraform apply
+```
+gwsa-admin acquire-token --client-secrets ~/cs.json |
+  gwsa-admin accounts add personal --email me@example.com --token=-
 ```
 
-This entirely eliminates the need for `gwsa` to overwrite global files, and ensures tools like Terraform consume credentials smoothly using native Google SDK mechanisms.
+works as one shell pipeline. The legacy `gwsa profiles add`
+interactive wizard is gone; the new flow is composable instead.
 
-### Migration Guide
+**Gcloud-issued vs. user-owned OAuth.** The system detects which
+OAuth client issued a token from its `client_id` and enforces
+`--quota-project` only for gcloud-issued tokens (which have no
+host project of their own). No `--refresh-method` flag — the
+client identity drives all behavior that used to need an explicit
+label.
 
-If you previously used the global built-in `adc` profile in v1.x:
+### Storage paths
 
-1.  **Re-create your ADC Profile:** You must explicitly create a new profile in v2.x to replace it.
-    ```bash
-    gwsa profiles add my-adc --type=adc --quota-project=your-project-id
-    ```
-2.  **Update External Scripts (Isolated natively):** Any shell scripts that relied on `gwsa profiles use adc` should be updated to use declarative variable injection if possible:
-    ```bash
-    GOOGLE_APPLICATION_CREDENTIALS=$(gwsa profiles path my-adc) terraform apply
-    ```
-3.  **Use `apply` for System-wide Defaults:** If a tool does not respect `GOOGLE_APPLICATION_CREDENTIALS`, or if you simply prefer managing a single global system identity, use the new `apply` command to set your profile as the global standard before running your tools:
-    ```bash
-    gwsa profiles apply my-adc
-    legacy-tool run
-    ```
-4.  **MCP Tooling:** The MCP server functionality remains unchanged. AI agents invoking tools (like `gmail.send`) will automatically use the currently active profile (`gwsa profiles use <name>`) just as before, natively reading the isolated vault tokens.
+| Path | Purpose |
+|------|---------|
+| `~/.local/share/gwsa/users/<email>/auth.json`    | Per-user auth record (mcp-app store). |
+| `~/.local/share/gwsa/users/<email>/profile.json` | Per-user profile (accounts list). |
+| `~/.config/gwsa/setup.json`                      | `connect local` / `connect <url>` config. |
+| `~/.config/gworkspace-access/profiles/<name>/`   | **Legacy** vault. Read-only after migration. |
+
+### Upgrading from a pre-mcp-app install
+
+```bash
+gwsa-admin connect local
+gwsa-admin migrate --dry-run    # preview
+gwsa-admin migrate              # do it
+gwsa-admin accounts list        # verify
+rm -rf ~/.config/gworkspace-access/profiles    # cleanup when satisfied
+```
+
+Each legacy profile becomes one `GoogleAccount` on a single user
+record; the active legacy profile becomes `default_account`. The
+legacy directory is left in place until you remove it.
+
+### Removed
+
+| Removed | Replacement |
+|---------|-------------|
+| `gwsa profiles add/use/remove/list/refresh/path/apply/export/rename` | `gwsa-admin accounts add/use/remove/list` + `gwsa-admin acquire-token` |
+| `gwsa client import/show`                | Now passed as `--client-secrets` to `gwsa-admin acquire-token`. |
+| `gwsa token generate`                    | `gwsa-admin acquire-token` (writes to stdout). |
+| `gwsa config ...`                        | Configuration lives in the mcp-app store; not user-facing. |
+| `gwsa setup` (interactive wizard)        | Composable shell commands instead. |
+| `gwsa status`                            | `gwsa-admin accounts list`; framework-side `gwsa-admin probe` (cloud). |
+| MCP tool `switch_profile`                | Identity is established at session start; account selection is a per-call argument (planned). |
+
+### Migration plan and Phase 2
+
+See [Cloud Multi-User Architecture](CLOUD-MULTI-USER.md) for the
+locked design, the phased migration plan, and the Phase 2 cloud
+HTTP deployment story.

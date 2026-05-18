@@ -3,8 +3,9 @@ Integration tests for creating draft emails.
 """
 
 import pytest
+from mcp_app.context import current_user
+
 from gwsa.sdk.mail import create_draft, read_message
-from gwsa.sdk.profiles import get_active_profile
 
 
 @pytest.mark.integration
@@ -13,9 +14,15 @@ def test_create_html_draft_email():
     Test creating a draft email with both plain text and HTML bodies,
     and verify the content was created properly by reading it back.
     """
-    profile = get_active_profile()
-    # Fallback to "me" if active profile doesn't have an email bound
-    email_address = profile.get("email") if profile else "me"
+    user = current_user.get()
+    profile = user.profile
+    accounts = getattr(profile, "accounts", None) or []
+    default_name = getattr(profile, "default_account", None)
+    chosen = next(
+        (a for a in accounts if a.name == default_name),
+        accounts[0] if accounts else None,
+    )
+    email_address = chosen.email if chosen else "me"
     
     plain_text = "This is a plain text draft for integration testing."
     html_text = "<b>This is an HTML draft</b> for <i>integration testing</i>."
