@@ -1,0 +1,22 @@
+name: gworkspace-access
+
+service:
+  entrypoint: gwsa:app
+
+public: true
+
+# `domain:` is intentionally not set here. Operators who deploy a
+# hosted instance of this service pass the domain via gapp's
+# reusable-workflow `domain:` scalar input, which patches gapp.yaml
+# in-place at deploy time. Adding a domain here would commit a
+# specific deployment endpoint into a public repo. Local `gapp deploy`
+# against this manifest as-is will create no domain mapping (terraform
+# count=0 for the mapping resource).
+
+env:
+  - name: SIGNING_KEY
+    secret:
+      name: signing-key
+      generate: true
+  - name: APP_USERS_PATH
+    value: "{{SOLUTION_DATA_PATH}}/users"
