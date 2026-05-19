@@ -15,6 +15,7 @@ def search_messages(
     page_token: Optional[str] = None,
     max_results: int = 25,
     format: str = 'full',
+    account: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Search for Gmail messages matching the given query.
@@ -24,6 +25,10 @@ def search_messages(
         page_token: Token for pagination (None for first page)
         max_results: Maximum number of messages to return (default 25, max 500)
         format: 'full' (includes body) or 'metadata' (headers only, faster)
+        account: Optional selector for which Google account to use —
+            either the account name (e.g. "work") or its Google email
+            (e.g. "alice@example.com"). Omit to use the user's default
+            account.
 
     Returns:
         Tuple of (list of message dicts, metadata dict with pagination info)
@@ -31,7 +36,7 @@ def search_messages(
         'metadata' format includes: id, subject, from, to, date, labelIds
         Metadata dict contains: resultSizeEstimate, nextPageToken
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Searching for emails with query: '{query}'")
 
     # Build the list request with pagination

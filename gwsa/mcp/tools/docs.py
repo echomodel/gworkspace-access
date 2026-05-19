@@ -3,6 +3,14 @@
 Plain async functions delegating to ``gwsa.sdk.docs``. The wrapper
 catches ``LocalPathError`` / ``InvalidDocIdError`` cleanly and
 maps Google API HTTP 403s to an actionable error envelope.
+
+Every tool accepts an optional ``account`` parameter: pass either
+the account ``name`` (e.g. ``"work"``) or its Google ``email`` (e.g.
+``"alice@example.com"``) to operate as a specific account on the
+current user's profile. Omit to use the user's ``default_account``
+(or the sole account if only one is configured). Use the
+``list_google_accounts`` tool to discover available account names
+and emails.
 """
 
 from __future__ import annotations
@@ -18,8 +26,12 @@ from gwsa.sdk.exceptions import InvalidDocIdError, LocalPathError
 logger = logging.getLogger(__name__)
 
 
-async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[str, Any]:
-    """List Google Docs the active account can access.
+async def list_docs(
+    max_results: int = 25,
+    query: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """List Google Docs the chosen account can access.
 
     NOTE: Works only with remote Google Docs in the cloud.
 
@@ -27,12 +39,16 @@ async def list_docs(max_results: int = 25, query: Optional[str] = None) -> dict[
         max_results: Maximum number of documents to return (default 25).
         query: Optional search query to filter documents by title or
             content.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a list of documents (id, title, url, timestamps).
     """
     try:
-        return docs.list_documents(max_results=max_results, query=query)
+        return docs.list_documents(
+            max_results=max_results, query=query, account=account
+        )
     except Exception as e:
         logger.error(f"Error listing docs: {e}")
         return {"error": str(e)}
@@ -42,6 +58,7 @@ async def create_doc(
     title: str,
     body_text: Optional[str] = None,
     folder_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a new Google Doc.
 
@@ -51,20 +68,29 @@ async def create_doc(
         title: Title for the new document.
         body_text: Optional initial body text to insert.
         folder_id: Optional folder ID (defaults to My Drive root).
+        account: Optional account selector (name or email). Omit to
+            create in the user's default account.
 
     Returns:
         Dict with document ``id``, ``title``, and ``url``.
     """
     try:
         return docs.create_document(
-            title=title, body_text=body_text, folder_id=folder_id
+            title=title,
+            body_text=body_text,
+            folder_id=folder_id,
+            account=account,
         )
     except Exception as e:
         logger.error(f"Error creating doc: {e}")
         return {"error": str(e)}
 
 
-async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
+async def read_doc(
+    doc_id: str,
+    format: str = "content",
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Read a Google Doc by ID.
 
     NOTE: Works only with remote Google Docs in the cloud.
@@ -73,6 +99,8 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
         doc_id: Google Doc ID.
         format: "content" (metadata + text), "text" (plain text only),
             or "raw" (full API response).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Document content in the requested format. HTTP 403s surface
@@ -80,10 +108,10 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
     """
     try:
         if format == "text":
-            return {"text": docs.get_document_text(doc_id)}
+            return {"text": docs.get_document_text(doc_id, account=account)}
         if format == "raw":
-            return docs.get_document(doc_id)
-        return docs.get_document_content(doc_id)
+            return docs.get_document(doc_id, account=account)
+        return docs.get_document_content(doc_id, account=account)
     except (LocalPathError, InvalidDocIdError) as e:
         return {"error": str(e)}
     except ValueError as e:
@@ -96,10 +124,10 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
                 "error": "The caller does not have permission.",
                 "details": str(e),
                 "hint": (
-                    "The active gwsa account may not have access to this "
-                    "document. Switch the default account with "
-                    "'gwsa-admin accounts use <name>' or re-acquire the "
-                    "token if it has expired."
+                    "The chosen gwsa account may not have access to this "
+                    "document. Try a different account via the 'account' "
+                    "parameter (see 'list_google_accounts'), or re-acquire "
+                    "the token if it has expired."
                 ),
             }
         raise
@@ -108,7 +136,11 @@ async def read_doc(doc_id: str, format: str = "content") -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
+async def append_to_doc(
+    doc_id: str,
+    text: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Append text to the end of a Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
@@ -116,12 +148,14 @@ async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
     Args:
         doc_id: Google Doc ID.
         text: Text to append.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``success``, ``document_id``, and ``write_control``.
     """
     try:
-        result = docs.append_text(doc_id, text)
+        result = docs.append_text(doc_id, text, account=account)
         return {
             "success": True,
             "document_id": doc_id,
@@ -134,7 +168,12 @@ async def append_to_doc(doc_id: str, text: str) -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> dict[str, Any]:
+async def insert_in_doc(
+    doc_id: str,
+    text: str,
+    index: int = 1,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Insert text at a specific position in a Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
@@ -143,13 +182,15 @@ async def insert_in_doc(doc_id: str, text: str, index: int = 1) -> dict[str, Any
         doc_id: Google Doc ID.
         text: Text to insert.
         index: Position to insert at (1 = beginning of document).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``success``, ``document_id``, ``inserted_at_index``,
         and ``write_control``.
     """
     try:
-        result = docs.insert_text(doc_id, text, index=index)
+        result = docs.insert_text(doc_id, text, index=index, account=account)
         return {
             "success": True,
             "document_id": doc_id,
@@ -168,6 +209,7 @@ async def replace_in_doc(
     find_text: str,
     replace_with: str,
     match_case: bool = True,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Replace all occurrences of text in a Google Doc.
 
@@ -178,6 +220,8 @@ async def replace_in_doc(
         find_text: Text to find.
         replace_with: Text to replace with.
         match_case: Whether to match case (default True).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``success``, ``document_id``, ``occurrences_replaced``,
@@ -185,7 +229,11 @@ async def replace_in_doc(
     """
     try:
         result = docs.replace_text(
-            doc_id, find_text, replace_with, match_case=match_case
+            doc_id,
+            find_text,
+            replace_with,
+            match_case=match_case,
+            account=account,
         )
         replies = result.get("replies", [])
         occurrences = 0

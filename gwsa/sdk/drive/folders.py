@@ -13,22 +13,22 @@ class AmbiguousFolderError(Exception):
 def list_folder(
     folder_id: Optional[str] = None,
     max_results: int = 100,
-    page_token: Optional[str] = None
+    page_token: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict:
-    """
-    List contents of a Google Drive folder.
+    """List contents of a Google Drive folder.
 
     Args:
         folder_id: Folder ID to list. Use 'root' or None for My Drive root.
         max_results: Maximum number of items to return (default 100)
         page_token: Token for pagination
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        Dict with:
-            - items: List of file/folder info dicts
-            - next_page_token: Token for next page (if more results)
+        Dict with items + next_page_token.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     # Default to root folder
     parent_id = folder_id or "root"
@@ -71,19 +71,21 @@ def list_folder(
 
 def create_folder(
     name: str,
-    parent_id: Optional[str] = None
+    parent_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict:
-    """
-    Create a new folder in Google Drive.
+    """Create a new folder in Google Drive.
 
     Args:
         name: Name for the new folder
         parent_id: Parent folder ID. Use 'root' or None for My Drive root.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        Dict with folder id, name, and url
+        Dict with folder id, name, and url.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     file_metadata = {
         "name": name,
@@ -109,14 +111,16 @@ def find_folder_by_path(
     path: str,
     drive: str = "my_drive",
     folder_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> Optional[dict]:
-    """
-    Find a folder by navigating a path from a starting location.
+    """Find a folder by navigating a path from a starting location.
 
     Args:
         path: Folder path with '/' separators (e.g., 'Projects/my-project')
         drive: Starting drive - "my_drive" or a Shared Drive ID. Ignored if folder_id set.
         folder_id: Start from this folder ID instead of a drive root.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict with folder id, name, and path, or None if not found.
@@ -124,7 +128,7 @@ def find_folder_by_path(
     Raises:
         AmbiguousFolderError: If multiple folders match at the same path level.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     parts = [p for p in path.split("/") if p]
 
@@ -171,9 +175,9 @@ def search_folders(
     name: str,
     match: Literal["exact", "contains"] = "contains",
     limit: int = 50,
+    account: Optional[str] = None,
 ) -> list[dict]:
-    """
-    Search for folders by name across all accessible locations.
+    """Search for folders by name across all accessible locations.
 
     Single API call. Returns what Drive API provides directly.
 
@@ -181,12 +185,14 @@ def search_folders(
         name: Folder name to search for.
         match: "contains" (default) or "exact" match.
         limit: Maximum results to return (default 50).
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         List of folder dicts with: id, name, parents, created_time,
         modified_time, drive_id (None if in My Drive).
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     # Build query - escape single quotes
     escaped_name = name.replace("'", "\\'")

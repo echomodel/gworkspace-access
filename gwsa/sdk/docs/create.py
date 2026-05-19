@@ -10,6 +10,7 @@ def create_document(
     title: str,
     body_text: Optional[str] = None,
     folder_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict:
     """
     Create a new Google Doc.
@@ -18,6 +19,8 @@ def create_document(
         title: The title for the new document
         body_text: Optional initial body text to insert
         folder_id: Optional folder ID to create the doc in (default: My Drive root)
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict with document info:
@@ -25,7 +28,7 @@ def create_document(
             - title: Document title
             - url: URL to open the document
     """
-    docs_service = get_docs_service()
+    docs_service = get_docs_service(account=account)
 
     # Create the document
     doc = docs_service.documents().create(body={"title": title}).execute()
@@ -33,7 +36,7 @@ def create_document(
 
     # Move to folder if specified
     if folder_id:
-        drive_service = get_drive_service()
+        drive_service = get_drive_service(account=account)
         # Get current parents, then move to new folder
         file = drive_service.files().get(
             fileId=doc_id,

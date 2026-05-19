@@ -203,9 +203,18 @@ is not yet wired on this branch.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 29 tools across mail,
-docs, drive, and chat. (Sheets is CLI-only for now.) Tools are
-discovered by mcp-app from `gwsa.mcp.tools.{mail,docs,drive,chat}`.
+`gwsa-mcp` is a stdio MCP server exposing 30 tools across mail,
+docs, drive, chat, and account discovery. (Sheets is CLI-only for
+now.) Tools are discovered by mcp-app from
+`gwsa.mcp.tools.{accounts,mail,docs,drive,chat}`.
+
+Every Google-touching MCP tool accepts an optional `account`
+argument — the account `name` (e.g. `"work"`) or its Google
+`email` (e.g. `"me@example.org"`) — so an AI client can pick a
+specific account per call when the user has more than one. Omit
+`account` to use the user's `default_account`, or the sole
+account when only one is configured. The `list_google_accounts`
+tool exposes the names and emails the agent should pass.
 
 The stdio entry point takes a `--user KEY` selector identifying
 which registered local user it should run as. The key is an opaque

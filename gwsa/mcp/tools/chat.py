@@ -2,6 +2,14 @@
 
 Plain async functions delegating to ``gwsa.sdk.chat`` and
 ``gwsa.sdk.people`` for member-name resolution.
+
+Every tool accepts an optional ``account`` parameter: pass either
+the account ``name`` (e.g. ``"work"``) or its Google ``email`` (e.g.
+``"alice@example.com"``) to operate as a specific account on the
+current user's profile. Omit to use the user's ``default_account``
+(or the sole account if only one is configured). Use the
+``list_google_accounts`` tool to discover available account names
+and emails.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ async def list_chat_spaces(
     space_type: Optional[str] = None,
     verbose: bool = False,
     resolve_names: bool = False,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """List Google Chat spaces with filtering and optional detail.
 
@@ -32,6 +41,8 @@ async def list_chat_spaces(
             (e.g., ``lastActiveTime``, ``membershipCount``).
         resolve_names: If True, resolves and includes participant first
             names for DMs and group chats (slower, results are cached).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a ``spaces`` list. Default entries are
@@ -41,7 +52,7 @@ async def list_chat_spaces(
         optionally enriched with ``participant_names``.
     """
     try:
-        chat_service = chat.get_chat_service()
+        chat_service = chat.get_chat_service(account=account)
         filter_query = ""
         if space_type:
             filter_query = f'space_type = "{space_type.upper()}"'
@@ -62,7 +73,9 @@ async def list_chat_spaces(
                             members = members_result.get("memberships", [])
                             set_cached_members(space["name"], members)
                         participant_names = [
-                            get_person_name(m.get("member", {}).get("name")).split(" ")[0]
+                            get_person_name(
+                                m.get("member", {}).get("name"), account=account
+                            ).split(" ")[0]
                             for m in members
                         ]
                         space["participant_names"] = ", ".join(participant_names)
@@ -90,12 +103,18 @@ async def list_chat_spaces(
         return {"error": str(e)}
 
 
-async def list_chat_members(space_id: str, limit: int = 100) -> dict[str, Any]:
+async def list_chat_members(
+    space_id: str,
+    limit: int = 100,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """List members of a Google Chat space (cached for name resolution).
 
     Args:
         space_id: Resource name of the space (e.g., "spaces/AAA...").
         limit: Maximum number of members to return (default 100).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a ``members`` list, each member with ``name``,
@@ -104,7 +123,7 @@ async def list_chat_members(space_id: str, limit: int = 100) -> dict[str, Any]:
     try:
         members = get_cached_members(space_id)
         if not members:
-            chat_service = chat.get_chat_service()
+            chat_service = chat.get_chat_service(account=account)
             result = chat_service.spaces().members().list(
                 parent=space_id, pageSize=limit
             ).execute()
@@ -115,7 +134,9 @@ async def list_chat_members(space_id: str, limit: int = 100) -> dict[str, Any]:
         for m in members:
             member = m.get("member", {})
             user_id = member.get("name")
-            display_name = member.get("displayName") or get_person_name(user_id)
+            display_name = member.get("displayName") or get_person_name(
+                user_id, account=account
+            )
             simplified.append({
                 "name": user_id,
                 "displayName": display_name,
@@ -131,6 +152,7 @@ async def list_chat_messages(
     space_id: str,
     filter: Optional[str] = None,
     page_size: int = 25,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """List messages in a Google Chat space, with an optional filter.
 
@@ -143,13 +165,15 @@ async def list_chat_messages(
         space_id: Resource name of the space (e.g., "spaces/AAA...").
         filter: Optional filter query.
         page_size: Maximum number of messages to return.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``messages`` (each with ``name``, ``text``,
         ``createTime``, ``author``) and ``nextPageToken``.
     """
     try:
-        chat_service = chat.get_chat_service()
+        chat_service = chat.get_chat_service(account=account)
         response = chat_service.spaces().messages().list(
             parent=space_id, filter=filter, pageSize=page_size
         ).execute()
@@ -161,7 +185,7 @@ async def list_chat_messages(
                 "name": message.get("name"),
                 "text": message.get("text"),
                 "createTime": message.get("createTime"),
-                "author": get_person_name(sender.get("name")),
+                "author": get_person_name(sender.get("name"), account=account),
             })
         return {
             "messages": simplified,
@@ -176,6 +200,7 @@ async def search_chat_messages(
     space_id: str,
     query: str,
     limit: int = 100,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Search for messages in a Google Chat space containing specific text.
 
@@ -187,13 +212,15 @@ async def search_chat_messages(
         space_id: Resource name of the space.
         query: Text to search for (case-insensitive).
         limit: Maximum number of recent messages to scan (default 100).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``messages`` (matched), ``scanned_count``, and
         ``matches_found``.
     """
     try:
-        chat_service = chat.get_chat_service()
+        chat_service = chat.get_chat_service(account=account)
         results = chat_service.spaces().messages().list(
             parent=space_id, pageSize=limit
         ).execute()
@@ -205,7 +232,9 @@ async def search_chat_messages(
                 "name": msg.get("name"),
                 "text": msg.get("text"),
                 "createTime": msg.get("createTime"),
-                "author": get_person_name(msg.get("sender", {}).get("name")),
+                "author": get_person_name(
+                    msg.get("sender", {}).get("name"), account=account
+                ),
             })
         return {
             "messages": simplified,
@@ -217,39 +246,47 @@ async def search_chat_messages(
         return {"error": str(e)}
 
 
-async def get_recent_direct_messages(limit: int = 10) -> dict[str, Any]:
+async def get_recent_direct_messages(
+    limit: int = 10,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Get the most recent Direct Messages.
 
     Args:
         limit: Maximum number of recent DMs to return (default 10).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a ``direct_messages`` list of recent DM spaces.
     """
     try:
-        from gwsa.sdk.chat import get_recent_chats
-        return {"direct_messages": get_recent_chats(
-            chat_type="DIRECT_MESSAGE", limit=limit
+        return {"direct_messages": chat.get_recent_chats(
+            chat_type="DIRECT_MESSAGE", limit=limit, account=account
         )}
     except Exception as e:
         logger.error(f"Error getting recent DMs: {e}")
         return {"error": str(e)}
 
 
-async def get_recent_group_chats(limit: int = 10) -> dict[str, Any]:
+async def get_recent_group_chats(
+    limit: int = 10,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Get the most recent group chats.
 
     Args:
         limit: Maximum number of recent group chats to return
             (default 10).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a ``group_chats`` list of recent group chat spaces.
     """
     try:
-        from gwsa.sdk.chat import get_recent_chats
-        return {"group_chats": get_recent_chats(
-            chat_type="GROUP_CHAT", limit=limit
+        return {"group_chats": chat.get_recent_chats(
+            chat_type="GROUP_CHAT", limit=limit, account=account
         )}
     except Exception as e:
         logger.error(f"Error getting recent group chats: {e}")

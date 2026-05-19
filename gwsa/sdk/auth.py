@@ -104,13 +104,19 @@ def has_scope(granted_scopes: list, required_scope: str) -> bool:
     return required_url in effective
 
 
-def get_credentials() -> Tuple[Any, str]:
-    """Load credentials for the current mcp-app user.
+def get_credentials(account: Optional[str] = None) -> Tuple[Any, str]:
+    """Load credentials for the current mcp-app user's chosen Google account.
 
-    Delegates to :func:`resolve_credentials_for_current_user`, which
-    reads the active ``current_user`` ContextVar set by mcp-app's
-    HTTP middleware, the stdio bootstrap, or — for the gwsa CLI —
-    the user-context bootstrap in ``gwsa.cli.__main__``.
+    Thin wrapper over :func:`get_google_account_creds` that also formats a
+    human-readable source string for logging.
+
+    Args:
+        account: Optional selector — either the account ``name`` (e.g.
+            ``"work"``) or its Google ``email`` (e.g.
+            ``"alice@example.com"``). When omitted, falls back to the
+            user's ``default_account``, or the sole account if there's
+            only one. See :func:`get_google_account_creds` for the full
+            resolution order and error modes.
 
     Returns:
         Tuple of (credentials object, source description).
@@ -123,13 +129,14 @@ def get_credentials() -> Tuple[Any, str]:
             accounts. Direct the operator to ``gwsa-admin accounts add``.
         AmbiguousAccountError: User has multiple accounts and no
             ``default_account``. Direct them to ``gwsa-admin accounts use``.
-        AccountNotFoundError: Stale ``default_account`` on the profile.
+        AccountNotFoundError: ``account`` selector (or stale
+            ``default_account``) doesn't match any account on the profile.
     """
     from mcp_app.context import current_user
 
     user = current_user.get()
-    creds, account = resolve_credentials_for_current_user()
-    return creds, f"mcp-app user {user.email} / account '{account.name}'"
+    creds, chosen = get_google_account_creds(account=account)
+    return creds, f"mcp-app user {user.email} / account '{chosen.name}'"
 
 
 class AccountNotFoundError(ValueError):
@@ -145,14 +152,16 @@ class AmbiguousAccountError(ValueError):
     user has more than one account — so the resolver can't pick one."""
 
 
-def resolve_credentials_for_current_user(account: Optional[str] = None):
+def get_google_account_creds(account: Optional[str] = None):
     """Resolve google-auth Credentials for the active mcp-app user.
 
     Selects a ``GoogleAccount`` from ``current_user.get().profile.accounts``
     using this order:
 
-    1. If ``account`` is given, find that name on the profile. Raise
-       :class:`AccountNotFoundError` if not present.
+    1. If ``account`` is given, find that selector on the profile. The
+       selector matches either ``GoogleAccount.name`` (e.g. ``"work"``)
+       or ``GoogleAccount.email`` (e.g. ``"alice@example.com"``). Raise
+       :class:`AccountNotFoundError` if neither matches.
     2. Otherwise, if ``profile.default_account`` is set, use it. Raise
        :class:`AccountNotFoundError` if the default points to a name
        that's no longer on the profile (stale default).
@@ -209,14 +218,16 @@ def resolve_credentials_for_current_user(account: Optional[str] = None):
 
     if account is not None:
         for a in accounts:
-            if a.name == account:
+            if a.name == account or a.email == account:
                 chosen = a
                 break
         if chosen is None:
-            available = ", ".join(a.name for a in accounts) or "(none)"
+            available = ", ".join(
+                f"{a.name} ({a.email})" for a in accounts
+            ) or "(none)"
             raise AccountNotFoundError(
                 f"Account '{account}' not found for {user.email}. "
-                f"Available: {available}"
+                f"Tried both name and email; available: {available}"
             )
     elif profile.default_account is not None:
         for a in accounts:

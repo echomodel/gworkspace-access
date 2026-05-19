@@ -317,7 +317,7 @@ These all live in `gwsa-admin` because they're setup/admin concerns, not domain 
 
 ### 6.5 SDK and tool ergonomics
 
-Every domain tool that talks to Google takes an optional `account: str | None = None` parameter:
+Every domain tool that talks to Google takes an optional `account: str | None = None` parameter. The selector matches either the account's `name` (e.g. `"work"`) or its Google `email` (e.g. `"alice@example.com"`) — whichever the caller has on hand:
 
 ```python
 async def search_emails(query: str, account: str | None = None) -> dict:
@@ -325,13 +325,15 @@ async def search_emails(query: str, account: str | None = None) -> dict:
 
     Args:
         query: Gmail search query.
-        account: Optional. Name of the Google account to use. Omit to use
-                 the user's default account. Call list_google_accounts to
-                 see available names.
+        account: Optional account selector — name (e.g. "work") or email
+                 (e.g. "alice@example.com"). Omit to use the user's
+                 default account, or the sole account when only one is
+                 configured. Call list_google_accounts to discover
+                 available names and emails.
     """
 ```
 
-A new MCP tool `list_google_accounts` returns the current user's accounts — name, email, is_default — so the agent has a discovery surface for mapping user phrasing ("my work email") to account names. It returns only the *current user's own* accounts, never anyone else's.
+A new MCP tool `list_google_accounts` returns the current user's accounts — `name`, `email`, and the `default_account` pointer — so the agent has a discovery surface for mapping user phrasing ("my work email") to either selector form. It returns only the *current user's own* accounts, never anyone else's, and never any token material.
 
 The SDK is the only credential-resolution path. Both CLI commands and MCP tools call into it; both surfaces share the same store and the same logic. See §6.7 for the sharing pattern.
 
@@ -469,23 +471,27 @@ Every Google-touching tool follows the same pattern. The docstring is the schema
 > Search emails in the user's Gmail.
 >
 > If the user has multiple Google accounts and the request implies a specific
-> one (e.g. "check my work email"), pass `account="work"`. Otherwise omit
-> `account` to use the user's default. If you don't know what accounts exist,
-> call `list_google_accounts` first.
+> one (e.g. "check my work email"), pass `account="work"` (or
+> `account="me@example.org"` — name or email both work). Otherwise omit
+> `account` to use the user's default account, or the sole account when
+> only one is configured. If you don't know what accounts exist, call
+> `list_google_accounts` first.
 >
 > Args:
 >     query: Gmail search query (e.g. "from:bob after:2026-01-01").
->     account: Optional. Name of the Google account to use. Omit for default.
->              See `list_google_accounts` for available names.
+>     account: Optional account selector — name or email. Omit to use
+>              the user's default account. See `list_google_accounts`
+>              for available names and emails.
 
 `list_google_accounts`:
 > List the current user's Google accounts.
 >
 > Use this when the user references an account by context (e.g. "my work
 > email", "the personal one") and you need to map their words to the
-> account names this user has configured.
+> account `name` or `email` that goes in the `account` argument of every
+> other gwsa tool.
 
-Every Google-touching tool gets the same `account` arg with the same docstring shape: "Omit for default. Call `list_google_accounts` for available names." Consistent, learnable.
+Every Google-touching tool gets the same `account` arg with the same docstring shape: "Omit to use the user's default account. Use `list_google_accounts` to discover names and emails." Consistent, learnable, and self-describing — selectors accept either form so callers don't have to guess which to use.
 
 ---
 

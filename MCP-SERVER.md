@@ -69,9 +69,11 @@ after `pipx install`.
 
 ## Tool inventory
 
-29 tools across four domains, one module per Google API. mcp-app
-auto-discovers public async functions from each module:
+30 tools across five domains, one module per Google API plus an
+account-discovery module. mcp-app auto-discovers public async
+functions from each module:
 
+- **`gwsa.mcp.tools.accounts`** (1): list_google_accounts
 - **`gwsa.mcp.tools.mail`** (10): search_emails, read_email,
   add_email_label, remove_email_label, list_email_labels,
   send_email, reply_email, create_email_draft,
@@ -86,20 +88,26 @@ auto-discovers public async functions from each module:
   get_recent_direct_messages, get_recent_group_chats
 
 Sheets is CLI-only today (`gwsa sheets ...`); MCP coverage is
-pending. The composition root in `gwsa/__init__.py` wires the four
+pending. The composition root in `gwsa/__init__.py` wires the
 modules into `App(tools_modules=[...])`.
 
 ## Account selection
 
 The MCP server runs in stdio mode as one human (you). Credentials
-are resolved from your mcp-app user record. Within that record, the
-**default account** (set with `gwsa-admin accounts use <name>`) is
-used implicitly.
+are resolved from your mcp-app user record. Within that record:
 
-Per-call account override at the tool level is planned but not yet
-wired on the migrated tools; for now, the default account governs
-every tool call. To temporarily use a different account, run
-`gwsa-admin accounts use <name>` before starting the session.
+- **Default behavior** — omit the `account` argument on any tool to
+  use `default_account` (set with `gwsa-admin accounts use <name>`),
+  or the sole account when only one is configured.
+- **Per-call override** — every Google-touching tool accepts an
+  optional `account` argument. Pass either the account `name`
+  (e.g. `"work"`) or its Google `email` (e.g.
+  `"me@example.org"`) to operate as that specific account for
+  just that call. The default is unaffected.
+- **Discovery** — call `list_google_accounts` to see the current
+  user's accounts as `{name, email}` pairs plus the
+  `default_account` pointer. The agent uses this to map user
+  phrasing ("my work email") to a selector it can pass.
 
 ## Troubleshooting
 

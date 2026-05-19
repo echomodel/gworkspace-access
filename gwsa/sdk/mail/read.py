@@ -56,12 +56,17 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
     return attachments
 
 
-def read_message(message_id: str) -> Dict[str, Any]:
+def read_message(
+    message_id: str,
+    account: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Retrieve the full content of a specific Gmail message.
 
     Args:
         message_id: The Gmail message ID
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict containing message details:
@@ -75,7 +80,7 @@ def read_message(message_id: str) -> Dict[str, Any]:
             - labelIds: List of label IDs
             - attachments: List of attachment metadata (filename, mimeType, size, attachmentId)
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Retrieving message with ID: {message_id}")
 
     msg = service.users().messages().get(
@@ -115,12 +120,17 @@ def read_message(message_id: str) -> Dict[str, Any]:
     return message_details
 
 
-def read_messages(message_ids: List[str]) -> List[Dict[str, Any]]:
+def read_messages(
+    message_ids: List[str],
+    account: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Retrieve multiple Gmail messages efficiently using batching.
 
     Args:
         message_ids: List of Gmail message IDs
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         List of message detail dicts (same format as read_message)
@@ -128,7 +138,7 @@ def read_messages(message_ids: List[str]) -> List[Dict[str, Any]]:
     if not message_ids:
         return []
 
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Retrieving {len(message_ids)} messages in batch")
 
     results = []
@@ -231,6 +241,7 @@ def _extract_body_parts(payload: dict) -> tuple:
 def get_attachment(
     message_id: str,
     attachment_id: str,
+    account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Download an attachment from a Gmail message.
@@ -238,13 +249,15 @@ def get_attachment(
     Args:
         message_id: The Gmail message ID containing the attachment
         attachment_id: The attachment ID (from read_message attachments list)
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict containing:
             - data: Base64-decoded binary content of the attachment
             - size: Size in bytes
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Downloading attachment {attachment_id} from message {message_id}")
 
     attachment = service.users().messages().attachments().get(
@@ -262,17 +275,22 @@ def get_attachment(
         'size': attachment.get('size', len(data)),
     }
 
-def get_thread(thread_id: str) -> Dict[str, Any]:
+def get_thread(
+    thread_id: str,
+    account: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Retrieve a full Gmail thread, including all its messages.
 
     Args:
         thread_id: The Gmail thread ID
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict containing thread details, with a list of simplified messages.
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Retrieving thread with ID: {thread_id}")
 
     thread = service.users().threads().get(userId='me', id=thread_id).execute()

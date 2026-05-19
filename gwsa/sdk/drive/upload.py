@@ -12,20 +12,22 @@ from .service import get_drive_service
 def upload_file(
     local_path: str,
     folder_id: Optional[str] = None,
-    name: Optional[str] = None
+    name: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict:
-    """
-    Upload a file to Google Drive.
+    """Upload a file to Google Drive.
 
     Args:
         local_path: Path to the local file to upload
         folder_id: Destination folder ID. Use 'root' or None for My Drive root.
         name: Name for the file in Drive. Defaults to local filename.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        Dict with file id, name, and url
+        Dict with file id, name, and url.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     # Determine filename
     filename = name or os.path.basename(local_path)
@@ -62,20 +64,22 @@ def upload_file(
 def update_file(
     file_id: str,
     local_path: str,
-    new_name: Optional[str] = None
+    new_name: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict:
-    """
-    Update an existing file's content and optionally its name.
+    """Update an existing file's content and optionally its name.
 
     Args:
         file_id: The ID of the file to update.
         local_path: Path to the local file content.
         new_name: Optional new name for the file.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
         Dict with updated file metadata.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     # Detect mime type
     mime_type, _ = mimetypes.guess_type(local_path)

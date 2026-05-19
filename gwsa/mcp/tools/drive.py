@@ -1,6 +1,14 @@
 """Google Drive MCP tools.
 
 Plain async functions delegating to ``gwsa.sdk.drive``.
+
+Every tool accepts an optional ``account`` parameter: pass either
+the account ``name`` (e.g. ``"work"``) or its Google ``email`` (e.g.
+``"alice@example.com"``) to operate as a specific account on the
+current user's profile. Omit to use the user's ``default_account``
+(or the sole account if only one is configured). Use the
+``list_google_accounts`` tool to discover available account names
+and emails.
 """
 
 from __future__ import annotations
@@ -16,12 +24,15 @@ logger = logging.getLogger(__name__)
 async def drive_list_folder(
     folder_id: Optional[str] = None,
     max_results: int = 100,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """List contents of a Google Drive folder.
 
     Args:
         folder_id: Folder ID to list. Use None for My Drive root.
         max_results: Maximum number of items to return (default 100).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with a list of files/folders including ``id``, ``name``,
@@ -31,7 +42,9 @@ async def drive_list_folder(
         ``target_id`` with ``drive_download`` to get the actual file.
     """
     try:
-        return drive.list_folder(folder_id=folder_id, max_results=max_results)
+        return drive.list_folder(
+            folder_id=folder_id, max_results=max_results, account=account
+        )
     except Exception as e:
         logger.error(f"Error listing folder: {e}")
         return {"error": str(e)}
@@ -40,18 +53,21 @@ async def drive_list_folder(
 async def drive_create_folder(
     name: str,
     parent_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a new folder in Google Drive.
 
     Args:
         name: Name for the new folder.
         parent_id: Parent folder ID. Use None for My Drive root.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with folder ``id``, ``name``, and ``url``.
     """
     try:
-        return drive.create_folder(name=name, parent_id=parent_id)
+        return drive.create_folder(name=name, parent_id=parent_id, account=account)
     except Exception as e:
         logger.error(f"Error creating folder: {e}")
         return {"error": str(e)}
@@ -61,6 +77,7 @@ async def drive_upload(
     local_path: str,
     folder_id: Optional[str] = None,
     name: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upload a local file to Google Drive.
 
@@ -68,13 +85,18 @@ async def drive_upload(
         local_path: Absolute path to the local file to upload.
         folder_id: Destination folder ID. Use None for My Drive root.
         name: Name for the file in Drive. Defaults to local filename.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with file ``id``, ``name``, and ``url``.
     """
     try:
         return drive.upload_file(
-            local_path=local_path, folder_id=folder_id, name=name
+            local_path=local_path,
+            folder_id=folder_id,
+            name=name,
+            account=account,
         )
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
@@ -85,6 +107,7 @@ async def drive_update(
     file_id: str,
     local_path: str,
     name: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Update an existing Drive file's content and optionally rename it.
 
@@ -92,32 +115,45 @@ async def drive_update(
         file_id: Drive file ID to update.
         local_path: Absolute path to the new local file content.
         name: Optional new name for the file.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with updated file metadata.
     """
     try:
         return drive.update_file(
-            file_id=file_id, local_path=local_path, new_name=name
+            file_id=file_id,
+            local_path=local_path,
+            new_name=name,
+            account=account,
         )
     except Exception as e:
         logger.error(f"Error updating file: {e}")
         return {"error": str(e)}
 
 
-async def drive_download(file_id: str, save_path: str) -> dict[str, Any]:
+async def drive_download(
+    file_id: str,
+    save_path: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
     """Download a Drive file to a local path.
 
     Args:
         file_id: Drive file ID to download.
         save_path: Local path where the file should be saved.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``success`` status, ``saved_to`` path, and
         ``size_bytes``.
     """
     try:
-        return drive.download_file(file_id=file_id, save_path=save_path)
+        return drive.download_file(
+            file_id=file_id, save_path=save_path, account=account
+        )
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
         return {"error": str(e)}
@@ -127,6 +163,7 @@ async def drive_find_folder(
     path: str,
     drive_id: str = "my_drive",
     folder_id: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Find a folder by navigating a path from a starting location.
 
@@ -136,6 +173,8 @@ async def drive_find_folder(
         drive_id: Starting drive — "my_drive" (default) or a Shared
             Drive ID. Ignored if ``folder_id`` is provided.
         folder_id: Start from this folder ID instead of a drive root.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with folder ``id``, ``name``, and ``path``. Returns an
@@ -143,7 +182,7 @@ async def drive_find_folder(
     """
     try:
         result = drive.find_folder_by_path(
-            path, drive=drive_id, folder_id=folder_id
+            path, drive=drive_id, folder_id=folder_id, account=account
         )
         if result:
             return result
@@ -159,6 +198,7 @@ async def drive_search_folders(
     name: str,
     match: str = "contains",
     limit: int = 50,
+    account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Search for folders by name across all accessible locations.
 
@@ -169,6 +209,8 @@ async def drive_search_folders(
         name: Folder name to search for.
         match: "contains" (default) or "exact" match. Case-insensitive.
         limit: Maximum results to return (default 50).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
 
     Returns:
         Dict with ``folders`` list (each with ``id``, ``name``,
@@ -178,7 +220,7 @@ async def drive_search_folders(
     try:
         if match not in ("contains", "exact"):
             return {"error": f"Invalid match type: {match}. Use 'contains' or 'exact'."}
-        results = drive.search_folders(name, match=match, limit=limit)
+        results = drive.search_folders(name, match=match, limit=limit, account=account)
         return {"folders": results, "count": len(results)}
     except Exception as e:
         logger.error(f"Error searching folders: {e}")

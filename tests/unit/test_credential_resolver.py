@@ -1,4 +1,4 @@
-"""Tests for gwsa.sdk.auth.resolve_credentials_for_current_user.
+"""Tests for gwsa.sdk.auth.get_google_account_creds.
 
 The resolver bridges mcp-app's current_user ContextVar to a
 google-auth Credentials. These tests stub the ContextVar with
@@ -15,7 +15,7 @@ from gwsa.sdk.auth import (
     AccountNotFoundError,
     AmbiguousAccountError,
     NoAccountsConfiguredError,
-    resolve_credentials_for_current_user,
+    get_google_account_creds,
 )
 
 
@@ -52,7 +52,7 @@ def test_resolves_single_account_without_selector():
     )
     tok = _set_user(profile)
     try:
-        creds, account = resolve_credentials_for_current_user()
+        creds, account = get_google_account_creds()
         assert account.name == "personal"
         assert account.email == "alice@example.com"
         assert creds.refresh_token == "test-refresh"
@@ -79,10 +79,36 @@ def test_picks_named_account_when_selector_given():
     )
     tok = _set_user(profile)
     try:
-        creds, account = resolve_credentials_for_current_user(account="work")
+        creds, account = get_google_account_creds(account="work")
         assert account.name == "work"
         assert creds.refresh_token == "work-refresh"
         assert creds.quota_project_id == "example-project"
+    finally:
+        current_user.reset(tok)
+
+
+def test_picks_account_by_email_when_selector_is_an_email():
+    """The account selector resolves by email too, not just by name."""
+    profile = Profile(
+        accounts=[
+            GoogleAccount(
+                name="personal",
+                email="alice@example.com",
+                token=_token_blob(refresh_token="personal-refresh"),
+            ),
+            GoogleAccount(
+                name="work",
+                email="alice-work@example.org",
+                token=_token_blob(refresh_token="work-refresh"),
+            ),
+        ],
+        default_account="personal",
+    )
+    tok = _set_user(profile)
+    try:
+        creds, account = get_google_account_creds(account="alice-work@example.org")
+        assert account.name == "work"
+        assert creds.refresh_token == "work-refresh"
     finally:
         current_user.reset(tok)
 
@@ -105,7 +131,7 @@ def test_falls_back_to_default_account():
     )
     tok = _set_user(profile)
     try:
-        creds, account = resolve_credentials_for_current_user()
+        creds, account = get_google_account_creds()
         assert account.name == "work"
         assert creds.refresh_token == "work-refresh"
     finally:
@@ -130,7 +156,7 @@ def test_ambiguous_raises_when_no_default_and_multiple_accounts():
     tok = _set_user(profile)
     try:
         with pytest.raises(AmbiguousAccountError, match="multiple accounts"):
-            resolve_credentials_for_current_user()
+            get_google_account_creds()
     finally:
         current_user.reset(tok)
 
@@ -148,7 +174,7 @@ def test_account_not_found_when_selector_unknown():
     tok = _set_user(profile)
     try:
         with pytest.raises(AccountNotFoundError, match="not found"):
-            resolve_credentials_for_current_user(account="ghost")
+            get_google_account_creds(account="ghost")
     finally:
         current_user.reset(tok)
 
@@ -167,7 +193,7 @@ def test_stale_default_account_raises():
     tok = _set_user(profile)
     try:
         with pytest.raises(AccountNotFoundError, match="stale"):
-            resolve_credentials_for_current_user()
+            get_google_account_creds()
     finally:
         current_user.reset(tok)
 
@@ -177,14 +203,14 @@ def test_no_accounts_raises():
     tok = _set_user(profile)
     try:
         with pytest.raises(NoAccountsConfiguredError, match="no Google accounts"):
-            resolve_credentials_for_current_user()
+            get_google_account_creds()
     finally:
         current_user.reset(tok)
 
 
 def test_lookup_error_when_no_user_set():
     with pytest.raises(LookupError):
-        resolve_credentials_for_current_user()
+        get_google_account_creds()
 
 
 def test_get_credentials_lookup_error_when_no_user_set():
@@ -232,7 +258,7 @@ def test_quota_project_not_applied_when_unset():
     )
     tok = _set_user(profile)
     try:
-        creds, _ = resolve_credentials_for_current_user()
+        creds, _ = get_google_account_creds()
         assert creds.quota_project_id is None
     finally:
         current_user.reset(tok)

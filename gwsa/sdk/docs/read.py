@@ -2,27 +2,25 @@
 
 from googleapiclient.errors import HttpError
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .service import get_docs_service
 from .validators import validate_doc_id
 from ..drive.service import get_drive_service
 
 
-def get_document(doc_id: str) -> dict:
-    """
-    Get a document's full structure after verifying it is a Google Doc.
+def get_document(doc_id: str, account: Optional[str] = None) -> dict:
+    """Get a document's full structure after verifying it is a Google Doc.
 
     Args:
         doc_id: The Google Doc ID
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        The full document object from the API including:
-            - documentId
-            - title
-            - body (with content array)
-            - revisionId
-            
+        The full document object from the API including documentId,
+        title, body (with content array), revisionId.
+
     Raises:
         ValueError: If the document ID is not for a Google Doc.
         LocalPathError: If the ID looks like a local file path.
@@ -30,7 +28,7 @@ def get_document(doc_id: str) -> dict:
     """
     validate_doc_id(doc_id)
 
-    drive_service = get_drive_service()
+    drive_service = get_drive_service(account=account)
     try:
         file_metadata = drive_service.files().get(fileId=doc_id, fields='mimeType').execute()
         mime_type = file_metadata.get('mimeType')
@@ -40,47 +38,37 @@ def get_document(doc_id: str) -> dict:
                 f"File with ID '{doc_id}' is not a Google Doc (MIME type: {mime_type}). "
                 f"Use the 'drive_download' tool for non-native formats like PDFs or images."
             )
-    except HttpError as e:
-        # If the file doesn't exist in Drive at all, the Docs API call will fail anyway.
-        # This check is specifically to prevent trying to read non-docs files.
-        # Re-raise or handle other Drive API errors as needed.
-        # For now, we'll let it proceed and fail at the Docs API level if the file is not found.
+    except HttpError:
         pass
 
-    service = get_docs_service()
+    service = get_docs_service(account=account)
     return service.documents().get(documentId=doc_id).execute()
 
 
-def get_document_text(doc_id: str) -> str:
-    """
-    Get the plain text content of a document.
+def get_document_text(doc_id: str, account: Optional[str] = None) -> str:
+    """Get the plain text content of a document.
 
     Args:
         doc_id: The Google Doc ID
-
-    Returns:
-        Plain text content of the document
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
     """
-    doc = get_document(doc_id)
+    doc = get_document(doc_id, account=account)
     return extract_text_from_document(doc)
 
 
-def get_document_content(doc_id: str) -> dict:
-    """
-    Get document metadata and content.
+def get_document_content(doc_id: str, account: Optional[str] = None) -> dict:
+    """Get document metadata and content.
 
     Args:
         doc_id: The Google Doc ID
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        Dict with:
-            - id: Document ID
-            - title: Document title
-            - url: URL to the document
-            - text: Plain text content
-            - revision_id: Current revision ID
+        Dict with id, title, url, text, revision_id.
     """
-    doc = get_document(doc_id)
+    doc = get_document(doc_id, account=account)
 
     return {
         "id": doc.get("documentId"),

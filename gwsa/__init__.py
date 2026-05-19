@@ -13,13 +13,14 @@ from pydantic import BaseModel, Field
 
 from mcp_app import App
 
+from gwsa.mcp.tools import accounts as accounts_tools
 from gwsa.mcp.tools import chat as chat_tools
 from gwsa.mcp.tools import docs as docs_tools
 from gwsa.mcp.tools import drive as drive_tools
 from gwsa.mcp.tools import mail as mail_tools
 
 
-__version__ = "0.10.2"
+__version__ = "0.11.0"
 
 
 class GoogleAccount(BaseModel):
@@ -99,7 +100,13 @@ class Profile(BaseModel):
 
 app = App(
     name="gwsa",
-    tools_modules=[mail_tools, docs_tools, drive_tools, chat_tools],
+    tools_modules=[
+        accounts_tools,
+        mail_tools,
+        docs_tools,
+        drive_tools,
+        chat_tools,
+    ],
     profile_model=Profile,
     profile_expand=False,
 )

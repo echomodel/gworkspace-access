@@ -61,6 +61,7 @@ def send_message(
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Send an email message via Gmail.
@@ -72,6 +73,8 @@ def send_message(
         cc: Optional CC recipients (comma-separated)
         bcc: Optional BCC recipients (comma-separated)
         html_body: Optional HTML body (if provided, sends multipart)
+        account: Optional account selector — name or email. Omit to
+            send as the user's default account.
 
     Returns:
         Dict containing:
@@ -79,7 +82,7 @@ def send_message(
             - threadId: Thread ID
             - labelIds: Labels applied to the sent message
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Sending email to: {to}, subject: {subject}")
 
     # Build the message
@@ -123,6 +126,7 @@ def create_draft(
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a draft email in Gmail.
@@ -134,11 +138,13 @@ def create_draft(
         cc: Optional CC recipients (comma-separated)
         bcc: Optional BCC recipients (comma-separated)
         html_body: Optional HTML body (if provided, sends multipart)
+        account: Optional account selector — name or email. Omit to
+            create the draft in the user's default account.
 
     Returns:
         Dict containing draft info including id and message details.
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
     logger.debug(f"Creating draft to: {to}, subject: {subject}")
 
     # Build the message
@@ -179,6 +185,7 @@ def reply_message(
     body: str,
     include_quote: bool = True,
     as_draft: bool = False,
+    account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Reply to an existing email message.
@@ -190,6 +197,8 @@ def reply_message(
         body: Plain text body of the reply
         include_quote: Whether to include quoted original (default True)
         as_draft: If True, create a draft instead of sending (default False)
+        account: Optional account selector — name or email. Omit to
+            reply as the user's default account.
 
     Returns:
         Dict containing:
@@ -197,9 +206,9 @@ def reply_message(
             - threadId: Thread ID
             - If draft: includes draft info
     """
-    service = get_gmail_service()
+    service = get_gmail_service(account=account)
 
-    original = read_message(reply_to_message_id)
+    original = read_message(reply_to_message_id, account=account)
     thread_id = original.get("threadId")
     message_id = original.get("messageId")  # RFC 2822 Message-ID header
     original_subject = original.get("subject", "")

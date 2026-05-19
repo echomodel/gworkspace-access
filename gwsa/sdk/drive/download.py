@@ -12,20 +12,22 @@ from .service import get_drive_service
 def download_file(
     file_id: str,
     save_path: str,
-    show_progress: bool = False
+    show_progress: bool = False,
+    account: Optional[str] = None,
 ) -> dict:
-    """
-    Download a file from Google Drive.
+    """Download a file from Google Drive.
 
     Args:
         file_id: The Drive file ID to download
         save_path: Local path where the file should be saved
         show_progress: If True, print download progress
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
 
     Returns:
-        Dict with success status, file path, and size in bytes
+        Dict with success status, file path, and size in bytes.
     """
-    service = get_drive_service()
+    service = get_drive_service(account=account)
 
     # Get file metadata first
     file_metadata = service.files().get(
