@@ -6,9 +6,11 @@ and Chat from the command line or from AI agents. Built on the
 binary works locally (stdio, one human) and as a hosted multi-user
 service (HTTP, JWT-authenticated).
 
-> **Status:** the framework migration on this branch
-> (`feat/use-mcp-app-framework`) is in Phase 1 — local stdio only.
-> Cloud HTTP deployment is Phase 2.
+> **Status:** local stdio is the documented one-human path. Cloud
+> HTTP deployment is supported via [gapp](https://github.com/echomodel/gapp)
+> (Cloud Run + custom domain + JWT auth via mcp-app); see
+> [Cloud deployment](#cloud-deployment) below for the abstract
+> walkthrough.
 
 ## Prerequisites
 
@@ -239,8 +241,17 @@ gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
 gemini mcp list                           # verify
 ```
 
-**Claude.ai web (custom connector — Phase 2):** requires the cloud
-HTTP variant. Local stdio doesn't apply.
+**Claude.ai web (custom connector):** requires the cloud HTTP
+variant. After cloud deploy (see below), generate a one-shot
+connector URL with a long-lived token via:
+
+```bash
+gwsa-admin register --user me@example.com --client claude.ai
+```
+
+Paste the resulting `https://<your-cloud-domain>/?token=<jwt>`
+URL into **claude.ai → Settings → Connectors → Add custom
+connector**. Local stdio doesn't apply to this client.
 
 Client-specific quirks, troubleshooting, and detailed transport
 options live in [Claude Code Configuration](docs/CLAUDE-CODE.md) and
@@ -417,17 +428,100 @@ gwsa mail search "newer_than:1d" --max-results 1
 
 Rare. If you genuinely have multiple humans sharing one workstation
 and one gwsa install, add `--user <key>` to every `gwsa-admin`
-command that's not unambiguous. The cloud variant (Phase 2) is the
-right answer when multi-user is the actual deployment shape.
+command that's not unambiguous. The [cloud variant](#cloud-deployment)
+is the right answer when multi-user is the actual deployment shape.
 
-## Cloud deployment (Phase 2)
+## Cloud deployment
 
-The mcp-app framework supports HTTP serving with JWT auth, an admin
-REST surface, and remote stores out of the box. Documenting the
-end-to-end cloud workflow is Phase 2 work — see §8 of
-[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md), which
-captures the locked design for moving from local stdio to a hosted
-multi-user service and lists the open Phase 2 questions.
+gwsa runs as a hosted multi-user HTTP service on Google Cloud
+Run via [gapp](https://github.com/echomodel/gapp). The same
+binary that serves stdio for a single human serves HTTP for
+many — mcp-app handles transport, JWT auth, admin REST, and
+GCS-backed user state automatically.
+
+### Architecture
+
+- **Cloud Run service** runs `gwsa` (the mcp-app App entry
+  point). gapp builds the container, deploys with Terraform,
+  binds a custom domain, and provisions the SSL certificate.
+- **GCS bucket** (managed by gapp) backs the per-user
+  profiles directory at `/mnt/data/users` via GCS FUSE.
+- **GCP Secret Manager** holds the JWT signing key as a
+  gapp-managed secret; gapp injects it into Cloud Run as the
+  `SIGNING_KEY` env var.
+- **Custom domain (optional)** is bound at deploy time via
+  gapp's `domain:` field; the `.run.app` URL keeps working
+  in parallel.
+- **Auth model:** every MCP and admin request carries a JWT
+  signed by the deployment's signing key. `gwsa-admin` mints
+  per-user tokens from the same key; `gwsa-admin register`
+  packages them into client-specific registration commands.
+
+### Deploy
+
+From a clone of this repo:
+
+```bash
+pipx install gapp
+gapp init                                       # writes gapp.yaml (already in repo)
+gapp setup <your-gcp-project-id>                # one-time
+gapp deploy                                     # build + terraform apply
+gapp status                                     # service URL
+```
+
+The committed `gapp.yaml` declares:
+- `public: true` (mcp-app handles its own JWT auth)
+- a generated `SIGNING_KEY` secret
+- `APP_USERS_PATH={{SOLUTION_DATA_PATH}}/users` (GCS-backed)
+
+A custom domain is opt-in — either edit `gapp.yaml`'s
+`domain:` before `gapp deploy`, or do it via CI scalar
+overlay (see CONTRIBUTING.md). Leaving it absent serves
+on the assigned `.run.app` URL only.
+
+### Post-deploy: connect, register users, verify
+
+Once `gapp status` reports the URL:
+
+```bash
+# Fetch signing key (run from this repo so gapp resolves
+# the solution from the working directory)
+gwsa-admin connect https://<your-cloud-domain> \
+  --signing-key "$(gapp secrets get signing-key --plaintext)"
+
+# Probe the deployment end-to-end
+gwsa-admin probe
+
+# Add a user and seed their first Google account
+gwsa-admin acquire-token \
+  --client-secrets /path/to/client_secrets.json |
+  gwsa-admin users add me@example.com --token=-
+
+# Generate client registration commands
+gwsa-admin register --user me@example.com
+```
+
+`gwsa-admin register` emits Claude Code, Gemini CLI, and
+Claude.ai registration commands/URLs scoped to that user.
+For a multi-account human, add more accounts to the same
+user via `gwsa-admin accounts add ...` and pass `account=...`
+on per-tool-call MCP invocations to select between them.
+
+### CI/CD
+
+gapp supports GitHub Actions deploys via a reusable
+workflow. Pin your deployment workflow to a released gapp
+tag and pass `solution-repo`, WIF identity, and any scalar
+overlays (e.g. `domain`) as inputs. See the gapp deploy
+skill (`plugin:gapp:deploy`) for the full pattern.
+
+### Design background
+
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md)
+captures the locked design — user/profile/account model,
+credential resolution flow, and open Phase 2 questions
+(refresh-token rotation cadence, audit logging, BYOC vs.
+service-OAuth-client tradeoffs).
 
 ## Troubleshooting
 

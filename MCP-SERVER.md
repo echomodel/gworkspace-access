@@ -28,8 +28,13 @@ needs.
 session begins and terminates it when the session ends — no port
 allocation, no persistent server, no manual lifecycle management.
 
-HTTP transport (for cloud deployments) is part of Phase 2; see
-[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) §8.
+HTTP transport (for cloud deployments) is provided by the mcp-app
+framework: `gwsa-mcp serve` is the HTTP entry point used by gapp
+when building the Cloud Run container. See the README's
+[Cloud deployment](README.md#cloud-deployment) section for the
+deploy walkthrough and
+[Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) §8 for
+the design.
 
 ## Registering with clients
 
@@ -151,6 +156,6 @@ there automatically.
   setup details.
 - [Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) — the
   locked design that governs how identity, accounts, and tool
-  surfaces fit together; the Phase 2 cloud HTTP plan.
+  surfaces fit together; the cloud HTTP architecture.
 - [MCP specification](https://modelcontextprotocol.io/) — protocol
   reference.
