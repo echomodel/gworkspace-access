@@ -20,7 +20,7 @@ dependencies = [
     "mcp>=1.0.0",
     "rich",
     "pydantic>=2",
-    "mcp-app @ git+https://github.com/echomodel/mcp-app.git",
+    "mcp-app @ git+https://github.com/echomodel/mcp-app.git@v0.7.0",
 ]
 
 [project.optional-dependencies]
