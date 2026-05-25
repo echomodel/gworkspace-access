@@ -1,5 +1,87 @@
 # Release Notes
 
+## v0.12.0 — hosted-safe attachment download + Drive move/delete
+
+Resolves [#30](https://github.com/echomodel/gworkspace-access/issues/30)
+and [#31](https://github.com/echomodel/gworkspace-access/issues/31).
+
+### Breaking changes
+
+**`download_email_attachment` and `drive_download`** no longer accept
+`save_path: str`. The old shape only worked under stdio transport;
+under HTTP transport the file landed on the server container and was
+unreachable from the agent. Both tools now use a hosted-safe
+`destination` parameter:
+
+- `download_email_attachment(message_id, attachment_id, destination,
+  account?)` — `destination` is a discriminated union
+  (`{kind: "drive", folder_id?, name?}` or
+  `{kind: "inline", max_size_bytes?}`). Default is Drive (My Drive
+  root) with the attachment's original filename.
+- `drive_download(file_id, max_size_bytes?, account?)` — inline-only
+  (the file is already in Drive; moving to a different folder is
+  `drive_move`). Returns an `EmbeddedResource` + JSON summary
+  `TextContent`. Default inline cap is 100,000 bytes.
+
+Oversized inline responses return an error envelope hinting at the
+Drive destination rather than risking a tool response that exceeds
+client limits.
+
+### New tools
+
+- **`drive_search(query, max_results?, corpora?, account?)`** — the
+  general Drive search primitive over ``files.list``. Accepts a Drive
+  query string directly (`name contains 'x'`, `mimeType = '...'`,
+  `'<folder>' in parents`, `fullText contains '...'`, etc.). Backs
+  the convenience tools (`drive_list_folder`, `drive_search_folders`)
+  conceptually and lets the agent express any query they don't cover.
+- **`drive_get_metadata(file_id, account?)`** — single-file lookup
+  over ``files.get``. Returns `size`, `mime_type`, `parents`,
+  `modified_time`, `url`, `trashed`. Use before `drive_download` to
+  pre-flight size against the inline cap.
+- **`drive_move(file_id, destination_folder_id, account?)`** — move a
+  Drive file to a different folder. One API call (`addParents` +
+  `removeParents`).
+- **`drive_delete(file_id, account?)`** — move a Drive file to Trash.
+  Trash semantics, not hard-delete: the user can restore from Drive's
+  Trash UI for ~30 days.
+
+### SDK additions
+
+`gwsa.sdk.destinations` — reusable `Destination` discriminated union,
+`materialize()` helper, and `InlineTooLargeError`. Lifted out of the
+mail tool so future byte-producing tools inherit the pattern. The SDK
+itself remains transport-agnostic; the MCP layer translates
+`InlinePayload` → MCP content blocks via `gwsa.mcp.content`.
+
+`gwsa.sdk.drive` adds `upload_bytes`, `download_bytes`, `move_file`,
+`delete_file`. The existing `upload_file` / `download_file` helpers
+are unchanged — the CLI continues to use them.
+
+### Migration
+
+Replace any caller using `save_path` with a `destination` parameter:
+
+```python
+# Before
+download_email_attachment(message_id, attachment_id, save_path="/tmp/x.pdf")
+
+# After — for the inline path
+download_email_attachment(
+    message_id, attachment_id,
+    destination={"kind": "inline"},
+)
+
+# After — for the Drive path (recommended; works under any transport)
+download_email_attachment(
+    message_id, attachment_id,
+    destination={"kind": "drive", "folder_id": "<folder-id-or-omit>"},
+)
+```
+
+The Drive default makes the simplest call site work under HTTP
+transport with no agent changes.
+
 ## v0.7.0 — mcp-app framework adoption
 
 `gwsa` is now built on the

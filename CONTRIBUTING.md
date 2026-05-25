@@ -46,6 +46,36 @@ functions, no decorators — name becomes tool name, docstring becomes
 schema description, type hints drive parameter schemas. mcp-app
 discovers them automatically.
 
+### Byte-producing tools: control plane carries references, data plane is out-of-band
+
+Tools that produce binary output (email attachments, Drive downloads,
+generated reports) must work under any MCP transport — including HTTP,
+where the agent and the server do not share a filesystem. A parameter
+like `save_path: str` is therefore an antipattern: under HTTP transport
+the file lands on the server container and is unreachable from the
+agent.
+
+The convention in this repo is the **`destination` parameter** defined
+in `gwsa.sdk.destinations`:
+
+- `InlineDestination` — return the bytes as a content block
+  (`EmbeddedResource` + `TextContent` summary). Subject to a size cap
+  (default 100KB) because tool responses have practical client limits.
+- `DriveDestination` — upload to the user's Google Drive and return a
+  file id + URL. The user already has tools to retrieve files from
+  Drive, so the data plane is out-of-band of the MCP response.
+
+The `materialize()` helper handles the discrimination. Any new tool
+that produces bytes should accept a `Destination` parameter and return
+either `list[ContentBlock]` (inline) or a plain dict (Drive). Never
+introduce a server-local-path parameter on a byte-producing tool.
+
+The `gwsa.sdk` layer stays transport-agnostic: byte-producing SDK
+helpers expose `*_bytes` and `*_file` variants. The CLI uses
+`download_file(save_path)`-style helpers because the CLI is stdio-only.
+The MCP layer always uses the `*_bytes` variants and the destination
+plumbing.
+
 ## Development setup
 
 ```bash

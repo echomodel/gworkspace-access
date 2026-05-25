@@ -19,6 +19,18 @@ import logging
 from typing import Any, Optional
 
 from gwsa.sdk import mail
+from gwsa.sdk.destinations import (
+    Destination,
+    DriveDestination,
+    InlinePayload,
+    InlineTooLargeError,
+    materialize,
+)
+from gwsa.mcp.content import (
+    ContentBlock,
+    drive_upload_to_dict,
+    inline_payload_to_blocks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -311,34 +323,58 @@ async def create_email_draft(
 async def download_email_attachment(
     message_id: str,
     attachment_id: str,
-    save_path: str,
+    destination: Destination = DriveDestination(),
     account: Optional[str] = None,
-) -> dict[str, Any]:
-    """Download a Gmail attachment to a local file.
+) -> list[ContentBlock] | dict[str, Any]:
+    """Download a Gmail attachment to a destination the agent can reach.
+
+    The ``destination`` parameter is a discriminated union; pass one of:
+
+    - ``{"kind": "drive", "folder_id": "<id>", "name": "<name>"}`` —
+      upload to the user's Google Drive (default: My Drive root, with
+      the attachment's original filename). Returns ``{drive_file_id,
+      drive_url, name, mime_type, size_bytes, folder_id}``. Recommended
+      default; works under any transport.
+    - ``{"kind": "inline", "max_size_bytes": <int>}`` — return the
+      bytes inline as an ``EmbeddedResource`` paired with a JSON
+      summary. Best for small payloads the agent consumes immediately
+      (default cap: 100,000 bytes). Larger payloads return an error
+      envelope suggesting the Drive destination.
+
+    Replaces the prior ``save_path: str`` signature, which only worked
+    when the MCP was deployed stdio next to the agent. The new shape
+    works under any transport because the response carries either the
+    bytes themselves (inline) or a Drive reference the user already
+    has tools to reach.
 
     Args:
         message_id: Gmail message ID containing the attachment.
         attachment_id: Attachment ID (from ``read_email``).
-        save_path: Local file path to save the attachment.
+        destination: Where to deliver the bytes. See above.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
-
-    Returns:
-        Dict with ``success``, ``message_id``, ``attachment_id``,
-        ``saved_to``, and ``size_bytes``.
     """
     try:
-        result = mail.get_attachment(message_id, attachment_id, account=account)
-        data = result["data"]
-        size = result["size"]
-        with open(save_path, "wb") as f:
-            f.write(data)
+        fetched = mail.get_attachment_with_metadata(
+            message_id, attachment_id, account=account
+        )
+        result = materialize(
+            fetched["data"],
+            name=fetched["filename"],
+            mime_type=fetched["mime_type"],
+            destination=destination,
+            account=account,
+        )
+        if isinstance(result, InlinePayload):
+            return inline_payload_to_blocks(result)
+        return drive_upload_to_dict(result)
+    except InlineTooLargeError as e:
         return {
-            "success": True,
-            "message_id": message_id,
-            "attachment_id": attachment_id,
-            "saved_to": save_path,
-            "size_bytes": size,
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "retry_with": {"kind": "drive"},
         }
     except Exception as e:
         logger.error(f"Error downloading attachment: {e}")

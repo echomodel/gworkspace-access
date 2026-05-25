@@ -8,8 +8,9 @@ from .folders import (
     search_folders,
     AmbiguousFolderError,
 )
-from .upload import upload_file, update_file
-from .download import download_file
+from .upload import upload_file, update_file, upload_bytes
+from .download import download_file, download_bytes
+from .files import move_file, delete_file, get_metadata
 from .search import search_drive
 
 __all__ = [
@@ -21,6 +22,11 @@ __all__ = [
     "AmbiguousFolderError",
     "upload_file",
     "update_file",
+    "upload_bytes",
     "download_file",
+    "download_bytes",
+    "move_file",
+    "delete_file",
+    "get_metadata",
     "search_drive",
 ]

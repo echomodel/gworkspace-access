@@ -74,7 +74,7 @@ after `pipx install`.
 
 ## Tool inventory
 
-30 tools across five domains, one module per Google API plus an
+34 tools across five domains, one module per Google API plus an
 account-discovery module. mcp-app auto-discovers public async
 functions from each module:
 
@@ -85,12 +85,72 @@ functions from each module:
   download_email_attachment, get_email_thread
 - **`gwsa.mcp.tools.docs`** (6): list_docs, create_doc, read_doc,
   append_to_doc, insert_in_doc, replace_in_doc
-- **`gwsa.mcp.tools.drive`** (7): drive_list_folder,
-  drive_create_folder, drive_upload, drive_update, drive_download,
-  drive_find_folder, drive_search_folders
+- **`gwsa.mcp.tools.drive`** (11): drive_search, drive_get_metadata,
+  drive_list_folder, drive_create_folder, drive_upload, drive_update,
+  drive_download, drive_move, drive_delete, drive_find_folder,
+  drive_search_folders
 - **`gwsa.mcp.tools.chat`** (6): list_chat_spaces, list_chat_members,
   list_chat_messages, search_chat_messages,
   get_recent_direct_messages, get_recent_group_chats
+
+### Drive: one API model, layered conveniences
+
+Drive's underlying API has one resource type (``File``) and one search
+endpoint (``files.list``). A folder is just a ``File`` with
+``mimeType = "application/vnd.google-apps.folder"``; the same goes for
+Google Docs, Sheets, Slides, and shortcuts. The MCP surface reflects
+this with a primitive plus ergonomic wrappers:
+
+- **`drive_search(query, max_results, corpora, account)`** — the
+  primitive. Takes a [Drive query string](https://developers.google.com/drive/api/guides/search-files)
+  directly. Use when no convenience covers the case.
+- **`drive_get_metadata(file_id, account)`** — single-file primitive
+  over ``files.get``. Use to pre-flight size/mimeType before
+  ``drive_download``.
+- **`drive_list_folder(folder_id)`** — convenience for the highest-
+  frequency case ("what's inside this folder?"). Returns files,
+  subfolders, and shortcuts together — mirroring Drive's UI.
+- **`drive_search_folders(name)`** — convenience for folder-name
+  lookup across My Drive and Shared Drives.
+- **`drive_find_folder(path)`** — walks a ``/``-separated path.
+
+Shortcuts surface ``target_id`` and ``target_mime_type`` everywhere so
+the agent can resolve to the real underlying file.
+
+### Byte-producing tools and the `destination` parameter
+
+Tools that produce binary output (`download_email_attachment` today;
+future bytes-from-API tools) accept a `destination` discriminated
+union rather than a `save_path: str`. The parameter is required to be
+hosted-transport-safe — a server-local path is unreachable from an
+agent running on a different machine. Pass one of:
+
+- `{"kind": "drive", "folder_id": "<id>", "name": "<name>"}` — upload
+  to the user's Google Drive. `folder_id` defaults to My Drive root;
+  `name` defaults to the source filename. Returns
+  `{destination: "drive", drive_file_id, drive_url, name, mime_type,
+  size_bytes, folder_id}`. Use `drive_move` afterwards to organize
+  into a project folder.
+- `{"kind": "inline", "max_size_bytes": <int>}` — return the bytes as
+  an `EmbeddedResource` paired with a JSON summary `TextContent`.
+  Default cap is 100,000 bytes (kept below Claude Code's ~25K-token
+  tool-response limit). Oversized payloads return an error envelope
+  hinting at the Drive destination.
+
+`drive_download` is a special case: the file is already in Drive, so
+the only sensible response is inline bytes. It takes `file_id` plus an
+optional `max_size_bytes` and always returns an `EmbeddedResource +
+TextContent` pair.
+
+### Drive default location and trash semantics
+
+- **Default upload location** for `drive_upload` and the `drive`
+  destination on `download_email_attachment` is **My Drive root**. The
+  agent doesn't need to look up or create a folder in advance — land
+  the file first, organize later via `drive_move`.
+- **`drive_delete` moves to Trash**, not hard-delete. The user can
+  restore from Drive's Trash UI for ~30 days. This avoids irrecoverable
+  destruction from agent error and matches Drive UI expectations.
 
 Sheets is CLI-only today (`gwsa sheets ...`); MCP coverage is
 pending. The composition root in `gwsa/__init__.py` wires the

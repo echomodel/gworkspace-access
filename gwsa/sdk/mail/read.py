@@ -275,6 +275,64 @@ def get_attachment(
         'size': attachment.get('size', len(data)),
     }
 
+
+def get_attachment_with_metadata(
+    message_id: str,
+    attachment_id: str,
+    account: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Download an attachment along with its filename and MIME type.
+
+    Two-call helper that fetches the parent message metadata to resolve
+    the attachment's filename and MIME type (which the bare
+    ``attachments.get`` endpoint does not return), then downloads the
+    payload. Used by byte-producing MCP tools that need filename/mime
+    to build content blocks or Drive uploads.
+
+    Args:
+        message_id: Gmail message ID containing the attachment.
+        attachment_id: Attachment ID (from ``read_message``).
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``data`` (bytes), ``size`` (int), ``filename`` (str),
+        and ``mime_type`` (str). ``filename`` falls back to
+        ``f"attachment-{attachment_id[:8]}"`` and ``mime_type`` to
+        ``application/octet-stream`` when the message no longer carries
+        the part metadata (rare).
+    """
+    service = get_gmail_service(account=account)
+
+    message = service.users().messages().get(
+        userId="me",
+        id=message_id,
+        format="full",
+    ).execute()
+    parts_meta = _extract_attachments(message.get("payload", {}))
+
+    filename = f"attachment-{attachment_id[:8]}"
+    mime_type = "application/octet-stream"
+    for part in parts_meta:
+        if part.get("attachmentId") == attachment_id:
+            filename = part.get("filename") or filename
+            mime_type = part.get("mimeType") or mime_type
+            break
+
+    attachment = service.users().messages().attachments().get(
+        userId="me",
+        messageId=message_id,
+        id=attachment_id,
+    ).execute()
+    data = base64.urlsafe_b64decode(attachment["data"])
+
+    return {
+        "data": data,
+        "size": attachment.get("size", len(data)),
+        "filename": filename,
+        "mime_type": mime_type,
+    }
+
 def get_thread(
     thread_id: str,
     account: Optional[str] = None,

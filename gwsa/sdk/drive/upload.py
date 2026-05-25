@@ -1,10 +1,11 @@
 """Google Drive upload operations."""
 
-import os
+import io
 import mimetypes
+import os
 from typing import Optional
 
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 from .service import get_drive_service
 
@@ -58,6 +59,59 @@ def upload_file(
         "id": file.get("id"),
         "name": file.get("name"),
         "url": file.get("webViewLink")
+    }
+
+
+def upload_bytes(
+    data: bytes,
+    name: str,
+    mime_type: str = "application/octet-stream",
+    folder_id: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict:
+    """Upload raw bytes as a new file in Google Drive.
+
+    The in-memory counterpart to :func:`upload_file`. Used by tools that
+    have bytes already in hand (e.g. an email attachment downloaded via
+    the Gmail API) and want to land them in Drive without a filesystem
+    round-trip — required for hosted MCP deployments where the server
+    has no useful local filesystem from the agent's perspective.
+
+    Args:
+        data: Raw bytes to upload.
+        name: File name to use in Drive.
+        mime_type: MIME type of the content. Defaults to
+            ``application/octet-stream``.
+        folder_id: Destination folder ID. Use ``'root'`` or ``None`` for
+            My Drive root.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with file ``id``, ``name``, and ``url`` (webViewLink).
+    """
+    service = get_drive_service(account=account)
+
+    file_metadata: dict = {"name": name}
+    if folder_id and folder_id != "root":
+        file_metadata["parents"] = [folder_id]
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(data),
+        mimetype=mime_type,
+        resumable=True,
+    )
+
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, webViewLink",
+    ).execute()
+
+    return {
+        "id": file.get("id"),
+        "name": file.get("name"),
+        "url": file.get("webViewLink"),
     }
 
 

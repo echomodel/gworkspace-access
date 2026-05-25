@@ -17,6 +17,14 @@ import logging
 from typing import Any, Optional
 
 from gwsa.sdk import drive
+from gwsa.sdk.destinations import (
+    DEFAULT_INLINE_SIZE_CAP_BYTES,
+    InlineDestination,
+    InlinePayload,
+    InlineTooLargeError,
+    materialize,
+)
+from gwsa.mcp.content import ContentBlock, inline_payload_to_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +34,14 @@ async def drive_list_folder(
     max_results: int = 100,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """List contents of a Google Drive folder.
+    """List the contents of a Drive folder.
+
+    Returns everything directly inside the folder — subfolders, regular
+    files, native Google Workspace files (Docs, Sheets, Slides),
+    shortcuts — mirroring how the Drive UI renders a folder. Convenience
+    over ``drive_search`` for the highest-frequency Drive operation;
+    equivalent to ``drive_search(q="'<folder_id>' in parents and trashed
+    = false")``.
 
     Args:
         folder_id: Folder ID to list. Use None for My Drive root.
@@ -35,11 +50,20 @@ async def drive_list_folder(
             use the user's default account.
 
     Returns:
-        Dict with a list of files/folders including ``id``, ``name``,
-        ``type``, ``mime_type``, ``modified_time``, ``size``. Shortcuts
-        (``mime_type: application/vnd.google-apps.shortcut``) also
-        include ``target_id`` and ``target_mime_type`` — use
-        ``target_id`` with ``drive_download`` to get the actual file.
+        Dict with ``items`` (list) and ``next_page_token``. Each item
+        carries ``id``, ``name``, ``type`` (``"folder"`` or ``"file"``
+        — derived from ``mime_type``), ``mime_type``, ``modified_time``,
+        and ``size``.
+
+        Notes on ``size``: it is ``None`` for native Google Workspace
+        formats (Docs / Sheets / Slides / Forms etc.), which have no
+        meaningful raw byte count, and for folders.
+
+        Shortcuts have ``mime_type =
+        "application/vnd.google-apps.shortcut"`` and additional
+        ``target_id`` + ``target_mime_type`` fields — pass ``target_id``
+        to ``drive_download`` or ``drive_get_metadata`` to operate on
+        the underlying file.
     """
     try:
         return drive.list_folder(
@@ -135,27 +159,216 @@ async def drive_update(
 
 async def drive_download(
     file_id: str,
-    save_path: str,
+    max_size_bytes: Optional[int] = None,
     account: Optional[str] = None,
-) -> dict[str, Any]:
-    """Download a Drive file to a local path.
+) -> list[ContentBlock] | dict[str, Any]:
+    """Fetch a Drive file's contents inline as an MCP EmbeddedResource.
+
+    Returns ``[TextContent summary, EmbeddedResource]``. The bytes are
+    base64-encoded in the embedded resource so the agent receives them
+    directly under any transport (stdio, HTTP, anything else).
+
+    For larger files or files the agent doesn't need to consume
+    immediately, leave the file in Drive and operate on it via
+    ``drive_move`` / ``drive_delete`` / sharing — Drive is already the
+    canonical store.
 
     Args:
-        file_id: Drive file ID to download.
-        save_path: Local path where the file should be saved.
+        file_id: Drive file ID to fetch.
+        max_size_bytes: Override the default inline size cap
+            (default 100,000 bytes). Files larger than the cap return
+            an error envelope rather than risking a tool response that
+            exceeds client limits.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+    """
+    try:
+        fetched = drive.download_bytes(file_id=file_id, account=account)
+        result = materialize(
+            fetched["data"],
+            name=fetched["name"] or f"drive-{file_id[:8]}",
+            mime_type=fetched["mime_type"] or "application/octet-stream",
+            destination=InlineDestination(max_size_bytes=max_size_bytes),
+            account=account,
+        )
+        # materialize() on InlineDestination always returns InlinePayload.
+        assert isinstance(result, InlinePayload)
+        return inline_payload_to_blocks(result)
+    except InlineTooLargeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "hint": (
+                "File is too large to return inline. Read it in pieces "
+                "via Drive's UI / API, or share the Drive URL with the "
+                "user directly."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        return {"error": str(e)}
+
+
+async def drive_move(
+    file_id: str,
+    destination_folder_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Move a Drive file to a different folder.
+
+    Drive's REST API does not have a literal "move" — a move is an
+    update that adds the new parent and removes the old. This tool
+    performs both in one API call.
+
+    Args:
+        file_id: Drive file ID to move.
+        destination_folder_id: Folder ID to move into. Use ``"root"``
+            for My Drive root.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
     Returns:
-        Dict with ``success`` status, ``saved_to`` path, and
-        ``size_bytes``.
+        Dict with ``id``, ``name``, ``parents`` (new parent IDs), and
+        ``url`` (webViewLink). Returns an error envelope if the file
+        or destination folder cannot be reached.
     """
     try:
-        return drive.download_file(
-            file_id=file_id, save_path=save_path, account=account
-        )
+        return drive.move_file(file_id, destination_folder_id, account=account)
     except Exception as e:
-        logger.error(f"Error downloading file: {e}")
+        logger.error(f"Error moving file: {e}")
+        return {"error": str(e)}
+
+
+async def drive_delete(
+    file_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Move a Drive file to Trash.
+
+    Uses Trash semantics, not hard-delete: the file becomes invisible
+    in Drive listings but the user can restore it from Drive's Trash
+    UI for ~30 days. Matches Drive UI expectations and avoids
+    irrecoverable destruction from agent error. A separate primitive
+    would be needed for permanent (hard) delete.
+
+    Args:
+        file_id: Drive file ID to trash.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``file_id`` and ``trashed: true``. Idempotent.
+    """
+    try:
+        return drive.delete_file(file_id=file_id, account=account)
+    except Exception as e:
+        logger.error(f"Error trashing file: {e}")
+        return {"error": str(e)}
+
+
+async def drive_search(
+    query: str,
+    max_results: int = 25,
+    corpora: str = "user",
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Search Drive via the native ``files.list`` query language.
+
+    Drive treats files, folders, and shortcuts as one resource type
+    discriminated by ``mime_type``. This tool is the canonical search
+    primitive — the same call backs ``drive_list_folder`` and
+    ``drive_search_folders`` under the hood. Use it when you need a
+    query the convenience tools don't cover.
+
+    The ``query`` string follows Google's
+    `Drive search syntax`_. Common recipes:
+
+    - **List files inside a known folder** (matches
+      ``drive_list_folder``)::
+
+        "'<folder_id>' in parents and trashed = false"
+
+    - **Find a folder by name** (matches ``drive_search_folders``)::
+
+        "mimeType = 'application/vnd.google-apps.folder' "
+        "and name contains 'Projects'"
+
+    - **Find non-folder files by name**::
+
+        "mimeType != 'application/vnd.google-apps.folder' "
+        "and name contains 'invoice' and trashed = false"
+
+    - **Find PDFs modified after a date**::
+
+        "mimeType = 'application/pdf' "
+        "and modifiedTime > '2026-01-01T00:00:00'"
+
+    - **Full-text search inside Google Docs and indexable files**::
+
+        "fullText contains 'water bill'"
+
+    Args:
+        query: Drive query string (see recipes above).
+        max_results: Page size (default 25).
+        corpora: Which corpora to search. ``"user"`` (default) is My
+            Drive plus files shared with the caller. ``"allDrives"``
+            adds Shared Drives. ``"domain"`` is files shared to the
+            caller's domain.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``items`` (list of file records) and
+        ``next_page_token``. Each item carries ``id``, ``name``,
+        ``mime_type``, ``modified_time``, ``size`` (``None`` for
+        native Google Workspace formats), ``parents``, and ``url``.
+        Shortcuts also include ``target_id`` and ``target_mime_type``.
+
+    .. _Drive search syntax:
+       https://developers.google.com/drive/api/guides/search-files
+    """
+    try:
+        return drive.search_drive(
+            query=query,
+            max_results=max_results,
+            corpora=corpora,
+            account=account,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"Error searching Drive: {e}")
+        return {"error": str(e)}
+
+
+async def drive_get_metadata(
+    file_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Fetch metadata for a single Drive file or folder by ID.
+
+    Useful for pre-flight checks before ``drive_download`` — inspect
+    ``size`` and ``mime_type`` to decide whether to fetch inline (the
+    100,000-byte default cap applies) or to leave the file in Drive
+    and operate on it via ``drive_move`` / ``drive_delete`` / sharing.
+
+    Args:
+        file_id: Drive file ID.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``id``, ``name``, ``mime_type``, ``size`` (``None``
+        for native Google Workspace formats), ``parents`` (folder
+        IDs), ``modified_time``, ``url`` (webViewLink), ``trashed``,
+        and — for shortcuts — ``target_id`` and ``target_mime_type``.
+    """
+    try:
+        return drive.get_metadata(file_id=file_id, account=account)
+    except Exception as e:
+        logger.error(f"Error fetching Drive metadata: {e}")
         return {"error": str(e)}
 
 
