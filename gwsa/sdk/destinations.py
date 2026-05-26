@@ -21,13 +21,25 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-DEFAULT_INLINE_SIZE_CAP_BYTES = 100_000
-"""Default ceiling for inline payloads.
+DEFAULT_INLINE_SIZE_CAP_BYTES = 60_000
+"""Default ceiling for inline payloads, on **raw** bytes.
 
-Chosen well below Claude Code's ~25K-token tool-response limit (hit
-around 80–100KB of base64 EmbeddedResource content). Override per-call
-via ``InlineDestination.max_size_bytes`` when the caller knows the
-client can handle more.
+Sized so the encoded response fits comfortably inside Claude Code's
+~25K-token tool-response budget. Math:
+
+- Base64 expands raw bytes by 4/3, so 60,000 raw → ~80,000 base64.
+- The JSON envelope around the ``EmbeddedResource`` (URI, MIME type,
+  the paired ``TextContent`` summary) adds ~1KB.
+- Total response: ~81KB, well under the empirical ~100KB ceiling
+  Claude Code's MCP client truncates at.
+
+The previous default (100,000 raw bytes) was set against the raw-byte
+limit and didn't account for base64 expansion or envelope overhead.
+A 78KB PDF blew the budget in live testing.
+
+Override per-call via ``InlineDestination.max_size_bytes`` when the
+caller knows the client can handle more (Claude Desktop and
+Inspector have higher limits).
 """
 
 
@@ -46,10 +58,12 @@ class InlineDestination(BaseModel):
     max_size_bytes: Optional[int] = Field(
         default=None,
         description=(
-            f"Maximum payload size in bytes. Default "
-            f"{DEFAULT_INLINE_SIZE_CAP_BYTES}. Payloads above the cap "
-            f"raise InlineTooLargeError — use destination kind 'drive' "
-            f"instead for larger files."
+            f"Maximum payload size in raw bytes. Default "
+            f"{DEFAULT_INLINE_SIZE_CAP_BYTES}, sized so the base64-"
+            f"encoded response + JSON envelope fits inside Claude "
+            f"Code's ~25K-token tool-response budget. Payloads above "
+            f"the cap raise InlineTooLargeError — use destination "
+            f"kind 'drive' instead for larger files."
         ),
     )
 

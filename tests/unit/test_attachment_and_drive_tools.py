@@ -171,6 +171,78 @@ def test_attachment_inline_too_large_returns_error_envelope():
         current_user.reset(tok)
 
 
+def test_attachment_with_explicit_filename_skips_metadata_lookup():
+    """When the caller passes filename + mime_type (from read_email),
+    the tool uses them directly and never calls
+    ``get_attachment_with_metadata`` — which is unreliable because
+    Gmail rotates attachment IDs across messages.get calls."""
+    tok = _set_user_with_account()
+    try:
+        bytes_only = {"data": b"PDFCONTENT", "size": 10}
+        with (
+            patch(
+                "gwsa.sdk.mail.get_attachment",
+                return_value=bytes_only,
+            ) as bytes_patch,
+            patch(
+                "gwsa.sdk.mail.get_attachment_with_metadata",
+            ) as meta_patch,
+        ):
+            blocks = asyncio.run(
+                download_email_attachment(
+                    message_id="msg-1",
+                    attachment_id="att-1",
+                    destination=InlineDestination(),
+                    filename="Invoice.pdf",
+                    mime_type="application/pdf",
+                )
+            )
+        # Should have used the fast path — no metadata lookup at all.
+        bytes_patch.assert_called_once()
+        meta_patch.assert_not_called()
+        summary, _embedded = blocks
+        summary_data = json.loads(summary.text)
+        assert summary_data["name"] == "Invoice.pdf"
+        assert summary_data["mime_type"] == "application/pdf"
+    finally:
+        current_user.reset(tok)
+
+
+def test_attachment_with_partial_metadata_falls_back_to_lookup():
+    """If only one of filename/mime_type is provided, the tool falls
+    back to the metadata lookup to recover the missing piece. The
+    explicit value still wins."""
+    tok = _set_user_with_account()
+    try:
+        sdk_response = {
+            "data": b"x",
+            "size": 1,
+            "filename": "from-lookup.bin",
+            "mime_type": "application/octet-stream",
+        }
+        with patch(
+            "gwsa.sdk.mail.get_attachment_with_metadata",
+            return_value=sdk_response,
+        ):
+            blocks = asyncio.run(
+                download_email_attachment(
+                    message_id="msg-1",
+                    attachment_id="att-1",
+                    destination=InlineDestination(),
+                    filename="Override.pdf",
+                    # mime_type omitted → falls back to lookup
+                )
+            )
+        summary, _embedded = blocks
+        summary_data = json.loads(summary.text)
+        # Explicit filename wins
+        assert summary_data["name"] == "Override.pdf"
+        # Mime recovered from lookup
+        assert summary_data["mime_type"] == "application/octet-stream"
+    finally:
+        current_user.reset(tok)
+
+
 def test_attachment_default_destination_is_drive():
     """When the caller omits ``destination`` entirely, gwsa defaults to
     Drive — the hosted-safe choice."""

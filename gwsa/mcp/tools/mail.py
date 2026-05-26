@@ -324,6 +324,8 @@ async def download_email_attachment(
     message_id: str,
     attachment_id: str,
     destination: Destination = DriveDestination(),
+    filename: Optional[str] = None,
+    mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> list[ContentBlock] | dict[str, Any]:
     """Download a Gmail attachment to a destination the agent can reach.
@@ -338,8 +340,9 @@ async def download_email_attachment(
     - ``{"kind": "inline", "max_size_bytes": <int>}`` — return the
       bytes inline as an ``EmbeddedResource`` paired with a JSON
       summary. Best for small payloads the agent consumes immediately
-      (default cap: 100,000 bytes). Larger payloads return an error
-      envelope suggesting the Drive destination.
+      (default cap: 60,000 bytes — see :data:`gwsa.sdk.destinations.\
+DEFAULT_INLINE_SIZE_CAP_BYTES` for the rationale). Larger payloads
+      return an error envelope suggesting the Drive destination.
 
     Replaces the prior ``save_path: str`` signature, which only worked
     when the MCP was deployed stdio next to the agent. The new shape
@@ -351,17 +354,48 @@ async def download_email_attachment(
         message_id: Gmail message ID containing the attachment.
         attachment_id: Attachment ID (from ``read_email``).
         destination: Where to deliver the bytes. See above.
+        filename: Original attachment filename, as reported by
+            ``read_email``. Always pass this when you have it — Gmail
+            re-issues attachment IDs across ``messages.get`` requests,
+            so a server-side lookup is unreliable. Without an explicit
+            ``filename``, the Drive copy gets a generic
+            ``attachment-<id-prefix>`` name.
+        mime_type: Original attachment MIME type, as reported by
+            ``read_email``. Same reliability concern as ``filename`` —
+            pass it explicitly when you have it. Without an explicit
+            ``mime_type``, the upload uses ``application/octet-stream``
+            and Drive will sniff the real type from the bytes, but
+            inline responses won't carry the correct media type.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
     """
     try:
-        fetched = mail.get_attachment_with_metadata(
-            message_id, attachment_id, account=account
-        )
+        if filename and mime_type:
+            # Fast + reliable path: caller already has the metadata
+            # (from read_email). Skip the server-side lookup, which
+            # is unreliable because Gmail rotates attachment IDs
+            # across messages.get calls.
+            fetched = mail.get_attachment(
+                message_id, attachment_id, account=account
+            )
+            data = fetched["data"]
+            resolved_filename = filename
+            resolved_mime = mime_type
+        else:
+            # Fallback: server walks the message tree to recover
+            # whichever piece is missing. Best-effort — Gmail's
+            # rotated IDs may force a generic fallback name.
+            fetched = mail.get_attachment_with_metadata(
+                message_id, attachment_id, account=account
+            )
+            data = fetched["data"]
+            resolved_filename = filename or fetched["filename"]
+            resolved_mime = mime_type or fetched["mime_type"]
+
         result = materialize(
-            fetched["data"],
-            name=fetched["filename"],
-            mime_type=fetched["mime_type"],
+            data,
+            name=resolved_filename,
+            mime_type=resolved_mime,
             destination=destination,
             account=account,
         )

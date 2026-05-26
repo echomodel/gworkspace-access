@@ -175,10 +175,14 @@ async def drive_download(
 
     Args:
         file_id: Drive file ID to fetch.
-        max_size_bytes: Override the default inline size cap
-            (default 100,000 bytes). Files larger than the cap return
-            an error envelope rather than risking a tool response that
-            exceeds client limits.
+        max_size_bytes: Override the default inline size cap on raw
+            bytes (default 60,000 — sized so base64 + envelope fits
+            inside Claude Code's ~25K-token tool-response budget; see
+            :data:`gwsa.sdk.destinations.DEFAULT_INLINE_SIZE_CAP_BYTES`
+            for the math). Files larger than the cap return an error
+            envelope rather than risking client truncation. Use
+            ``drive_get_metadata`` first to check ``size`` before
+            calling.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
     """

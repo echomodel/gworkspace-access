@@ -1,5 +1,44 @@
 # Release Notes
 
+## v0.12.1 — attachment metadata fast path + correct inline cap
+
+Live-deployment fixes for two issues found while exercising v0.12.0
+against a real Gmail + Drive account.
+
+### Attachment filename/mime preservation
+
+`download_email_attachment` now accepts optional `filename` and
+`mime_type` parameters. When both are provided (the caller already
+has them from `read_email`), the tool uses them directly and skips
+the server-side metadata lookup.
+
+Why: Gmail re-issues attachment IDs across `messages.get` requests.
+The lookup that walked the message parts tree to recover filename and
+MIME type was matching by attachment ID, which failed for many
+real-world messages and fell back to a generic
+`attachment-<id-prefix>` name + `application/octet-stream`. Files
+uploaded to Drive then needed to be manually renamed.
+
+The lookup remains as a fallback when the caller doesn't provide
+both fields. Drive's automatic MIME sniffing also masks the mime
+issue for the Drive destination — but the inline destination, and
+the Drive filename, only get the right values when the caller passes
+them explicitly.
+
+### Inline size cap lowered
+
+`DEFAULT_INLINE_SIZE_CAP_BYTES` is now **60,000** (was 100,000). The
+old cap was on raw bytes and didn't account for base64 expansion (4/3)
+plus the JSON envelope around the `EmbeddedResource`. A 78KB PDF
+produced a ~105KB response that exceeded Claude Code's ~25K-token
+tool-response budget; the client truncated and fell back to saving the
+content to disk.
+
+The new cap is sized so the encoded response (~80KB base64 + ~1KB
+envelope ≈ 81KB) fits comfortably inside the budget. The
+`max_size_bytes` per-call override remains for callers who know their
+client can handle more.
+
 ## v0.12.0 — hosted-safe attachment download + Drive move/delete
 
 Resolves [#30](https://github.com/echomodel/gworkspace-access/issues/30)
