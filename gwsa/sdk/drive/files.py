@@ -33,7 +33,9 @@ def get_metadata(
 
     Returns:
         Dict with ``id``, ``name``, ``mime_type``, ``size`` (``None``
-        for native Google Workspace formats), ``parents`` (folder IDs),
+        or a placeholder for native Google Workspace formats — do not
+        treat as a real byte count for Google-native files), ``parents``
+        (folder IDs),
         ``modified_time``, ``url`` (webViewLink), ``trashed`` (bool),
         and — for shortcuts — ``target_id`` and ``target_mime_type``.
     """

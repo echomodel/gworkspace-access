@@ -62,8 +62,10 @@ def search_drive(
     Returns:
         Dict with ``items`` (list of file records) and
         ``next_page_token``. Each item carries ``id``, ``name``,
-        ``mime_type``, ``modified_time``, ``size`` (``None`` for native
-        Google Workspace formats), ``parents`` (list of folder IDs),
+        ``mime_type``, ``modified_time``, ``size`` (``None`` or a
+        placeholder for native Google Workspace formats — do not treat
+        as a real byte count for Google-native files), ``parents`` (list
+        of folder IDs),
         ``url`` (webViewLink), and — for shortcuts — ``target_id`` and
         ``target_mime_type``.
     """

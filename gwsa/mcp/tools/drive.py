@@ -55,9 +55,11 @@ async def drive_list_folder(
         — derived from ``mime_type``), ``mime_type``, ``modified_time``,
         and ``size``.
 
-        Notes on ``size``: it is ``None`` for native Google Workspace
-        formats (Docs / Sheets / Slides / Forms etc.), which have no
-        meaningful raw byte count, and for folders.
+        Notes on ``size``: native Google Workspace formats (Docs /
+        Sheets / Slides / Forms etc.) have no meaningful raw byte count;
+        Drive's API returns either ``None`` or a small placeholder value
+        for these, so do not treat the field as a real byte count for
+        Google-native files. Folders behave the same way.
 
         Shortcuts have ``mime_type =
         "application/vnd.google-apps.shortcut"`` and additional
@@ -326,8 +328,10 @@ async def drive_search(
     Returns:
         Dict with ``items`` (list of file records) and
         ``next_page_token``. Each item carries ``id``, ``name``,
-        ``mime_type``, ``modified_time``, ``size`` (``None`` for
-        native Google Workspace formats), ``parents``, and ``url``.
+        ``mime_type``, ``modified_time``, ``size`` (``None`` or a
+        placeholder for native Google Workspace formats — do not treat
+        as a real byte count for Google-native files), ``parents``, and
+        ``url``.
         Shortcuts also include ``target_id`` and ``target_mime_type``.
 
     .. _Drive search syntax:
@@ -365,7 +369,8 @@ async def drive_get_metadata(
 
     Returns:
         Dict with ``id``, ``name``, ``mime_type``, ``size`` (``None``
-        for native Google Workspace formats), ``parents`` (folder
+        or a placeholder for native Google Workspace formats — do not
+        treat as a real byte count for Google-native files), ``parents`` (folder
         IDs), ``modified_time``, ``url`` (webViewLink), ``trashed``,
         and — for shortcuts — ``target_id`` and ``target_mime_type``.
     """
