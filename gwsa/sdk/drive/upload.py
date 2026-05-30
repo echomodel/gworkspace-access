@@ -52,7 +52,8 @@ def upload_file(
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink"
+        fields="id, name, webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
     return {
@@ -106,6 +107,60 @@ def upload_bytes(
         body=file_metadata,
         media_body=media,
         fields="id, name, webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+
+    return {
+        "id": file.get("id"),
+        "name": file.get("name"),
+        "url": file.get("webViewLink"),
+    }
+
+
+def update_bytes(
+    file_id: str,
+    data: bytes,
+    mime_type: str = "application/octet-stream",
+    new_name: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict:
+    """Update an existing file's content from raw bytes.
+
+    The in-memory counterpart to :func:`update_file`. Used by the MCP
+    layer when the new content arrives inline (base64) rather than as a
+    server-readable path — required under HTTP transport where the
+    server cannot read the agent's filesystem.
+
+    Args:
+        file_id: The ID of the file to update.
+        data: Raw bytes of the new content.
+        mime_type: MIME type of the content. Defaults to
+            ``application/octet-stream``.
+        new_name: Optional new name for the file.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with updated file ``id``, ``name``, and ``url``.
+    """
+    service = get_drive_service(account=account)
+
+    file_metadata: dict = {}
+    if new_name:
+        file_metadata["name"] = new_name
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(data),
+        mimetype=mime_type,
+        resumable=True,
+    )
+
+    file = service.files().update(
+        fileId=file_id,
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
     return {
@@ -154,7 +209,8 @@ def update_file(
         fileId=file_id,
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink"
+        fields="id, name, webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
     return {

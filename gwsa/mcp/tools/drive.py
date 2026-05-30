@@ -24,6 +24,13 @@ from gwsa.sdk.destinations import (
     InlineTooLargeError,
     materialize,
 )
+from gwsa.sdk.sources import (
+    InlineSourceTooLargeError,
+    InvalidInlineSourceError,
+    LocalPathSource,
+    Source,
+    resolve_source,
+)
 from gwsa.mcp.content import ContentBlock, inline_payload_to_blocks
 
 logger = logging.getLogger(__name__)
@@ -100,17 +107,31 @@ async def drive_create_folder(
 
 
 async def drive_upload(
-    local_path: str,
+    source: Source,
     folder_id: Optional[str] = None,
     name: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Upload a local file to Google Drive.
+    """Upload a file to Google Drive.
+
+    The ``source`` parameter is a discriminated union; pass one of:
+
+    - ``{"kind": "inline", "data_base64": "<b64>", "name": "<name>",
+      "mime_type": "<type>"}`` — carry the bytes inline. Works under
+      ANY transport (stdio or HTTP) because the content travels in the
+      request body. Recommended default; required when the MCP server
+      and the agent do not share a filesystem (hosted/HTTP). Subject to
+      a size cap (see ``max_size_bytes`` on the inline source).
+    - ``{"kind": "path", "path": "/abs/path"}`` — read the bytes from a
+      path on the SERVER's filesystem. Only correct under stdio
+      transport, where the server runs on the agent's machine. Under
+      HTTP this fails because the server can't see the agent's files.
 
     Args:
-        local_path: Absolute path to the local file to upload.
+        source: Where the bytes come from. See above.
         folder_id: Destination folder ID. Use None for My Drive root.
-        name: Name for the file in Drive. Defaults to local filename.
+        name: Name for the file in Drive. Overrides the source's own
+            name; falls back to the source name, then the path basename.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
@@ -118,12 +139,36 @@ async def drive_upload(
         Dict with file ``id``, ``name``, and ``url``.
     """
     try:
-        return drive.upload_file(
-            local_path=local_path,
+        data, src_name, mime_type = resolve_source(source)
+        final_name = name or src_name
+        if not final_name:
+            return {
+                "error": (
+                    "No file name available. Provide 'name', or a "
+                    "'name' on the inline source."
+                )
+            }
+        return drive.upload_bytes(
+            data=data,
+            name=final_name,
+            mime_type=mime_type,
             folder_id=folder_id,
-            name=name,
             account=account,
         )
+    except InlineSourceTooLargeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "hint": (
+                "Upload via a server-readable path under stdio, or raise "
+                "max_size_bytes on the inline source if the client allows "
+                "larger request bodies."
+            ),
+        }
+    except (InvalidInlineSourceError, FileNotFoundError) as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
         return {"error": str(e)}
@@ -131,29 +176,50 @@ async def drive_upload(
 
 async def drive_update(
     file_id: str,
-    local_path: str,
+    source: Source,
     name: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Update an existing Drive file's content and optionally rename it.
 
+    The ``source`` parameter is the same discriminated union as
+    ``drive_upload`` — pass an inline source (works under any transport)
+    or a server-local path source (stdio only). See ``drive_upload`` for
+    the full shape.
+
     Args:
         file_id: Drive file ID to update.
-        local_path: Absolute path to the new local file content.
+        source: Where the new content comes from (inline or path).
         name: Optional new name for the file.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
     Returns:
-        Dict with updated file metadata.
+        Dict with updated file ``id``, ``name``, and ``url``.
     """
     try:
-        return drive.update_file(
+        data, _src_name, mime_type = resolve_source(source)
+        return drive.update_bytes(
             file_id=file_id,
-            local_path=local_path,
+            data=data,
+            mime_type=mime_type,
             new_name=name,
             account=account,
         )
+    except InlineSourceTooLargeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "hint": (
+                "Update via a server-readable path under stdio, or raise "
+                "max_size_bytes on the inline source if the client allows "
+                "larger request bodies."
+            ),
+        }
+    except (InvalidInlineSourceError, FileNotFoundError) as e:
+        return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error updating file: {e}")
         return {"error": str(e)}

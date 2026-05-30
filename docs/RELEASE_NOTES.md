@@ -1,5 +1,51 @@
 # Release Notes
 
+## v0.14.1 — transport-safe Drive upload/update + Shared Drive support
+
+**Breaking change to the `drive_upload` and `drive_update` MCP tools.**
+
+Two related fixes so Drive uploads work for agent-on-laptop sessions and
+for content in Shared Drives.
+
+### Inline source (transport-safe input)
+
+Previously both tools took a `local_path: str` — a path on the MCP
+server's filesystem. That only works under stdio, where the server and
+the agent are the same machine. Under HTTP transport the server cannot
+read the agent's files, so every upload of a real local file failed with
+a "No such file or directory" / 404 error even though the file existed
+on the agent's side.
+
+`drive_upload` and `drive_update` now take a `source` discriminated
+union (defined in `gwsa.sdk.sources`):
+
+- `{"kind": "inline", "data_base64": "...", "name": "...",
+  "mime_type": "..."}` — bytes travel in-band; works under **any**
+  transport. Subject to a raw-byte cap (default 700,000) with a
+  per-call `max_size_bytes` override.
+- `{"kind": "path", "path": "/abs/path"}` — reads from the server's
+  filesystem; correct only under stdio.
+
+This mirrors, on the input side, the `destination` convention that
+byte-*producing* tools already use (see CONTRIBUTING "Byte-consuming
+tools"). Oversize inline payloads and unreadable paths return
+structured error envelopes.
+
+Migration: callers passing `local_path="/path"` must switch to
+`source={"kind": "path", "path": "/path"}` (stdio) or, preferably,
+`source={"kind": "inline", "data_base64": ...}` (any transport).
+
+### Shared Drive support
+
+`upload_file`, `upload_bytes`, `update_file`, and `update_bytes` now pass
+`supportsAllDrives=True` on their `files.create` / `files.update` calls,
+matching every other Drive operation in the SDK (move, delete, get,
+search, folder listing already set it). Without the flag, uploading a
+file into — or updating a file that lives in — a Shared Drive (or a
+folder shared from another account) failed with `HttpError 404 File not
+found: <folder-id>`, indistinguishable from "the folder really doesn't
+exist." Ordinary My Drive uploads were unaffected, which masked the gap.
+
 ## v0.13.1 — acquire-token requests Calendar by default
 
 `gwsa-admin acquire-token` now includes `calendar` in its default

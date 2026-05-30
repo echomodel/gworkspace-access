@@ -76,6 +76,32 @@ helpers expose `*_bytes` and `*_file` variants. The CLI uses
 The MCP layer always uses the `*_bytes` variants and the destination
 plumbing.
 
+### Byte-consuming tools: the `source` parameter is the mirror image
+
+The same filesystem-sharing problem applies in reverse to tools that
+*accept* binary input (Drive upload, Drive update). A `local_path: str`
+parameter only works under stdio, where the server runs on the agent's
+machine. Under HTTP the server cannot read the agent's files, so a path
+the agent names fails with `FileNotFoundError` even though the file
+exists on the agent side.
+
+The convention is the **`source` parameter** defined in
+`gwsa.sdk.sources`:
+
+- `InlineSource` — the bytes travel in-band as base64
+  (`data_base64` + optional `name`/`mime_type`). Works under any
+  transport. Subject to a raw-byte cap (default 700KB) because
+  tool-call arguments have a practical client ceiling.
+- `LocalPathSource` — read from the server's filesystem. Correct only
+  under stdio.
+
+The `resolve_source()` helper returns `(data, name, mime_type)`
+regardless of kind. Any new tool that consumes bytes should accept a
+`Source` parameter and pass the resolved bytes to a `*_bytes` SDK
+helper. Never introduce a bare server-local-path parameter on a
+byte-consuming tool — for the same reason `save_path` is banned on the
+producing side.
+
 ### Calendar event availability (Free/Busy)
 
 Calendar event create/update map an `availability` value (`free`/`busy`)
