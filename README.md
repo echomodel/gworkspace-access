@@ -319,10 +319,8 @@ across all clients is in [MCP Server Setup](MCP-SERVER.md).
 class GoogleAccount(BaseModel):
     name: str                 # 'personal', 'work', ...
     email: str                # Google account email
-    token: dict               # authorized_user blob (refresh_token, client_id, ...)
+    token: dict               # authorized_user blob (refresh_token, client_id, scopes, ...)
     quota_project: str | None # required for gcloud-issued tokens; optional otherwise
-    validated_scopes: list[str]
-    last_validated: datetime | None
 
 class Profile(BaseModel):
     accounts: list[GoogleAccount]

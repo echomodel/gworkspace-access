@@ -6,7 +6,6 @@ Namespace package containing:
 - gwsa.mcp: Model Context Protocol server for LLM integration
 """
 
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -21,7 +20,7 @@ from gwsa.mcp.tools import drive as drive_tools
 from gwsa.mcp.tools import mail as mail_tools
 
 
-__version__ = "0.14.1"
+__version__ = "0.14.2"
 
 
 class GoogleAccount(BaseModel):
@@ -63,14 +62,6 @@ class GoogleAccount(BaseModel):
             "OAuth clients (defaults to the OAuth client's host project; pass "
             "to redirect billing elsewhere)."
         ),
-    )
-    validated_scopes: list[str] = Field(
-        default_factory=list,
-        description="Scopes the token actually carries per its last tokeninfo call.",
-    )
-    last_validated: Optional[datetime] = Field(
-        default=None,
-        description="When the token last passed tokeninfo. None = never validated.",
     )
 
 

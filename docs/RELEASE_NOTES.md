@@ -1,5 +1,20 @@
 # Release Notes
 
+## v0.14.2 — drop dead `validated_scopes` / `last_validated` profile fields
+
+Removed the `validated_scopes` and `last_validated` fields from
+`GoogleAccount`. They were only ever populated by the legacy-vault
+`migrate` path; `accounts add` never set them, so every normally-added
+account carried `validated_scopes: []` regardless of the token's real
+scopes. An empty list read as "no scopes granted" when it actually
+meant "never recorded" — actively misleading for diagnosis. The token
+blob already carries its own `scopes`, and the authoritative check is a
+live `tokeninfo` call, so the cached metadata had no correct use.
+
+No migration needed: existing stored profiles that still contain these
+keys load fine (the model ignores unknown keys), and nothing read the
+fields.
+
 ## v0.14.1 — transport-safe Drive upload/update + Shared Drive support
 
 **Breaking change to the `drive_upload` and `drive_update` MCP tools.**

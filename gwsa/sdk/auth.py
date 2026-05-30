@@ -186,8 +186,8 @@ def get_google_account_creds(account: Optional[str] = None):
     Returns:
         Tuple of (credentials, account) where ``account`` is the
         ``GoogleAccount`` model that was selected — useful for the
-        caller to inspect ``account.email``, ``account.quota_project``,
-        or ``account.validated_scopes`` without re-reading the profile.
+        caller to inspect ``account.email`` or ``account.quota_project``
+        without re-reading the profile.
 
     Raises:
         LookupError: No user is set on the current_user ContextVar.

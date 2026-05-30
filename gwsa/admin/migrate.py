@@ -31,8 +31,10 @@ def _build_account(legacy_profile: dict) -> GoogleAccount:
     """Convert one legacy profile entry into a typed ``GoogleAccount``.
 
     ``legacy_profile`` is the dict shape returned by
-    ``gwsa.sdk.profiles.list_profiles()`` — name, email, scopes,
-    last_validated, plus type/is_adc.
+    ``gwsa.sdk.profiles.list_profiles()`` — name, email, plus type/is_adc.
+    (Legacy scope/validation metadata is intentionally not carried over —
+    the token blob already holds its own scopes, and the authoritative
+    check is a live tokeninfo call, not stored metadata.)
     """
     from gwsa.sdk import profiles as legacy
 
@@ -53,21 +55,11 @@ def _build_account(legacy_profile: dict) -> GoogleAccount:
             f"or skip with --skip-broken."
         )
 
-    last_validated_raw = legacy_profile.get("last_validated")
-    last_validated = None
-    if last_validated_raw:
-        try:
-            last_validated = datetime.fromisoformat(last_validated_raw)
-        except (ValueError, TypeError):
-            last_validated = None
-
     return GoogleAccount(
         name=name,
         email=email,
         token=token,
         quota_project=token.get("quota_project_id"),
-        validated_scopes=legacy_profile.get("scopes") or [],
-        last_validated=last_validated,
     )
 
 
