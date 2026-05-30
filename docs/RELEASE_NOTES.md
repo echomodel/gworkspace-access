@@ -1,5 +1,16 @@
 # Release Notes
 
+## v0.13.1 — acquire-token requests Calendar by default
+
+`gwsa-admin acquire-token` now includes `calendar` in its default
+scope set (`mail,drive,docs,sheets,calendar`). v0.13.0 added the
+Calendar tools and the `calendar` scope alias but left the
+`acquire-token` default unchanged, so a token minted without an
+explicit `--scopes` lacked Calendar access and every Calendar tool
+call failed at runtime with a 403 "insufficient authentication
+scopes." Re-acquire your token after upgrading to pick up the
+Calendar scopes (see README "Rotating tokens").
+
 ## v0.13.0 — Google Calendar support (Free/Busy)
 
 New Google Calendar feature across SDK, CLI, and MCP.

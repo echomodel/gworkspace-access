@@ -28,11 +28,12 @@ from gwsa.sdk.auth import resolve_scopes
 )
 @click.option(
     "--scopes",
-    default="mail,drive,docs,sheets",
+    default="mail,drive,docs,sheets,calendar",
     show_default=True,
     help=(
-        "Comma-separated scope aliases (mail, drive, docs, sheets, chat, tasks) "
-        "or full scope URLs. Use 'workspace' to include the chat/people set."
+        "Comma-separated scope aliases (mail, drive, docs, sheets, "
+        "calendar, chat, tasks) or full scope URLs. Use 'workspace' to "
+        "include the chat/people set."
     ),
 )
 @click.option(

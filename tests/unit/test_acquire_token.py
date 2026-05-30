@@ -137,6 +137,40 @@ def test_scope_aliases_are_resolved(runner, client_secrets):
     assert "https://www.googleapis.com/auth/documents.readonly" in captured["scopes"]
 
 
+def test_default_scopes_include_calendar(runner, client_secrets):
+    """Regression: the default scope set must request Calendar.
+
+    Without --scopes, acquire-token must request calendar.events +
+    calendar.readonly alongside mail/drive/docs/sheets. A token minted
+    with the old default (no calendar) fails every Calendar tool call
+    with a 403 'insufficient authentication scopes', which is invisible
+    until runtime against the live API.
+    """
+    captured = {}
+
+    def _capture(_path, scopes):
+        captured["scopes"] = sorted(scopes)
+        return MagicMock(run_local_server=MagicMock(
+            return_value=_fake_credentials()
+        ))
+
+    with patch(
+        "google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file",
+        side_effect=_capture,
+    ):
+        result = runner.invoke(app.admin_cli, [
+            "acquire-token",
+            "--client-secrets", str(client_secrets),
+        ])
+
+    assert result.exit_code == 0, result.stderr
+    assert "https://www.googleapis.com/auth/calendar.events" in captured["scopes"]
+    assert "https://www.googleapis.com/auth/calendar.readonly" in captured["scopes"]
+    # the rest of the default set is still present
+    assert "https://www.googleapis.com/auth/gmail.modify" in captured["scopes"]
+    assert "https://www.googleapis.com/auth/drive" in captured["scopes"]
+
+
 def test_missing_client_secrets_file_errors_cleanly(runner, tmp_path):
     result = runner.invoke(app.admin_cli, [
         "acquire-token",
