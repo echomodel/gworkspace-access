@@ -1,5 +1,28 @@
 # Release Notes
 
+## v0.15.0 — `gwsa --account` per-invocation account override
+
+The `gwsa` domain CLI now accepts `--account <name-or-email>` on the
+top-level command, overriding the user's `default_account` for that one
+invocation (e.g. `gwsa --account work drive upload ...`). This completes
+the per-call selection the README previously listed as planned, and
+makes the CLI symmetric with the MCP tools, which already accept an
+`account` argument per call.
+
+Selection precedence in the SDK credential resolver is now: an explicit
+per-call `account=` argument > the CLI `--account` override > the
+profile's `default_account` > the sole account if only one exists. The
+CLI override is recorded via `gwsa.sdk.auth.set_cli_account()` (a
+process-scoped ContextVar set once by the top-level CLI callback); it is
+unused under HTTP/MCP transport, where each tool call passes its own
+`account` argument.
+
+This matters because `gwsa drive upload` (and every other domain
+command) previously always used `default_account`, with no way to target
+a different account per call — so an upload destined for a folder only
+shared with a non-default account would fail with a Drive 404 that looked
+like a missing folder.
+
 ## v0.14.2 — drop dead `validated_scopes` / `last_validated` profile fields
 
 Removed the `validated_scopes` and `last_validated` fields from

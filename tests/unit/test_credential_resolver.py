@@ -262,3 +262,92 @@ def test_quota_project_not_applied_when_unset():
         assert creds.quota_project_id is None
     finally:
         current_user.reset(tok)
+
+
+# --- CLI --account override (gwsa.sdk.auth.set_cli_account) -----------------
+#
+# The gwsa domain CLI exposes `--account NAME_OR_EMAIL`, which records a
+# selection via set_cli_account(). The resolver must treat it exactly like
+# an explicit per-call account= argument: it overrides default_account, but
+# an explicit per-call argument still wins over it. The override is process-
+# scoped (a ContextVar), so each test resets it to avoid leaking state.
+
+from gwsa.sdk.auth import set_cli_account  # noqa: E402
+
+
+def _reset_cli_account():
+    set_cli_account(None)
+
+
+def _two_account_profile(default="home"):
+    return Profile(
+        accounts=[
+            GoogleAccount(name="work", email="w@example.com",
+                          token=_token_blob(refresh_token="work-refresh")),
+            GoogleAccount(name="home", email="h@example.com",
+                          token=_token_blob(refresh_token="home-refresh")),
+        ],
+        default_account=default,
+    )
+
+
+def test_cli_account_override_beats_default():
+    tok = _set_user(_two_account_profile(default="home"))
+    try:
+        set_cli_account("work")
+        _creds, chosen = get_google_account_creds()
+        assert chosen.name == "work"  # override beat default 'home'
+    finally:
+        _reset_cli_account()
+        current_user.reset(tok)
+
+
+def test_cli_account_override_matches_by_email():
+    tok = _set_user(_two_account_profile(default="home"))
+    try:
+        set_cli_account("w@example.com")
+        _creds, chosen = get_google_account_creds()
+        assert chosen.name == "work"
+    finally:
+        _reset_cli_account()
+        current_user.reset(tok)
+
+
+def test_explicit_per_call_account_beats_cli_override():
+    tok = _set_user(_two_account_profile(default="home"))
+    try:
+        set_cli_account("work")
+        # an explicit per-call argument must still win over the CLI override
+        _creds, chosen = get_google_account_creds(account="home")
+        assert chosen.name == "home"
+    finally:
+        _reset_cli_account()
+        current_user.reset(tok)
+
+
+def test_no_cli_override_falls_back_to_default():
+    tok = _set_user(_two_account_profile(default="home"))
+    try:
+        _reset_cli_account()  # explicitly unset
+        _creds, chosen = get_google_account_creds()
+        assert chosen.name == "home"
+    finally:
+        current_user.reset(tok)
+
+
+def test_cli_override_unknown_account_raises():
+    profile = Profile(
+        accounts=[
+            GoogleAccount(name="work", email="w@example.com",
+                          token=_token_blob()),
+        ],
+        default_account="work",
+    )
+    tok = _set_user(profile)
+    try:
+        set_cli_account("nope")
+        with pytest.raises(AccountNotFoundError):
+            get_google_account_creds()
+    finally:
+        _reset_cli_account()
+        current_user.reset(tok)

@@ -84,13 +84,19 @@ def _bootstrap_user(user_email: str | None) -> None:
 @click.version_option(__version__, prog_name="gwsa")
 @click.option("--user", "user_email", default=None, metavar="EMAIL",
               help="Operate as this user (required when multiple users exist locally).")
-def gwsa(user_email):
+@click.option("--account", "account", default=None, metavar="NAME_OR_EMAIL",
+              help="Google account to use for this invocation (account name or "
+                   "email). Overrides the user's default account. Omit to use "
+                   "the default.")
+def gwsa(user_email, account):
     """gwsa CLI — Google Workspace domain operations.
 
     Profile and credential management lives in ``gwsa-admin`` (e.g.,
     ``gwsa-admin accounts add``, ``gwsa-admin acquire-token``).
     """
     _bootstrap_user(user_email)
+    from gwsa.sdk.auth import set_cli_account
+    set_cli_account(account)
 
 
 @click.group()

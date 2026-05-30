@@ -6,9 +6,31 @@ the active profile configuration.
 
 import os
 import logging
+from contextvars import ContextVar
 from typing import Tuple, Optional, Any
 
 logger = logging.getLogger(__name__)
+
+# CLI-set account selection. The gwsa domain CLI runs one account per
+# process invocation; ``gwsa --account NAME`` records the choice here so
+# the credential resolver picks it exactly as an explicit per-call
+# ``account=`` would — overriding the profile's ``default_account`` but
+# yielding to an explicit per-call argument. This mirrors how the CLI
+# already sets ``current_user`` for the SDK. It stays None in HTTP/MCP
+# mode, where each tool call passes its own ``account`` argument instead.
+_cli_account_override: ContextVar[Optional[str]] = ContextVar(
+    "gwsa_cli_account_override", default=None
+)
+
+
+def set_cli_account(account: Optional[str]) -> None:
+    """Record the CLI's ``--account`` selection for the credential resolver.
+
+    Called once by the gwsa domain CLI's top-level group callback. A
+    ``None`` selection is a no-op (resolver falls back to
+    ``default_account``).
+    """
+    _cli_account_override.set(account)
 
 # Scopes required for full GWSA functionality
 REQUIRED_SCOPES = {
@@ -221,6 +243,12 @@ def get_google_account_creds(account: Optional[str] = None):
 
     accounts = profile.accounts
     chosen = None
+
+    # A CLI ``--account`` selection behaves exactly like an explicit
+    # per-call ``account=`` argument: it wins over ``default_account``,
+    # but an explicit per-call argument (account is not None) wins over it.
+    if account is None:
+        account = _cli_account_override.get()
 
     if account is not None:
         for a in accounts:

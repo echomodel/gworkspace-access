@@ -171,10 +171,10 @@ gwsa-admin accounts get work    # detail one
 gwsa-admin accounts remove personal
 ```
 
-For per-call override on the gwsa CLI, the `--account` flag (e.g.
-`gwsa mail search "..." --account work`) is planned but not yet wired
-on the domain commands in this branch; for now the default account
-applies to every call.
+For per-call override on the gwsa CLI, pass the `--account` flag on the
+top-level command (e.g. `gwsa --account work mail search "..."`). It
+takes an account name or email and overrides the user's
+`default_account` for that invocation; omit it to use the default.
 
 ## Daily usage
 
@@ -200,9 +200,10 @@ gwsa --user me@example.com mail search "newer_than:1d"
 ```
 
 The `--user` flag selects the gwsa user; the user's `default_account`
-selects which Google identity inside that user's profile to use.
-The planned per-call `--account` override on the domain commands
-is not yet wired on this branch.
+selects which Google identity inside that user's profile to use. To
+override the account for a single invocation, add `--account
+<name-or-email>` on the top-level command (e.g.
+`gwsa --account work drive upload ...`).
 
 ### Calendar events and Free/Busy
 
