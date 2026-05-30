@@ -24,6 +24,7 @@ from .docs_commands import docs as docs_module
 from .drive_commands import drive_group as drive_module
 from .mail.threads import threads as threads_module
 from .sheets_commands import sheets as sheets_module
+from .calendar_commands import calendar as calendar_module
 
 
 if not logging.root.handlers:
@@ -152,6 +153,7 @@ gwsa.add_command(sheets_module, name='sheets')
 gwsa.add_command(docs_module, name='docs')
 gwsa.add_command(drive_module, name='drive')
 gwsa.add_command(chat_module, name='chat')
+gwsa.add_command(calendar_module, name='calendar')
 
 mail.add_command(threads_module, name='threads')
 

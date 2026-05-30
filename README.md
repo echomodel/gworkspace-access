@@ -1,7 +1,7 @@
 # Google Workspace Access (`gwsa`)
 
 A CLI and MCP server for working with Gmail, Google Drive, Docs, Sheets,
-and Chat from the command line or from AI agents. Built on the
+Chat, and Calendar from the command line or from AI agents. Built on the
 [mcp-app](https://github.com/echomodel/mcp-app) framework so the same
 binary works locally (stdio, one human) and as a hosted multi-user
 service (HTTP, JWT-authenticated).
@@ -63,9 +63,9 @@ In the [Google Cloud Console](https://console.cloud.google.com/):
    home for every API call gwsa makes for this account; no
    `--quota-project` is needed for tokens issued by this client.
 2. **Enable APIs** you'll use: Gmail API, Google Drive API, Google
-   Docs API, Sheets API, and (if you want chat tools) Google Chat
-   API and People API. `APIs & Services → Enabled APIs → ENABLE APIS
-   AND SERVICES`.
+   Docs API, Sheets API, Google Calendar API, and (if you want chat
+   tools) Google Chat API and People API. `APIs & Services → Enabled
+   APIs → ENABLE APIS AND SERVICES`.
 3. **Configure the OAuth consent screen** (only on first OAuth client
    in the project): set publishing status to *Testing*, add your
    Google email under *Test users*. This lets your own account
@@ -189,6 +189,7 @@ gwsa mail search "from:bob after:2026-01-01"
 gwsa drive list
 gwsa docs read DOC_ID
 gwsa chat spaces list
+gwsa calendar events --time-min 2026-06-01T00:00:00Z
 ```
 
 If the local store has multiple users, pass `--user` once on the
@@ -203,12 +204,55 @@ selects which Google identity inside that user's profile to use.
 The planned per-call `--account` override on the domain commands
 is not yet wired on this branch.
 
+### Calendar events and Free/Busy
+
+Calendar tools cover listing calendars, listing/searching events, and
+creating, updating, and deleting events:
+
+```bash
+gwsa calendar calendars
+gwsa calendar events --time-min 2026-06-01T00:00:00Z --time-max 2026-07-01T00:00:00Z
+gwsa calendar create "Team sync" 2026-06-02T09:00:00-05:00 2026-06-02T09:30:00-05:00
+gwsa calendar create "Conference" 2026-06-10 2026-06-12 --all-day
+gwsa calendar update EVENT_ID --availability free
+gwsa calendar delete EVENT_ID
+```
+
+An event's **availability** is its Free/Busy state, mapped to the
+Calendar API `transparency` field. Pass `--availability free|busy`
+(CLI) or `availability="free"|"busy"` (MCP) on create and update.
+
+**Defaults mirror the Google Calendar web UI, with one deliberate
+asymmetry:**
+
+- **All-day events default to Free.** A multi-day "Conference" or an
+  "Out of office" marker won't block your availability unless you say
+  `--availability busy`.
+- **Timed events default to Busy** — the Calendar API's own default.
+
+The returned event always carries an explicit, normalized
+`transparency` plus an `availability` alias (`free`/`busy`), even
+though the raw API omits `transparency` when it is the default
+`opaque`. That means you can always confirm what was set without
+guessing.
+
+`update` never changes Free/Busy unless you pass `--availability` — it
+only touches the fields you give it, so it won't silently flip an
+existing event.
+
+> **New scopes — re-authenticate.** Calendar uses the
+> `calendar.readonly` and `calendar.events` OAuth scopes. If you
+> configured gwsa before Calendar support landed, re-run
+> `acquire-token` and `accounts add` (see
+> [Rotating tokens](#rotating-tokens-when-refresh-fails)) so your
+> stored token carries the Calendar scopes.
+
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 30 tools across mail,
-docs, drive, chat, and account discovery. (Sheets is CLI-only for
-now.) Tools are discovered by mcp-app from
-`gwsa.mcp.tools.{accounts,mail,docs,drive,chat}`.
+`gwsa-mcp` is a stdio MCP server exposing 35 tools across mail,
+docs, drive, chat, calendar, and account discovery. (Sheets is
+CLI-only for now.) Tools are discovered by mcp-app from
+`gwsa.mcp.tools.{accounts,mail,docs,drive,chat,calendar}`.
 
 Every Google-touching MCP tool accepts an optional `account`
 argument — the account `name` (e.g. `"work"`) or its Google

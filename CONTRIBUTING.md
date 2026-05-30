@@ -12,11 +12,11 @@ gworkspace-access/
 │   ├── __init__.py               # App composition root (declares mcp-app App, profile model, admin extensions).
 │   ├── sdk/                      # All behavior. Layered access to Google APIs.
 │   │   ├── auth.py               # Credential resolution (bridges mcp-app + legacy vault).
-│   │   ├── mail/, docs/, drive/, chat/, people/
+│   │   ├── mail/, docs/, drive/, chat/, calendar/, people/
 │   │   └── profiles.py, config.py    # Legacy vault — read path during migration.
 │   ├── cli/                      # Thin Click wrappers over the SDK. Domain commands only.
-│   │   ├── __main__.py           # gwsa entry point (mail / sheets / docs / drive / chat).
-│   │   ├── mail/, docs_commands.py, drive_commands.py, sheets_commands.py, chat.py
+│   │   ├── __main__.py           # gwsa entry point (mail / sheets / docs / drive / chat / calendar).
+│   │   ├── mail/, docs_commands.py, drive_commands.py, sheets_commands.py, chat.py, calendar_commands.py
 │   │   └── decorators.py         # require_scopes, status formatting.
 │   ├── mcp/
 │   │   ├── tools.py              # mcp-app-native tool module (auto-discovered).
@@ -75,6 +75,24 @@ helpers expose `*_bytes` and `*_file` variants. The CLI uses
 `download_file(save_path)`-style helpers because the CLI is stdio-only.
 The MCP layer always uses the `*_bytes` variants and the destination
 plumbing.
+
+### Calendar event availability (Free/Busy)
+
+Calendar event create/update map an `availability` value (`free`/`busy`)
+to the Calendar API `transparency` field (`transparent`/`opaque`) in
+`gwsa/sdk/calendar/events.py`. Two design rules must be preserved if you
+touch this code:
+
+1. **All-day events default to Free; timed events default to Busy.**
+   This mirrors the Google Calendar web UI. `create_event` applies the
+   all-day default; `update_event` does **not** apply any default — an
+   update only changes `transparency` when `availability` is passed, so
+   it never silently flips a user's existing event.
+2. **Always echo a normalized `transparency` + `availability` back.**
+   The raw API omits `transparency` when it is the default `opaque`, so
+   `_normalize()` fills it in. Don't return raw API events for calendar
+   operations — callers rely on the explicit value to confirm what was
+   set.
 
 ## Development setup
 

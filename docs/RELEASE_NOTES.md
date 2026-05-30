@@ -1,5 +1,32 @@
 # Release Notes
 
+## v0.13.0 — Google Calendar support (Free/Busy)
+
+New Google Calendar feature across SDK, CLI, and MCP.
+
+### Calendar tools
+
+- `list_calendars`, `list_events`, `create_event`, `update_event`,
+  `delete_event` — available as `gwsa calendar ...` CLI commands and
+  as MCP tools.
+
+### Free/Busy (availability)
+
+Event availability maps to the Calendar API `transparency` field via an
+`availability: free|busy` parameter on create/update. All-day events
+default to **Free** (mirroring the Calendar web UI); timed events keep
+the API default of **Busy**. The normalized `transparency` and
+`availability` are always echoed back in the result so callers can
+confirm what was set — the raw API omits `transparency` when it is the
+default `opaque`. `update` never changes Free/Busy unless `availability`
+is passed.
+
+### OAuth scopes
+
+Adds `calendar.readonly` and `calendar.events`. Existing installs must
+re-acquire their token to pick up the new scopes (see README "Rotating
+tokens").
+
 ## v0.12.1 — attachment metadata fast path + correct inline cap
 
 Live-deployment fixes for two issues found while exercising v0.12.0

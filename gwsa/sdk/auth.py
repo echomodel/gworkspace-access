@@ -32,6 +32,9 @@ SCOPE_ALIASES = {
     "drive": "https://www.googleapis.com/auth/drive",
     "tasks": "https://www.googleapis.com/auth/tasks",
     "tasks-read": "https://www.googleapis.com/auth/tasks.readonly",
+    "calendar-read": "https://www.googleapis.com/auth/calendar.readonly",
+    "calendar-events": "https://www.googleapis.com/auth/calendar.events",
+    "calendar": "https://www.googleapis.com/auth/calendar.events",
 }
 
 # Scope implication rules (having X implies having Y)
@@ -47,6 +50,9 @@ SCOPE_IMPLICATIONS = {
     ],
     "https://www.googleapis.com/auth/drive": [
         "https://www.googleapis.com/auth/drive.readonly",
+    ],
+    "https://www.googleapis.com/auth/calendar.events": [
+        "https://www.googleapis.com/auth/calendar.readonly",
     ],
 }
 
@@ -327,6 +333,10 @@ FEATURE_SCOPES = {
     "docs": {"https://www.googleapis.com/auth/documents"},
     "drive": {"https://www.googleapis.com/auth/drive"},
     "tasks": {"https://www.googleapis.com/auth/tasks"},
+    "calendar": {
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+    },
     "chat": {
         "https://www.googleapis.com/auth/chat.spaces.readonly",
         "https://www.googleapis.com/auth/chat.messages.readonly",
@@ -371,7 +381,7 @@ def get_all_scopes(workspace: bool = False) -> list[str]:
     scopes = set()
     
     # Standard scopes (available to all users)
-    for feature in ["mail", "sheets", "docs", "drive"]:
+    for feature in ["mail", "sheets", "docs", "drive", "calendar"]:
         scopes.update(FEATURE_SCOPES[feature])
     
     # Workspace-specific scopes
