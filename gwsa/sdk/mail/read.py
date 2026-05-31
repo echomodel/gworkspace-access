@@ -333,6 +333,47 @@ def get_attachment_with_metadata(
         "mime_type": mime_type,
     }
 
+def read_message_structure(
+    message_id: str,
+    account: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Expose a message's full per-part MIME structure.
+
+    ``read_message`` returns a decoded convenience view (``body.html`` /
+    ``body.text`` plus a flat attachment list) that is lossy: it drops
+    the per-part Content-ID, the inline-vs-attachment disposition, and
+    the mapping between a ``cid:`` reference in the html and the part it
+    points at. Those are exactly what a faithful forward / reply rebuild
+    needs.
+
+    This accessor fetches the raw MIME (``messages.get?format=raw``) and
+    returns, per non-body part: ``mime_type``, ``content_id``,
+    ``disposition`` (inline/attachment), ``filename``, ``size``, and
+    ``cid_referenced`` (whether the html body actually references the
+    part via ``cid:``), alongside the decoded ``body`` and inline /
+    attachment tallies.
+
+    Args:
+        message_id: Gmail message ID.
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``id``, header fields, ``body`` (text/html),
+        ``parts`` (the per-part list above), ``inline_count``, and
+        ``attachment_count``.
+    """
+    from .mime import fetch_raw_message, parse_message_structure
+
+    service = get_gmail_service(account=account)
+    logger.debug(f"Reading MIME structure for message: {message_id}")
+
+    parsed = fetch_raw_message(service, message_id)
+    structure = parse_message_structure(parsed)
+    structure["id"] = message_id
+    return structure
+
+
 def get_thread(
     thread_id: str,
     account: Optional[str] = None,

@@ -280,6 +280,98 @@ async def reply_email(
         return {"success": False, "error": str(e)}
 
 
+async def forward_email(
+    message_id: str,
+    to: str,
+    note: Optional[str] = None,
+    html_note: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    as_draft: bool = False,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Forward a Gmail message with full MIME fidelity.
+
+    Rebuilds the forward from the source's raw MIME, preserving every
+    regular attachment byte-for-byte and every inline ``cid:`` image
+    with its original Content-ID (so the quoted html still renders),
+    plus both html and plain-text body alternatives. The caller's
+    ``note`` / ``html_note`` is prepended above the forwarded content.
+    A forward starts a new thread.
+
+    Args:
+        message_id: Gmail message ID to forward (from ``search_emails``).
+        to: Recipient(s), comma-separated.
+        note: Optional plain-text note prepended above the forward.
+        html_note: Optional html note used as the html lead-in when the
+            source has an html body.
+        cc: Optional CC recipients (comma-separated).
+        bcc: Optional BCC recipients (comma-separated).
+        as_draft: Create a draft instead of sending (default False).
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``success``, ``id``, ``thread_id`` (when sent),
+        ``is_draft``, and ``message``.
+    """
+    try:
+        result = mail.forward_message(
+            message_id=message_id,
+            to=to,
+            note=note,
+            html_note=html_note,
+            cc=cc,
+            bcc=bcc,
+            as_draft=as_draft,
+            account=account,
+        )
+        return {
+            "success": True,
+            "id": result.get("id"),
+            "thread_id": result.get("threadId"),
+            "is_draft": result.get("is_draft", False),
+            "message": (
+                "Forward draft created"
+                if result.get("is_draft")
+                else f"Message forwarded successfully to {to}"
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Error forwarding email: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def read_email_structure(
+    message_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Read a message's full per-part MIME structure.
+
+    Unlike ``read_email`` (decoded body + flat attachment list), this
+    surfaces, per non-body part: ``mime_type``, ``content_id``,
+    ``disposition`` (inline vs attachment), ``filename``, ``size``, and
+    ``cid_referenced`` (whether the html body points at the part via a
+    ``cid:`` reference). Use when you need the structure behind a
+    faithful forward/reply rebuild rather than just the readable body.
+
+    Args:
+        message_id: Gmail message ID (from ``search_emails``).
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with header fields, ``body`` (text/html), ``parts``,
+        ``inline_count``, and ``attachment_count``. On error returns
+        ``{"error": str}``.
+    """
+    try:
+        return mail.read_message_structure(message_id, account=account)
+    except Exception as e:
+        logger.error(f"Error reading email structure: {e}")
+        return {"error": str(e)}
+
+
 async def create_email_draft(
     to: str,
     subject: str,

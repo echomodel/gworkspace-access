@@ -1,5 +1,39 @@
 # Release Notes
 
+## v0.16.0 — `forward_email` + Content-ID-aware part fidelity
+
+Adds a faithful **forward** capability and closes the inline-image
+fidelity gap that also affected reply quoting.
+
+`forward_email(message_id, to, note=None, html_note=None, cc=None,
+bcc=None, as_draft=False)` rebuilds the forward from the source's full
+raw MIME (`messages.get?format=raw`), preserving every regular
+attachment byte-for-byte, every inline image with its **original
+Content-ID** (so the quoted HTML's `cid:` references still render), and
+both the HTML and plain-text body alternatives — then prepends the
+caller's note. A forward starts a new thread.
+
+The same part-rebinding now applies to **reply** quoting: when the
+quoted tail contains inline `cid:` images, `reply_email` re-attaches the
+matching Content-ID parts so they render. A reply carries only those
+inline parts, not the original's file attachments (matching native mail
+clients).
+
+New `read_email_structure(message_id)` accessor exposes a message's full
+per-part MIME structure — `mime_type`, `content_id`, `disposition`
+(inline vs attachment), `filename`, `size`, and whether the HTML body
+references each part via `cid:` — for callers that need the structure
+behind a faithful rebuild rather than the decoded body `read_email`
+returns.
+
+Why this matters: forward was previously impossible, and any
+reconstruction that quoted HTML containing `cid:` references without
+re-attaching the matching Content-ID parts showed broken inline images.
+Both gaps stem from the same root cause — reply and forward are
+client-side reconstructions, and a faithful one must rebuild from raw
+MIME and re-bind `cid:` parts by Content-ID. See CONTRIBUTING.md for the
+preserved design rules.
+
 ## v0.15.0 — `gwsa --account` per-invocation account override
 
 The `gwsa` domain CLI now accepts `--account <name-or-email>` on the

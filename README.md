@@ -250,7 +250,7 @@ existing event.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 35 tools across mail,
+`gwsa-mcp` is a stdio MCP server exposing 41 tools across mail,
 docs, drive, chat, calendar, and account discovery. (Sheets is
 CLI-only for now.) Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,chat,calendar}`.
@@ -262,6 +262,32 @@ specific account per call when the user has more than one. Omit
 `account` to use the user's `default_account`, or the sole
 account when only one is configured. The `list_google_accounts`
 tool exposes the names and emails the agent should pass.
+
+#### Forwarding and message part fidelity
+
+`forward_email(message_id, to, note=None, html_note=None, cc=None,
+bcc=None, as_draft=False)` forwards a message rebuilt from its full
+source MIME, preserving:
+
+- every regular **attachment**, byte-for-byte,
+- every **inline image** with its original Content-ID, so the quoted
+  HTML's `cid:` references (signature logos, embedded charts) still
+  render,
+- both the HTML and plain-text body alternatives,
+
+then prepends your `note` / `html_note`. A forward starts a new thread.
+
+The same part-rebinding now applies to **reply** quoting: when the
+quoted tail contains inline `cid:` images, `reply_email` re-attaches
+the matching Content-ID parts so they still render (it does not
+re-carry the original's file attachments — only the inline images the
+quoted body points at).
+
+`read_email_structure(message_id)` exposes the full per-part MIME
+structure behind a message — each part's `mime_type`, `content_id`,
+`disposition` (inline vs attachment), `filename`, `size`, and whether
+the HTML body references it via `cid:` — for callers that need the
+structure rather than the decoded body that `read_email` returns.
 
 The stdio entry point takes a `--user KEY` selector identifying
 which registered local user it should run as. The key is an opaque

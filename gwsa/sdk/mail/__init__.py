@@ -23,18 +23,20 @@ from .search import search_messages
 from .read import (
     read_message,
     read_messages,
+    read_message_structure,
     get_attachment,
     get_attachment_with_metadata,
     get_thread,
 )
 from .label import modify_labels, add_label, remove_label, list_labels
-from .send import send_message, create_draft, reply_message
+from .send import send_message, create_draft, reply_message, forward_message
 
 __all__ = [
     "get_gmail_service",
     "search_messages",
     "read_message",
     "read_messages",
+    "read_message_structure",
     "get_attachment",
     "get_attachment_with_metadata",
     "get_thread",
@@ -45,6 +47,7 @@ __all__ = [
     "send_message",
     "create_draft",
     "reply_message",
+    "forward_message",
 ]
 
 # Convenience aliases
@@ -52,3 +55,4 @@ search = search_messages
 read = read_message
 send = send_message
 reply = reply_message
+forward = forward_message

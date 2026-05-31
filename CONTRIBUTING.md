@@ -102,6 +102,46 @@ helper. Never introduce a bare server-local-path parameter on a
 byte-consuming tool — for the same reason `save_path` is banned on the
 producing side.
 
+### Reply and forward are client-side MIME reconstructions
+
+Reply and forward are **not** Gmail API primitives. Both are assembled
+client-side over `drafts.create` / `messages.send`, where the caller
+hands Gmail a fully-formed raw MIME message. The only natively
+reply-specific affordance is **threading** (`threadId` plus the
+`In-Reply-To` / `References` headers); everything else — quoting,
+attachments, inline images — is a rebuild we own.
+
+A faithful rebuild must work from the source's **full raw MIME**
+(`messages.get?format=raw`), not from the decoded convenience view
+`read_message` returns. That view (`body.html` / `body.text` plus a
+flat attachment list) is lossy: it drops the per-part Content-ID and
+the inline-vs-attachment disposition. Critically, an inline image only
+renders when the HTML's `<img src="cid:XXX">` is matched by a MIME part
+carrying `Content-ID: <XXX>`. Re-attaching that part with a
+freshly-generated CID does **not** match the quoted HTML's `cid:`
+token, so the image breaks. This bites a reconstructed *reply* exactly
+as it bites a forward whenever the quoted body contains inline images.
+
+The reconstruction lives in `gwsa/sdk/mail/mime.py`:
+
+- `fetch_raw_message` / `split_parts` pull the raw MIME and split it
+  into text/html bodies, inline (`cid:`-referenced) parts, and
+  attachment parts.
+- `assemble_message` rebuilds the nested
+  `multipart/mixed[ multipart/alternative[ text, multipart/related[
+  html, inline ] ], attachments ]` shape, **re-attaching each inline
+  part with its original Content-ID** so the quoted HTML still resolves.
+
+Rules to preserve if you touch this code:
+
+1. **Always rebuild from raw MIME for forward**, and for reply whenever
+   the quoted HTML carries inline `cid:` parts. Never hand-assemble a
+   forward/reply from decoded parts — Content-IDs are lost.
+2. **A reply re-carries only inline parts, not file attachments.** A
+   forward carries both. This matches native mail clients.
+3. **Preserve Content-IDs verbatim** (with angle brackets). The HTML
+   references `cid:XXX`; the part header must read `Content-ID: <XXX>`.
+
 ### Calendar event availability (Free/Busy)
 
 Calendar event create/update map an `availability` value (`free`/`busy`)
