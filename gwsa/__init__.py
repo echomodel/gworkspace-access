@@ -20,7 +20,7 @@ from gwsa.mcp.tools import drive as drive_tools
 from gwsa.mcp.tools import mail as mail_tools
 
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 
 
 class GoogleAccount(BaseModel):

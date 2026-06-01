@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.18.1 — fix `gwsa mail read`
+
+Fix `gwsa mail read FILE_ID`, which raised `AttributeError` because it
+called a nonexistent `mail.get_message`. It now calls `mail.read_message`
+and returns the message as documented.
+
 ## v0.18.0 — `gwsa drive revisions match` (find/pin the revision by content hash)
 
 Adds `gwsa drive revisions match FILE_ID LOCAL_PATH [--pin]` (issue #39).

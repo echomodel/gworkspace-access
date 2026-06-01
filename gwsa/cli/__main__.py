@@ -129,7 +129,7 @@ def mail_search(query, page_token, max_results, format):
 def mail_read(message_id):
     """Read a single Gmail message by ID."""
     try:
-        message = sdk_mail.get_message(message_id, format='full')
+        message = sdk_mail.read_message(message_id)
         click.echo(json.dumps(message, indent=2, default=str))
     except Exception as e:
         logger.critical(f"Mail read failed for {message_id}: {e}", exc_info=True)
