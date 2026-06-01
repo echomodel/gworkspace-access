@@ -35,7 +35,7 @@ service (HTTP, JWT-authenticated).
 ## Install
 
 ```bash
-pipx install git+https://github.com/echomodel/gworkspace-access.git@feat/use-mcp-app-framework
+pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.16.0
 ```
 
 Installs three commands:
