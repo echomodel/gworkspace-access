@@ -223,6 +223,41 @@ def revisions_get(file_id, revision_id, out_path):
         raise SystemExit(1)
 
 
+@revisions_group.command('match')
+@click.argument('file_id')
+@click.argument('local_path')
+@click.option('--pin', is_flag=True,
+              help='If a revision matches, pin it (keepForever) in the '
+                   'same call.')
+@require_scopes('drive')
+def revisions_match(file_id, local_path, pin):
+    """Find the revision whose content matches a local file, by md5.
+
+    FILE_ID: The Drive file ID.
+    LOCAL_PATH: Local file whose content to look for.
+
+    Prints the result as JSON. Exit code is the "is this content backed
+    up?" contract: 0 if a matching revision is found, 1 if not, 2 on
+    error (e.g. a native Google file, which has no checksum). With
+    --pin, a found revision is pinned (keepForever) before returning.
+    """
+    try:
+        result = drive.match_revision_file(
+            file_id=file_id, local_path=local_path, pin=pin
+        )
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(2)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(2)
+
+    click.echo(json.dumps(result, indent=2))
+    if result.get("note"):
+        raise SystemExit(2)
+    raise SystemExit(0 if result["matched"] else 1)
+
+
 @revisions_group.command('keep')
 @click.argument('file_id')
 @click.argument('revision_id')

@@ -87,6 +87,83 @@ def test_list_revisions_normalizes_shape():
     ]
 
 
+def test_match_revision_finds_matching_md5():
+    import hashlib
+    content = b'{"v": 1}'
+    md5 = hashlib.md5(content).hexdigest()
+    svc = _fake_service()
+    svc.revisions.return_value.list.return_value.execute.return_value = {
+        "revisions": [
+            {"id": "old", "md5Checksum": "deadbeef", "keepForever": False},
+            {"id": "hit", "md5Checksum": md5, "keepForever": False,
+             "modifiedTime": "2026-05-02T00:00:00Z", "size": "8"},
+        ]
+    }
+    with patch(
+        "gwsa.sdk.drive.revisions.get_drive_service", return_value=svc
+    ):
+        result = drive.match_revision_bytes("f", content)
+    assert result["matched"] is True
+    assert result["revision"]["id"] == "hit"
+    assert result["md5"] == md5
+    assert result["pinned"] is False
+
+
+def test_match_revision_no_match():
+    svc = _fake_service()
+    svc.revisions.return_value.list.return_value.execute.return_value = {
+        "revisions": [
+            {"id": "r1", "md5Checksum": "deadbeef", "keepForever": False},
+        ]
+    }
+    with patch(
+        "gwsa.sdk.drive.revisions.get_drive_service", return_value=svc
+    ):
+        result = drive.match_revision_bytes("f", b"content-not-present")
+    assert result["matched"] is False
+    assert result["revision"] is None
+
+
+def test_match_revision_pin_flips_keep_forever():
+    import hashlib
+    content = b'{"v": 1}'
+    md5 = hashlib.md5(content).hexdigest()
+    svc = _fake_service()
+    svc.revisions.return_value.list.return_value.execute.return_value = {
+        "revisions": [
+            {"id": "hit", "md5Checksum": md5, "keepForever": False},
+        ]
+    }
+    svc.revisions.return_value.update.return_value.execute.return_value = {
+        "id": "hit", "keepForever": True,
+    }
+    with patch(
+        "gwsa.sdk.drive.revisions.get_drive_service", return_value=svc
+    ):
+        result = drive.match_revision_bytes("f", content, pin=True)
+    assert result["matched"] is True
+    assert result["pinned"] is True
+    assert result["revision"]["keep_forever"] is True
+    # the pin went through revisions.update with keepForever true
+    _, kwargs = svc.revisions.return_value.update.call_args
+    assert kwargs["body"] == {"keepForever": True}
+
+
+def test_match_revision_native_file_no_checksum():
+    svc = _fake_service()
+    svc.revisions.return_value.list.return_value.execute.return_value = {
+        "revisions": [
+            {"id": "r1", "mimeType": "application/vnd.google-apps.document"},
+        ]
+    }
+    with patch(
+        "gwsa.sdk.drive.revisions.get_drive_service", return_value=svc
+    ):
+        result = drive.match_revision_bytes("f", b"anything")
+    assert result["matched"] is False
+    assert "note" in result
+
+
 def test_keep_revision_sets_keepforever_true():
     svc = _fake_service()
     svc.revisions.return_value.update.return_value.execute.return_value = {

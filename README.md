@@ -259,9 +259,21 @@ never auto-pruned:
 gwsa drive revisions list FILE_ID
 gwsa drive revisions get FILE_ID REVISION_ID            # streams content to stdout
 gwsa drive revisions get FILE_ID REVISION_ID --out v1.json
+gwsa drive revisions match FILE_ID LOCAL_PATH           # which revision == this local file?
+gwsa drive revisions match FILE_ID LOCAL_PATH --pin     # ...and pin it if found
 gwsa drive revisions keep FILE_ID REVISION_ID           # pin (keepForever)
 gwsa drive revisions unkeep FILE_ID REVISION_ID         # unpin
 ```
+
+`revisions match` answers "is this exact local file already backed up as
+a revision, and which one?" — it hashes the local file and finds the
+revision with the same `md5Checksum`, no download or JSON-parsing by the
+caller. Its **exit code is a backup check**: `0` if a matching revision
+is found, `1` if not, `2` on error (e.g. a native Google file). `--pin`
+pins the matched revision (`keepForever`) in the same call — pair it with
+content written *outside* the CLI (a normal save into a Drive-synced
+folder) to confirm the upload landed and pin the exact revision by hash,
+without relying on "the latest revision" or upload timing.
 
 A new file's revisions only stack when you **update the same file by id**
 — `drive upload` always creates a *new* file. So the version-store loop
@@ -300,6 +312,10 @@ Behavior to know:
 
 The same operations are exposed as MCP tools: `drive_list_revisions`,
 `drive_get_revision`, `drive_keep_revision`, `drive_unkeep_revision`.
+(`match` is **CLI-only** — it's a local-file operation that doesn't map
+cleanly to a hosted MCP tool, since a remote server can't read the
+agent's filesystem and shipping the whole file inline just to hash it
+defeats the purpose.)
 
 ### MCP server (AI assistants)
 

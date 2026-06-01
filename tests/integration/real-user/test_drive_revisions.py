@@ -79,6 +79,51 @@ def test_revision_roundtrip_list_fetch_keep_unkeep():
 
 
 @pytest.mark.integration
+def test_match_revision_by_content_and_pin():
+    """A local content blob matches the revision that holds it (by md5);
+    a never-uploaded blob matches nothing; --pin pins the match. Proves
+    our md5 matches Drive's md5Checksum against the real API."""
+    v1 = b'{"v": 1, "content": "first"}'
+    v2 = b'{"v": 2, "content": "second"}'
+    name = _unique_name("revisions-match")
+
+    up = drive.upload_bytes(data=v1, name=name, mime_type="application/json")
+    file_id = up.get("id")
+    assert file_id
+
+    try:
+        drive.update_bytes(
+            file_id=file_id, data=v2, mime_type="application/json"
+        )
+        items = drive.list_revisions(file_id=file_id)["items"]
+        rev_v1 = items[0]["id"]
+
+        # v1 content matches the oldest revision.
+        m1 = drive.match_revision_bytes(file_id=file_id, data=v1)
+        assert m1["matched"] is True
+        assert m1["revision"]["id"] == rev_v1
+
+        # Content that was never uploaded matches nothing.
+        m_none = drive.match_revision_bytes(
+            file_id=file_id, data=b'{"v": 99, "content": "never uploaded"}'
+        )
+        assert m_none["matched"] is False
+
+        # match + pin pins the matched revision in one call.
+        m_pin = drive.match_revision_bytes(
+            file_id=file_id, data=v1, pin=True
+        )
+        assert m_pin["matched"] is True and m_pin["pinned"] is True
+        after = {
+            r["id"]: r["keep_forever"]
+            for r in drive.list_revisions(file_id=file_id)["items"]
+        }
+        assert after[rev_v1] is True
+    finally:
+        _safe_trash(file_id)
+
+
+@pytest.mark.integration
 def test_update_with_keep_pins_resulting_revision():
     """`keep_revision_forever=True` on update pins the new head revision
     in one call — no separate keep_revision needed."""

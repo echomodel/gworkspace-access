@@ -26,6 +26,7 @@ surface explicitly):
   the file content itself, not on the revision.
 """
 
+import hashlib
 import io
 import os
 from typing import Optional
@@ -252,6 +253,93 @@ def download_revision_file(
         "mime_type": meta.get("mimeType"),
         "revision_id": revision_id,
     }
+
+
+def match_revision_bytes(
+    file_id: str,
+    data: bytes,
+    pin: bool = False,
+    account: Optional[str] = None,
+) -> dict:
+    """Find the revision whose content matches the given bytes, by md5.
+
+    Computes the md5 of ``data`` and scans the file's revisions for one
+    whose ``md5Checksum`` equals it — answering "is this exact content
+    already backed up as a revision, and which one?" without downloading
+    anything. If multiple revisions share the content, the **oldest**
+    match is returned (the earliest time that content existed).
+
+    Args:
+        file_id: The Drive file ID.
+        data: Local content to look for.
+        pin: If a match is found, pin it (``keepForever``) so it survives
+            auto-pruning — match-and-pin in one call.
+        account: Optional account selector — name or email.
+
+    Returns:
+        Dict with ``file_id``, ``md5`` (the local content's checksum),
+        ``matched`` (bool), ``revision`` (the matched revision's ``id``,
+        ``keep_forever``, ``modified_time``, ``size`` — or ``None``), and
+        ``pinned`` (bool). For native Google files (no checksums) adds a
+        ``note`` and returns ``matched: false``.
+    """
+    local_md5 = hashlib.md5(data).hexdigest()
+    items = list_revisions(file_id, account=account)["items"]
+
+    result: dict = {
+        "file_id": file_id,
+        "md5": local_md5,
+        "matched": False,
+        "revision": None,
+        "pinned": False,
+    }
+
+    if items and not any(r.get("md5_checksum") for r in items):
+        result["note"] = (
+            "Revisions carry no md5 checksum (native Google file); "
+            "content-hash match does not apply to native files."
+        )
+        return result
+
+    match = next(
+        (r for r in items if r.get("md5_checksum") == local_md5), None
+    )
+    if not match:
+        return result
+
+    result["matched"] = True
+    result["revision"] = {
+        "id": match.get("id"),
+        "keep_forever": match.get("keep_forever"),
+        "modified_time": match.get("modified_time"),
+        "size": match.get("size"),
+    }
+
+    if pin:
+        if match.get("keep_forever"):
+            result["pinned"] = True  # already pinned, idempotent
+        else:
+            pinned = keep_revision(file_id, match["id"], account=account)
+            result["revision"]["keep_forever"] = pinned.get("keep_forever")
+            result["pinned"] = True
+
+    return result
+
+
+def match_revision_file(
+    file_id: str,
+    local_path: str,
+    pin: bool = False,
+    account: Optional[str] = None,
+) -> dict:
+    """Find the revision matching a local file's content (by md5).
+
+    Disk-reading wrapper over :func:`match_revision_bytes` for the CLI.
+    See that function for the return shape.
+    """
+    with open(local_path, "rb") as f:
+        data = f.read()
+    return match_revision_bytes(file_id, data, pin=pin, account=account)
 
 
 def _set_keep_forever(

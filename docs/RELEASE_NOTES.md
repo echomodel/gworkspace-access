@@ -1,5 +1,29 @@
 # Release Notes
 
+## v0.18.0 — `gwsa drive revisions match` (find/pin the revision by content hash)
+
+Adds `gwsa drive revisions match FILE_ID LOCAL_PATH [--pin]` (issue #39).
+It hashes a local file and finds the revision whose `md5Checksum` equals
+it — answering "is this exact content already backed up, and which
+revision is it?" without the caller hashing and parsing `revisions list`
+JSON by hand. The motivating workflow: using Drive as a version store,
+confirm a local file is synced and pin that exact revision by content
+hash — never by upload timing or "the latest revision."
+
+- **Exit-code contract** (CLI): `0` if a matching revision is found, `1`
+  if not, `2` on error (e.g. a native Google file, which has no
+  checksum). The exit code *is* the "is this content backed up?" check —
+  there's no separate `verify` command; `match`'s exit code covers it.
+- **`--pin`**: pins the matched revision (`keepForever`) in the same
+  call — match-and-pin atomically. Pairs with content written outside
+  the CLI (a save into a Drive-synced folder): confirm the upload landed
+  and pin the exact revision by hash, no reliance on upload timing.
+- **CLI-only**: `match` is intentionally not exposed as an MCP tool. It
+  is a local-file operation; a remote MCP server can't read the agent's
+  filesystem, and shipping the whole file inline just to hash it defeats
+  the "match by hash without moving bytes" purpose. (MCP tool count
+  stays at 45.)
+
 ## v0.17.0 — `gwsa drive revisions` (Drive as a version store)
 
 Adds a `gwsa drive revisions` subcommand group and matching MCP tools
