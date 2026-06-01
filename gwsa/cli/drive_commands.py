@@ -31,11 +31,17 @@ def list_folder(folder_id, max_results):
 @click.argument('local_path')
 @click.option('--folder-id', default=None, help='Destination folder ID.')
 @click.option('--name', default=None, help='Name for file in Drive.')
+@click.option('--keep', is_flag=True,
+              help='Pin the resulting revision (keepForever) so it is '
+                   'never auto-pruned.')
 @require_scopes('drive')
-def upload_file(local_path, folder_id, name):
+def upload_file(local_path, folder_id, name, keep):
     """Upload a file to Google Drive."""
     try:
-        result = drive.upload_file(local_path=local_path, folder_id=folder_id, name=name)
+        result = drive.upload_file(
+            local_path=local_path, folder_id=folder_id, name=name,
+            keep_revision_forever=keep,
+        )
         click.echo(json.dumps(result, indent=2))
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -46,11 +52,17 @@ def upload_file(local_path, folder_id, name):
 @click.argument('file_id')
 @click.argument('local_path')
 @click.option('--name', default=None, help='New name for file in Drive.')
+@click.option('--keep', is_flag=True,
+              help='Pin the resulting revision (keepForever) so this '
+                   'version is never auto-pruned — update + pin in one step.')
 @require_scopes('drive')
-def update_file(file_id, local_path, name):
+def update_file(file_id, local_path, name, keep):
     """Update an existing file in Google Drive."""
     try:
-        result = drive.update_file(file_id=file_id, local_path=local_path, new_name=name)
+        result = drive.update_file(
+            file_id=file_id, local_path=local_path, new_name=name,
+            keep_revision_forever=keep,
+        )
         click.echo(json.dumps(result, indent=2))
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -140,6 +152,114 @@ def create_folder(name, parent_id):
     try:
         result = drive.create_folder(name=name, parent_id=parent_id)
         click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@drive_group.group('revisions')
+def revisions_group():
+    """File revision history — a lightweight version store for uploaded files.
+
+    Every `drive update` mints a new revision. For uploaded (non-native)
+    files you can list history, fetch the content of any past revision to
+    diff, and pin milestones with `keep` so they survive auto-pruning
+    (Drive prunes non-pinned revisions roughly after 100 versions or 30
+    days). Native Google files (Docs/Sheets/Slides) can be listed but
+    their historical content is not exportable.
+    """
+    pass
+
+
+@revisions_group.command('list')
+@click.argument('file_id')
+@require_scopes('drive')
+def revisions_list(file_id):
+    """List a Drive file's revision history.
+
+    FILE_ID: The Drive file ID.
+    """
+    try:
+        result = drive.list_revisions(file_id=file_id)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@revisions_group.command('get')
+@click.argument('file_id')
+@click.argument('revision_id')
+@click.option('--out', 'out_path', default=None,
+              help='Write the revision content to this path. '
+                   'Omit to stream raw bytes to stdout (handy for '
+                   'piping/diffing a past JSON or CSV version).')
+@require_scopes('drive')
+def revisions_get(file_id, revision_id, out_path):
+    """Download a specific revision's content (uploaded files only).
+
+    FILE_ID: The Drive file ID.
+    REVISION_ID: The revision ID (from `revisions list`).
+
+    Native Google files (Docs/Sheets/Slides) have no exportable
+    historical content — this surfaces a clear error for them.
+    """
+    try:
+        if out_path:
+            result = drive.download_revision_file(
+                file_id=file_id, revision_id=revision_id, save_path=out_path
+            )
+            click.echo(json.dumps(result, indent=2))
+        else:
+            fetched = drive.download_revision_bytes(
+                file_id=file_id, revision_id=revision_id
+            )
+            click.get_binary_stream('stdout').write(fetched["data"])
+    except drive.NativeFileRevisionError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@revisions_group.command('keep')
+@click.argument('file_id')
+@click.argument('revision_id')
+@require_scopes('drive')
+def revisions_keep(file_id, revision_id):
+    """Pin a revision (keepForever=true) so it is never auto-pruned.
+
+    FILE_ID: The Drive file ID.
+    REVISION_ID: The revision ID to pin.
+    """
+    try:
+        result = drive.keep_revision(file_id=file_id, revision_id=revision_id)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@revisions_group.command('unkeep')
+@click.argument('file_id')
+@click.argument('revision_id')
+@require_scopes('drive')
+def revisions_unkeep(file_id, revision_id):
+    """Remove the keep-forever pin from a revision (keepForever=false).
+
+    FILE_ID: The Drive file ID.
+    REVISION_ID: The revision ID to unpin.
+
+    Note: Drive only allows unpinning the head (current) revision. Once
+    an older revision is pinned, it cannot be un-pinned via the API.
+    """
+    try:
+        result = drive.unkeep_revision(file_id=file_id, revision_id=revision_id)
+        click.echo(json.dumps(result, indent=2))
+    except drive.KeepForeverUnsetError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)

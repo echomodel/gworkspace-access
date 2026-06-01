@@ -142,6 +142,41 @@ Rules to preserve if you touch this code:
 3. **Preserve Content-IDs verbatim** (with angle brackets). The HTML
    references `cid:XXX`; the part header must read `Content-ID: <XXX>`.
 
+### Drive revisions (version store for uploaded files)
+
+`gwsa/sdk/drive/revisions.py` wraps Drive's `revisions` resource so an
+uploaded file's history can serve as a minimal version store. Rules to
+preserve if you touch this code:
+
+1. **Content download is gated to non-native files.** Native Google
+   files (mimeType `application/vnd.google-apps.*`) can be *listed* but
+   their historical content is not exportable via `alt=media`.
+   `_fetch_revision_bytes` checks the revision's mimeType and raises
+   `NativeFileRevisionError` **before** attempting `get_media`, so the
+   CLI/MCP layers can surface the limitation explicitly instead of
+   failing opaquely. Don't remove that guard.
+2. **Byte variants mirror the download convention.**
+   `download_revision_bytes` (in-memory, for MCP) and
+   `download_revision_file` (disk, for the CLI) parallel
+   `download_bytes` / `download_file`. The MCP tool `drive_get_revision`
+   returns bytes inline via `materialize()` + `inline_payload_to_blocks`;
+   the CLI streams to stdout or `--out PATH`. Never add a server-local
+   path parameter to the MCP tool (see the byte-producing-tools rule
+   above).
+3. **No writable revision name.** The API exposes only `keepForever`
+   (plus `published`, timestamps, checksums, size). Don't invent a
+   revision-name field — a human "commit message" belongs in the file
+   content. `keep_revision` / `unkeep_revision` toggle `keepForever`;
+   that is the only writable knob.
+4. **Unpinning is head-only (verified against the live API).** Drive
+   lets you toggle `keepForever` both ways only on the **head** revision.
+   A pinned **non-head** revision cannot be un-pinned — the API returns
+   `illegalKeepForeverModification`, which `_set_keep_forever` translates
+   into the typed `KeepForeverUnsetError`. Preserve that translation so
+   the CLI/MCP layers can surface the limitation instead of leaking a
+   raw `HttpError`. The integration test asserts this behavior; don't
+   "fix" it to expect symmetric toggling.
+
 ### Calendar event availability (Free/Busy)
 
 Calendar event create/update map an `availability` value (`free`/`busy`)

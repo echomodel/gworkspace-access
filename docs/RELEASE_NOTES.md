@@ -1,5 +1,42 @@
 # Release Notes
 
+## v0.17.0 — `gwsa drive revisions` (Drive as a version store)
+
+Adds a `gwsa drive revisions` subcommand group and matching MCP tools
+that turn an uploaded file's Drive revision history into a lightweight,
+server-side version store.
+
+- `gwsa drive revisions list FILE_ID` — enumerate revisions (id,
+  modified time, keepForever, size, md5, mimeType, last modifier).
+- `gwsa drive revisions get FILE_ID REVISION_ID [--out PATH]` — fetch a
+  past revision's content (streams to stdout, or writes to `--out`).
+- `gwsa drive revisions keep|unkeep FILE_ID REVISION_ID` — pin/unpin a
+  revision (`keepForever`) so milestones survive auto-pruning.
+
+`gwsa drive upload` and `gwsa drive update` also gain a `--keep` flag
+(`keep_revision_forever` on the SDK and MCP tools) that pins the
+resulting revision in the same call via the Drive API's
+`keepRevisionForever`, so a milestone version can be saved and pinned in
+one step rather than update-then-`revisions keep`.
+
+MCP tools: `drive_list_revisions`, `drive_get_revision`,
+`drive_keep_revision`, `drive_unkeep_revision` (45 tools total).
+
+Behavior captured at the point of use: revision **content** is
+retrievable only for uploaded (non-native) files — native Google files
+(Docs/Sheets/Slides) can be listed but their historical content is not
+exportable, and the SDK raises a typed `NativeFileRevisionError` that
+the CLI/MCP layers surface clearly. Drive prunes non-pinned revisions
+(~100 versions / 30 days), `keepForever` is capped at ~200 per file,
+and the API has no writable revision name — a human "commit message"
+must live inside the file content.
+
+One Drive asymmetry is enforced explicitly: `keepForever` can be toggled
+both ways only on the **head (current)** revision. A pinned **non-head**
+revision cannot be un-pinned (`illegalKeepForeverModification`); the SDK
+raises a typed `KeepForeverUnsetError` and the CLI/MCP surface it
+clearly. Pin older milestones deliberately.
+
 ## v0.16.0 — `forward_email` + Content-ID-aware part fidelity
 
 Adds a faithful **forward** capability and closes the inline-image

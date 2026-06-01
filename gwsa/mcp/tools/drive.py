@@ -110,6 +110,7 @@ async def drive_upload(
     source: Source,
     folder_id: Optional[str] = None,
     name: Optional[str] = None,
+    keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upload a file to Google Drive.
@@ -132,11 +133,14 @@ async def drive_upload(
         folder_id: Destination folder ID. Use None for My Drive root.
         name: Name for the file in Drive. Overrides the source's own
             name; falls back to the source name, then the path basename.
+        keep_revision_forever: Pin the resulting initial revision
+            (``keepForever``) so it survives Drive's auto-pruning.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
     Returns:
-        Dict with file ``id``, ``name``, and ``url``.
+        Dict with file ``id``, ``name``, ``url``, and
+        ``keep_revision_forever``.
     """
     try:
         data, src_name, mime_type = resolve_source(source)
@@ -153,6 +157,7 @@ async def drive_upload(
             name=final_name,
             mime_type=mime_type,
             folder_id=folder_id,
+            keep_revision_forever=keep_revision_forever,
             account=account,
         )
     except InlineSourceTooLargeError as e:
@@ -178,6 +183,7 @@ async def drive_update(
     file_id: str,
     source: Source,
     name: Optional[str] = None,
+    keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Update an existing Drive file's content and optionally rename it.
@@ -191,11 +197,16 @@ async def drive_update(
         file_id: Drive file ID to update.
         source: Where the new content comes from (inline or path).
         name: Optional new name for the file.
+        keep_revision_forever: Pin the resulting new head revision
+            (``keepForever``) in the same call, so this version survives
+            Drive's auto-pruning — update + pin atomically, no separate
+            ``drive_keep_revision`` call needed.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
     Returns:
-        Dict with updated file ``id``, ``name``, and ``url``.
+        Dict with updated file ``id``, ``name``, ``url``, and
+        ``keep_revision_forever``.
     """
     try:
         data, _src_name, mime_type = resolve_source(source)
@@ -204,6 +215,7 @@ async def drive_update(
             data=data,
             mime_type=mime_type,
             new_name=name,
+            keep_revision_forever=keep_revision_forever,
             account=account,
         )
     except InlineSourceTooLargeError as e:
@@ -512,4 +524,169 @@ async def drive_search_folders(
         return {"folders": results, "count": len(results)}
     except Exception as e:
         logger.error(f"Error searching folders: {e}")
+        return {"error": str(e)}
+
+
+async def drive_list_revisions(
+    file_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """List a Drive file's revision history.
+
+    Every ``drive_update`` mints a new revision. For an uploaded
+    (non-native) file the revisions act as a lightweight version store:
+    enumerate history here, fetch a past version's content with
+    ``drive_get_revision`` to diff, and pin milestones with
+    ``drive_keep_revision`` so they survive auto-pruning (Drive prunes
+    non-pinned revisions roughly after 100 versions or 30 days). Native
+    Google files (Docs/Sheets/Slides) can be listed but their historical
+    content is not exportable.
+
+    Args:
+        file_id: Drive file ID.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``file_id`` and ``items`` — each revision carries
+        ``id``, ``modified_time``, ``keep_forever``, ``size``,
+        ``md5_checksum``, ``mime_type``, ``original_filename``, and
+        ``last_modifying_user``. On error returns ``{"error": str}``.
+    """
+    try:
+        return drive.list_revisions(file_id=file_id, account=account)
+    except Exception as e:
+        logger.error(f"Error listing revisions: {e}")
+        return {"error": str(e)}
+
+
+async def drive_get_revision(
+    file_id: str,
+    revision_id: str,
+    max_size_bytes: Optional[int] = None,
+    account: Optional[str] = None,
+) -> list[ContentBlock] | dict[str, Any]:
+    """Fetch a specific revision's content inline as an MCP EmbeddedResource.
+
+    Returns ``[TextContent summary, EmbeddedResource]`` with the bytes
+    base64-encoded, so the agent receives a past version directly under
+    any transport — ready to diff against the current file.
+
+    Content is retrievable only for **uploaded (non-native) files**.
+    For a native Google file (Docs/Sheets/Slides) this returns an error
+    envelope with ``native_file: true`` — the API exposes such revisions'
+    metadata (via ``drive_list_revisions``) but not their historical
+    content.
+
+    Args:
+        file_id: Drive file ID.
+        revision_id: Revision ID (from ``drive_list_revisions``).
+        max_size_bytes: Override the default inline size cap on raw bytes
+            (default 60,000 — sized so base64 + envelope fits inside
+            Claude Code's tool-response budget). Larger revisions return
+            an error envelope; use ``drive_get_revision`` with ``--out``
+            via the CLI, or fetch in another way.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+    """
+    try:
+        fetched = drive.download_revision_bytes(
+            file_id=file_id, revision_id=revision_id, account=account
+        )
+        result = materialize(
+            fetched["data"],
+            name=fetched["name"],
+            mime_type=fetched["mime_type"],
+            destination=InlineDestination(max_size_bytes=max_size_bytes),
+            account=account,
+        )
+        assert isinstance(result, InlinePayload)
+        return inline_payload_to_blocks(result)
+    except drive.NativeFileRevisionError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "native_file": True,
+            "mime_type": e.mime_type,
+        }
+    except InlineTooLargeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "hint": (
+                "Revision is too large to return inline. Fetch it via the "
+                "CLI (`gwsa drive revisions get <file> <rev> --out PATH`)."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching revision: {e}")
+        return {"error": str(e)}
+
+
+async def drive_keep_revision(
+    file_id: str,
+    revision_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Pin a revision (``keepForever=true``) so it is never auto-pruned.
+
+    Use this to protect a milestone version of an uploaded file from
+    Drive's 100-version / 30-day prune. Drive caps pinned revisions at
+    ~200 per file.
+
+    Args:
+        file_id: Drive file ID.
+        revision_id: Revision ID to pin (from ``drive_list_revisions``).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        The updated revision (normalized shape) with ``keep_forever``
+        true. On error returns ``{"error": str}``.
+    """
+    try:
+        return drive.keep_revision(
+            file_id=file_id, revision_id=revision_id, account=account
+        )
+    except Exception as e:
+        logger.error(f"Error pinning revision: {e}")
+        return {"error": str(e)}
+
+
+async def drive_unkeep_revision(
+    file_id: str,
+    revision_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Remove the keep-forever pin from a revision (``keepForever=false``).
+
+    Drive only allows unpinning the **head (current)** revision. Once a
+    non-head (older) revision is pinned, the API refuses to unpin it —
+    this returns an envelope with ``keep_forever_locked: true`` rather
+    than raising. Pin older milestones deliberately.
+
+    Args:
+        file_id: Drive file ID.
+        revision_id: Revision ID to unpin (from ``drive_list_revisions``).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        The updated revision (normalized shape) with ``keep_forever``
+        false. On error returns ``{"error": str}``.
+    """
+    try:
+        return drive.unkeep_revision(
+            file_id=file_id, revision_id=revision_id, account=account
+        )
+    except drive.KeepForeverUnsetError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "keep_forever_locked": True,
+        }
+    except Exception as e:
+        logger.error(f"Error unpinning revision: {e}")
         return {"error": str(e)}

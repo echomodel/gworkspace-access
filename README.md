@@ -248,9 +248,62 @@ existing event.
 > [Rotating tokens](#rotating-tokens-when-refresh-fails)) so your
 > stored token carries the Calendar scopes.
 
+### Drive revisions as a version store
+
+`gwsa drive` can use an uploaded file's Drive **revision history** as a
+lightweight, server-side version store — list prior versions, fetch the
+content of any past version to diff, and pin milestones so they are
+never auto-pruned:
+
+```bash
+gwsa drive revisions list FILE_ID
+gwsa drive revisions get FILE_ID REVISION_ID            # streams content to stdout
+gwsa drive revisions get FILE_ID REVISION_ID --out v1.json
+gwsa drive revisions keep FILE_ID REVISION_ID           # pin (keepForever)
+gwsa drive revisions unkeep FILE_ID REVISION_ID         # unpin
+```
+
+A new file's revisions only stack when you **update the same file by id**
+— `drive upload` always creates a *new* file. So the version-store loop
+is: `upload` once (keep the returned `id`), then `update <id>` for each
+new version. Pin a milestone in the same step with `--keep`:
+
+```bash
+gwsa drive upload data.json                     # → {"id": "FILE_ID", ...}  (v1)
+gwsa drive update FILE_ID data.json             # v2
+gwsa drive update FILE_ID data.json --keep      # v3, pinned in one call
+gwsa drive upload data.json --keep              # pin the initial revision too
+```
+
+`--keep` sets `keepForever` on the resulting revision atomically (via the
+Drive API's `keepRevisionForever`), so you don't need a separate
+`revisions keep` call.
+
+Behavior to know:
+
+- **Content is retrievable only for uploaded (non-native) files** —
+  JSON, CSV, DOCX, PDF, images, etc. **Native Google files**
+  (Docs/Sheets/Slides) can be *listed* but their historical content is
+  not exportable; `revisions get` surfaces a clear error for them.
+- **Auto-pruning.** Drive prunes non-pinned revisions roughly after 100
+  versions or 30 days. `revisions keep` sets `keepForever` so a milestone
+  persists. Drive caps pinned revisions at ~200 per file.
+- **Pinning an old revision is one-way.** Drive only lets you toggle
+  `keepForever` both ways on the **head (current)** revision. Once a
+  **non-head (older)** revision is pinned, the API refuses to un-pin it
+  — `revisions unkeep` returns a clear error in that case. Pin older
+  milestones deliberately.
+- **No revision name.** The API has no writable name/description on a
+  revision — only the pin flag, timestamps, checksums, and size. Treat
+  any human "commit message" as something to put *inside* the file
+  content, not on the revision.
+
+The same operations are exposed as MCP tools: `drive_list_revisions`,
+`drive_get_revision`, `drive_keep_revision`, `drive_unkeep_revision`.
+
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 41 tools across mail,
+`gwsa-mcp` is a stdio MCP server exposing 45 tools across mail,
 docs, drive, chat, calendar, and account discovery. (Sheets is
 CLI-only for now.) Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,chat,calendar}`.
