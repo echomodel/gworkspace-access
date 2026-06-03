@@ -96,3 +96,48 @@ def test_list_email_labels_empty_response():
         assert result == []
     finally:
         current_user.reset(tok)
+
+
+def test_reply_email_tool_sociable():
+    from gwsa.mcp.tools.mail import reply_email
+    from tests.unit.test_mail_forward import FakeGmailService, _raw_of, _rich_source, _decode_sent, _find
+    
+    tok = _set_user_with_account()
+    service = FakeGmailService(_raw_of(_rich_source()))
+    original_view = {
+        "threadId": "thread-1",
+        "messageId": "<orig-123@example.com>",
+        "subject": "Quarterly report",
+        "from": "Alice <alice@example.com>",
+        "date": "Mon, 01 Jan 2026 10:00:00 +0000",
+        "body": {
+            "text": "Plain body text.",
+            "html": '<p>HTML body</p><img src="cid:logo123">',
+        },
+    }
+    
+    try:
+        with patch("gwsa.sdk.mail.send.get_gmail_service", return_value=service), \
+             patch("gwsa.sdk.mail.send.read_message", return_value=original_view):
+            
+            result = asyncio.run(
+                reply_email(
+                    message_id="orig-id",
+                    body="Plain reply text.",
+                    html_body="<h1>HTML Reply</h1>",
+                    as_draft=False,
+                )
+            )
+            
+        assert result["success"] is True
+        assert result["is_draft"] is False
+        assert result["id"] == "sent-1"
+        
+        sent = _decode_sent(service.sent[0])
+        html = _find(sent, "text/html")
+        assert html is not None
+        assert "<h1>HTML Reply</h1>" in html.get_content()
+    finally:
+        current_user.reset(tok)
+
+

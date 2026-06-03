@@ -283,3 +283,36 @@ def test_reply_rebinds_inline_cid_parts_in_quoted_html():
     # threading headers are set
     assert sent["In-Reply-To"] == "<orig-123@example.com>"
     assert sent["Subject"] == "Re: Quarterly report"
+
+
+def test_reply_with_custom_html_body_preserves_html():
+    service = FakeGmailService(_raw_of(_rich_source()))
+    original_view = {
+        "threadId": "thread-1",
+        "messageId": "<orig-123@example.com>",
+        "subject": "Quarterly report",
+        "from": "Alice <alice@example.com>",
+        "date": "Mon, 01 Jan 2026 10:00:00 +0000",
+        "body": {
+            "text": "Plain body text.",
+            "html": '<p>HTML body</p><img src="cid:logo123">',
+        },
+    }
+    with patch(
+        "gwsa.sdk.mail.send.get_gmail_service", return_value=service
+    ), patch(
+        "gwsa.sdk.mail.send.read_message", return_value=original_view
+    ):
+        reply_message(
+            "orig-id",
+            body="Plain reply text.",
+            html_body="<h1>Custom HTML Reply</h1>",
+        )
+
+    sent = _decode_sent(service.sent[0])
+
+    html = _find(sent, "text/html")
+    assert html is not None
+    assert "<h1>Custom HTML Reply</h1>" in html.get_content()
+    assert "blockquote" in html.get_content()
+

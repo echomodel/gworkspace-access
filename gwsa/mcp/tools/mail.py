@@ -240,6 +240,7 @@ async def reply_email(
     body: str,
     include_quote: bool = True,
     as_draft: bool = False,
+    html_body: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Reply to a Gmail message, properly threaded with quoted content.
@@ -249,6 +250,8 @@ async def reply_email(
         body: Plain text reply body.
         include_quote: Include quoted original message (default True).
         as_draft: Create a draft instead of sending (default False).
+        html_body: Optional HTML body of the reply. If include_quote is True,
+            this HTML content is prepended above the quoted original.
         account: Optional account selector (name or email). Omit to
             reply as the user's default account.
 
@@ -262,6 +265,7 @@ async def reply_email(
             body=body,
             include_quote=include_quote,
             as_draft=as_draft,
+            html_body=html_body,
             account=account,
         )
         return {

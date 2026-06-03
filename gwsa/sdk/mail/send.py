@@ -14,13 +14,18 @@ from .mime import assemble_message, fetch_raw_message, split_parts
 logger = logging.getLogger(__name__)
 
 
-def _format_quoted_reply(original: Dict[str, Any], new_body: str) -> Tuple[str, str]:
+def _format_quoted_reply(
+    original: Dict[str, Any],
+    new_body: str,
+    new_html_body: Optional[str] = None,
+) -> Tuple[str, str]:
     """
     Format a reply with quoted original content.
 
     Args:
         original: The original message dict from read_message()
         new_body: The new reply text (plain text)
+        new_html_body: Optional custom HTML body of the reply.
 
     Returns:
         Tuple of (plain_text_body, html_body)
@@ -35,7 +40,10 @@ def _format_quoted_reply(original: Dict[str, Any], new_body: str) -> Tuple[str, 
     plain = f"{new_body}\n\nOn {date}, {sender} wrote:\n{quoted_lines}"
 
     # HTML version
-    new_body_html = html.escape(new_body).replace("\n", "<br>")
+    if new_html_body is not None:
+        new_body_html = new_html_body
+    else:
+        new_body_html = html.escape(new_body).replace("\n", "<br>")
 
     if original_html:
         quoted_content = original_html
@@ -186,6 +194,7 @@ def reply_message(
     body: str,
     include_quote: bool = True,
     as_draft: bool = False,
+    html_body: Optional[str] = None,
     account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -198,6 +207,8 @@ def reply_message(
         body: Plain text body of the reply
         include_quote: Whether to include quoted original (default True)
         as_draft: If True, create a draft instead of sending (default False)
+        html_body: Optional HTML body of the reply. If include_quote is True,
+            this HTML content is prepended above the quoted original.
         account: Optional account selector — name or email. Omit to
             reply as the user's default account.
 
@@ -225,7 +236,7 @@ def reply_message(
 
     # Build body with or without quoted content
     if include_quote:
-        plain_body, html_body = _format_quoted_reply(original, body)
+        plain_body, html_body = _format_quoted_reply(original, body, html_body)
     else:
         plain_body = body
         html_body = None
