@@ -46,61 +46,77 @@ functions, no decorators — name becomes tool name, docstring becomes
 schema description, type hints drive parameter schemas. mcp-app
 discovers them automatically.
 
-### Byte-producing tools: control plane carries references, data plane is out-of-band
+### Drive transfers: transport-aware, no gwsa HTTP routes
 
-Tools that produce binary output (email attachments, Drive downloads,
-generated reports) must work under any MCP transport — including HTTP,
-where the agent and the server do not share a filesystem. A parameter
-like `save_path: str` is therefore an antipattern: under HTTP transport
-the file lands on the server container and is unreachable from the
-agent.
+Large file transfer has to work under both transports: **stdio** (server
+runs on the agent's machine, shared filesystem) and **HTTP** (hosted;
+agent and server share nothing). The design uses **no gwsa HTTP routes
+and no custom auth** — each direction picks the right mechanism from
+context, and the one transport signal is *whether the server can see the
+path the caller named*.
 
-The convention in this repo is the **`destination` parameter** defined
-in `gwsa.sdk.destinations`:
+**Transport detection.** A local path the server can `os.path.isfile`
+(upload) or whose parent dir it can `os.path.isdir` (download `save_to`)
+means it shares the agent's filesystem → stdio. A path it can't see
+means a remote (HTTP) caller. No request object, no base-URL capture, no
+middleware — just filesystem visibility.
+
+**Upload / update** (`drive_upload`, `drive_update`):
+
+- `content_base64` → small inline upload, any transport (decoded by
+  `gwsa.sdk.sources.decode_inline_upload`, raw-byte cap ~700KB).
+- `local_path` the server can read → upload directly, any size, no
+  base64 (stdio).
+- `local_path` the server can't read → a **direct-to-Google resumable
+  upload session URL** (`begin_resumable_upload` / `begin_resumable_update`).
+  The caller PUTs the bytes straight to Google with no auth header (the
+  session URI is self-authorizing — verified live), so the bytes never
+  pass through this server and there is no size cap.
+
+**Download** (`drive_download`):
+
+- small (≤ inline cap) → returned **inline** as an `EmbeddedResource`
+  (works on every client, including browser/mobile connectors).
+- `save_to` into a directory the server can see → streamed straight to
+  disk, any size (stdio), via `iter_download_chunks` / `download_file`.
+- large + remote → the file's **Drive download link**
+  (`webContentLink`). The file is already in the user's Drive and their
+  browser is signed in, so opening the link downloads it — no server
+  proxy, no token. (Drive has no signed download URL, so proxying is the
+  only alternative, and it isn't worth a custom authed route for the
+  channels we support.)
+
+**Rules to preserve:**
+
+1. **Never add a gwsa HTTP route or custom auth for this.** Upload goes
+   direct to Google (session URI); download large/remote returns a Drive
+   link; small goes inline; stdio uses local paths. If a future need
+   genuinely requires proxying bytes through the server to a
+   credential-less client, that's a deliberate, separately-justified
+   addition — not the default.
+2. **Detect transport by filesystem visibility, not by config or a
+   request object.** Keeps the tools dependency-free and correct under
+   both transports.
+3. **The SDK stays transport-agnostic.** `*_bytes` (in-memory) and
+   `*_file` (disk) variants plus `begin_resumable_*` (session URI) live
+   in `gwsa.sdk.drive`; the MCP tool layer chooses among them.
+
+### Email attachments: the `destination` parameter
+
+`download_email_attachment` still uses the **`destination` parameter**
+(`gwsa.sdk.destinations`) because an attachment's natural landing spot is
+a real choice:
 
 - `InlineDestination` — return the bytes as a content block
-  (`EmbeddedResource` + `TextContent` summary). Subject to a size cap
-  (default 100KB) because tool responses have practical client limits.
-- `DriveDestination` — upload to the user's Google Drive and return a
-  file id + URL. The user already has tools to retrieve files from
-  Drive, so the data plane is out-of-band of the MCP response.
+  (`EmbeddedResource` + `TextContent` summary), subject to the inline
+  size cap.
+- `DriveDestination` — upload the attachment to the user's Drive and
+  return a file id + URL.
 
-The `materialize()` helper handles the discrimination. Any new tool
-that produces bytes should accept a `Destination` parameter and return
-either `list[ContentBlock]` (inline) or a plain dict (Drive). Never
-introduce a server-local-path parameter on a byte-producing tool.
-
-The `gwsa.sdk` layer stays transport-agnostic: byte-producing SDK
-helpers expose `*_bytes` and `*_file` variants. The CLI uses
-`download_file(save_path)`-style helpers because the CLI is stdio-only.
-The MCP layer always uses the `*_bytes` variants and the destination
-plumbing.
-
-### Byte-consuming tools: the `source` parameter is the mirror image
-
-The same filesystem-sharing problem applies in reverse to tools that
-*accept* binary input (Drive upload, Drive update). A `local_path: str`
-parameter only works under stdio, where the server runs on the agent's
-machine. Under HTTP the server cannot read the agent's files, so a path
-the agent names fails with `FileNotFoundError` even though the file
-exists on the agent side.
-
-The convention is the **`source` parameter** defined in
-`gwsa.sdk.sources`:
-
-- `InlineSource` — the bytes travel in-band as base64
-  (`data_base64` + optional `name`/`mime_type`). Works under any
-  transport. Subject to a raw-byte cap (default 700KB) because
-  tool-call arguments have a practical client ceiling.
-- `LocalPathSource` — read from the server's filesystem. Correct only
-  under stdio.
-
-The `resolve_source()` helper returns `(data, name, mime_type)`
-regardless of kind. Any new tool that consumes bytes should accept a
-`Source` parameter and pass the resolved bytes to a `*_bytes` SDK
-helper. Never introduce a bare server-local-path parameter on a
-byte-consuming tool — for the same reason `save_path` is banned on the
-producing side.
+`materialize()` handles the discrimination. This is distinct from the
+Drive-transfer model above: there the "destination" is implicit (the
+caller already has the file or wants it from Drive); here the caller is
+genuinely choosing where a fetched attachment should land.
 
 ### Reply and forward are client-side MIME reconstructions
 

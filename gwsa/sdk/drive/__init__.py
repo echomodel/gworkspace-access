@@ -8,8 +8,20 @@ from .folders import (
     search_folders,
     AmbiguousFolderError,
 )
-from .upload import upload_file, update_file, upload_bytes, update_bytes
-from .download import download_file, download_bytes
+from .upload import (
+    upload_file,
+    update_file,
+    upload_bytes,
+    update_bytes,
+    begin_resumable_upload,
+    begin_resumable_update,
+)
+from .download import (
+    download_file,
+    download_bytes,
+    get_download_metadata,
+    iter_download_chunks,
+)
 from .files import move_file, delete_file, get_metadata
 from .search import search_drive
 from .revisions import (
@@ -35,8 +47,12 @@ __all__ = [
     "update_file",
     "upload_bytes",
     "update_bytes",
+    "begin_resumable_upload",
+    "begin_resumable_update",
     "download_file",
     "download_bytes",
+    "get_download_metadata",
+    "iter_download_chunks",
     "move_file",
     "delete_file",
     "get_metadata",

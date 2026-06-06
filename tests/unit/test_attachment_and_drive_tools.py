@@ -281,12 +281,14 @@ def test_attachment_default_destination_is_drive():
         current_user.reset(tok)
 
 
-# --- drive_download (inline-only) ------------------------------------
+# --- drive_download (auto-select: inline small / Drive link large / save_to) ---
 
 
-def test_drive_download_returns_content_blocks():
+def test_drive_download_small_returns_inline_blocks():
+    """A small file (size ≤ cap) comes back inline as content blocks."""
     tok = _set_user_with_account()
     try:
+        meta = {"name": "memo.pdf", "mime_type": "application/pdf", "size": "10"}
         sdk_response = {
             "data": b"file bytes",
             "name": "memo.pdf",
@@ -294,38 +296,54 @@ def test_drive_download_returns_content_blocks():
             "size_bytes": 10,
         }
         with patch(
-            "gwsa.sdk.drive.download_bytes", return_value=sdk_response
-        ):
+            "gwsa.sdk.drive.get_download_metadata", return_value=meta
+        ), patch("gwsa.sdk.drive.download_bytes", return_value=sdk_response):
             blocks = asyncio.run(drive_download(file_id="drive-file-1"))
         assert isinstance(blocks, list)
         assert len(blocks) == 2
         summary, embedded = blocks
         assert isinstance(summary, TextContent)
-        summary_data = json.loads(summary.text)
-        assert summary_data["name"] == "memo.pdf"
+        assert json.loads(summary.text)["name"] == "memo.pdf"
         assert isinstance(embedded, EmbeddedResource)
         assert base64.b64decode(embedded.resource.blob) == b"file bytes"
     finally:
         current_user.reset(tok)
 
 
-def test_drive_download_too_large_returns_error_envelope():
+def test_drive_download_large_returns_drive_link():
+    """A large file returns the Drive download link (no proxy, no token)."""
     tok = _set_user_with_account()
     try:
-        oversize = b"x" * (DEFAULT_INLINE_SIZE_CAP_BYTES + 1)
-        sdk_response = {
-            "data": oversize,
+        meta = {
             "name": "huge.bin",
             "mime_type": "application/octet-stream",
-            "size_bytes": len(oversize),
+            "size": str(DEFAULT_INLINE_SIZE_CAP_BYTES + 1),
+            "web_content_link": "https://drive.google.com/uc?id=X&export=download",
+            "web_view_link": "https://drive.google.com/file/d/X/view",
         }
-        with patch(
-            "gwsa.sdk.drive.download_bytes", return_value=sdk_response
-        ):
+        with patch("gwsa.sdk.drive.get_download_metadata", return_value=meta):
             result = asyncio.run(drive_download(file_id="drive-file-1"))
-        assert isinstance(result, dict)
-        assert result["success"] is False
-        assert "hint" in result
+        assert result["mode"] == "link"
+        assert result["url"] == "https://drive.google.com/uc?id=X&export=download"
+        assert result["name"] == "huge.bin"
+    finally:
+        current_user.reset(tok)
+
+
+def test_drive_download_save_to_writes_locally(tmp_path):
+    """save_to with an existing local dir (stdio) writes the file to disk."""
+    tok = _set_user_with_account()
+    try:
+        dest = str(tmp_path / "out.bin")
+        saved = {"file_path": dest, "size": 1234, "name": "out.bin"}
+        with patch("gwsa.sdk.drive.download_file", return_value=saved) as dl:
+            result = asyncio.run(
+                drive_download(file_id="drive-file-1", save_to=dest)
+            )
+        dl.assert_called_once()
+        assert result["mode"] == "saved"
+        assert result["path"] == dest
+        assert result["size_bytes"] == 1234
     finally:
         current_user.reset(tok)
 

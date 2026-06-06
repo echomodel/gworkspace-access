@@ -1,5 +1,33 @@
 # Release Notes
 
+## v0.20.0 — large-file Drive upload & download (transport-aware)
+
+`drive_upload`, `drive_update`, and `drive_download` now move files of
+any size, adapting to how the server is reached — without base64 size
+limits and without any new HTTP endpoints or auth.
+
+- **Upload / update**: pass `content_base64` for a small inline upload
+  (any transport), or `local_path` for a file. On a local (stdio) server
+  the file is read and uploaded directly, any size. On a hosted (HTTP)
+  server the tool returns a **direct-to-Google resumable upload URL** —
+  you PUT the bytes straight to Google, no size cap, bytes never pass
+  through the server.
+- **Download**: small files come back inline; pass `save_to` on a local
+  server to stream a file of any size straight to disk; a large file on a
+  hosted server returns the file's **Drive download link** (open it in a
+  browser signed in to that account). No server proxy, no token.
+- Transport is detected automatically by whether the server can see the
+  path you named — no configuration.
+
+**Breaking changes:**
+
+- `drive_upload` / `drive_update` no longer take the `source` discriminated
+  union. Use `content_base64=` (inline) or `local_path=` instead.
+- `drive_download` no longer takes `max_size_bytes`; size handling is
+  automatic (inline / `save_to` / Drive link).
+
+(Pre-1.0: breaking changes ride a minor bump.)
+
 ## v0.18.1 — fix `gwsa mail read`
 
 Fix `gwsa mail read FILE_ID`, which raised `AttributeError` because it

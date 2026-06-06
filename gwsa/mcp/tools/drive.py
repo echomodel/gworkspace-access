@@ -14,6 +14,9 @@ and emails.
 from __future__ import annotations
 
 import logging
+import mimetypes
+import os
+import shlex
 from typing import Any, Optional
 
 from gwsa.sdk import drive
@@ -27,9 +30,7 @@ from gwsa.sdk.destinations import (
 from gwsa.sdk.sources import (
     InlineSourceTooLargeError,
     InvalidInlineSourceError,
-    LocalPathSource,
-    Source,
-    resolve_source,
+    decode_inline_upload,
 )
 from gwsa.mcp.content import ContentBlock, inline_payload_to_blocks
 
@@ -106,73 +107,115 @@ async def drive_create_folder(
         return {"error": str(e)}
 
 
+def _upload_session_response(
+    session_uri: str, name: str, local_path: Optional[str] = None
+) -> dict[str, Any]:
+    """Shape the out-of-band (direct-to-Google) upload response."""
+    target = shlex.quote(local_path) if local_path else "<your-file>"
+    return {
+        "mode": "out_of_band",
+        "upload_url": session_uri,
+        "name": name,
+        "run": f"curl -fL -T {target} {shlex.quote(session_uri)}",
+        "note": (
+            "PUT the file bytes to upload_url with NO auth header (the URL "
+            "is self-authorizing) — the bytes go straight to Google, any "
+            "size. On a shell-less client this large-upload path isn't "
+            "available; use a small inline upload (content_base64) instead."
+        ),
+    }
+
+
 async def drive_upload(
-    source: Source,
-    folder_id: Optional[str] = None,
     name: Optional[str] = None,
+    local_path: Optional[str] = None,
+    content_base64: Optional[str] = None,
+    folder_id: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Upload a file to Google Drive.
+    """Upload a new file to Google Drive. Provide the content one of two ways.
 
-    The ``source`` parameter is a discriminated union; pass one of:
+    You pick based on what you have — never on how the bytes travel:
 
-    - ``{"kind": "inline", "data_base64": "<b64>", "name": "<name>",
-      "mime_type": "<type>"}`` — carry the bytes inline. Works under
-      ANY transport (stdio or HTTP) because the content travels in the
-      request body. Recommended default; required when the MCP server
-      and the agent do not share a filesystem (hosted/HTTP). Subject to
-      a size cap (see ``max_size_bytes`` on the inline source).
-    - ``{"kind": "path", "path": "/abs/path"}`` — read the bytes from a
-      path on the SERVER's filesystem. Only correct under stdio
-      transport, where the server runs on the agent's machine. Under
-      HTTP this fails because the server can't see the agent's files.
+    - **You have a local file** → pass ``local_path``. On a local (stdio)
+      server it's read and uploaded directly — **any size, no base64**.
+      On a remote (HTTP) server the tool returns a self-authorizing
+      upload URL and a ready-to-run ``curl -T`` command for your
+      ``local_path``; the bytes go **straight to Google**, no size limit.
+    - **You have the bytes in hand** (small) → pass ``content_base64``.
+      Works on any transport; subject to the inline size cap.
+
+    On a remote server you may omit both to get a bare upload URL to PUT
+    your bytes to. ``name`` defaults to the ``local_path`` basename.
 
     Args:
-        source: Where the bytes come from. See above.
-        folder_id: Destination folder ID. Use None for My Drive root.
-        name: Name for the file in Drive. Overrides the source's own
-            name; falls back to the source name, then the path basename.
-        keep_revision_forever: Pin the resulting initial revision
-            (``keepForever``) so it survives Drive's auto-pruning.
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
+        name: File name in Drive. Defaults to the ``local_path`` basename;
+            required for an inline or URL upload that has no path.
+        local_path: Path to a local file (see above).
+        content_base64: Base64-encoded content for a small inline upload.
+        folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
+        keep_revision_forever: Pin the initial revision (``keepForever``).
+            Applies to the direct stdio/inline uploads; the out-of-band
+            URL path does not set it.
+        account: Optional account selector (name or email).
 
     Returns:
-        Dict with file ``id``, ``name``, ``url``, and
-        ``keep_revision_forever``.
+        Completed upload → dict with file ``id``, ``name``, ``url``,
+        ``keep_revision_forever``. Out-of-band path → dict with
+        ``mode="out_of_band"``, ``upload_url`` and a ``run`` command.
     """
     try:
-        data, src_name, mime_type = resolve_source(source)
-        final_name = name or src_name
-        if not final_name:
-            return {
-                "error": (
-                    "No file name available. Provide 'name', or a "
-                    "'name' on the inline source."
+        if content_base64 is not None:
+            data, src_name, mime_type = decode_inline_upload(content_base64, name=name)
+            final_name = name or src_name
+            if not final_name:
+                return {"error": "Provide 'name' for an inline upload."}
+            return drive.upload_bytes(
+                data=data, name=final_name, mime_type=mime_type,
+                folder_id=folder_id,
+                keep_revision_forever=keep_revision_forever, account=account,
+            )
+
+        if local_path is not None:
+            final_name = name or os.path.basename(local_path)
+            # If the server can see the file, it shares the agent's
+            # filesystem (stdio) → read + upload directly, any size.
+            if os.path.isfile(local_path):
+                return drive.upload_file(
+                    local_path=local_path, folder_id=folder_id, name=name,
+                    keep_revision_forever=keep_revision_forever, account=account,
                 )
+            # The server can't see the file → remote (HTTP). Hand back a
+            # direct-to-Google resumable session URL to PUT the bytes to.
+            mime_type, _ = mimetypes.guess_type(final_name)
+            session_uri = drive.begin_resumable_upload(
+                name=final_name,
+                mime_type=mime_type or "application/octet-stream",
+                folder_id=folder_id, account=account,
+            )
+            return _upload_session_response(session_uri, final_name, local_path)
+
+        # Neither inline nor a path → start an upload session to PUT to.
+        if not name:
+            return {
+                "error": "Provide content_base64 (small), local_path, or a "
+                         "name to start an upload session."
             }
-        return drive.upload_bytes(
-            data=data,
-            name=final_name,
-            mime_type=mime_type,
-            folder_id=folder_id,
-            keep_revision_forever=keep_revision_forever,
-            account=account,
+        session_uri = drive.begin_resumable_upload(
+            name=name, folder_id=folder_id, account=account,
         )
+        return _upload_session_response(session_uri, name)
     except InlineSourceTooLargeError as e:
         return {
-            "success": False,
-            "error": str(e),
-            "size_bytes": e.size_bytes,
-            "cap_bytes": e.cap_bytes,
+            "success": False, "error": str(e),
+            "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
             "hint": (
-                "Upload via a server-readable path under stdio, or raise "
-                "max_size_bytes on the inline source if the client allows "
-                "larger request bodies."
+                "Too large to inline. Pass local_path instead — on a remote "
+                "server you'll get a direct-to-Google upload URL."
             ),
         }
-    except (InvalidInlineSourceError, FileNotFoundError) as e:
+    except InvalidInlineSourceError as e:
         return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
@@ -181,56 +224,70 @@ async def drive_upload(
 
 async def drive_update(
     file_id: str,
-    source: Source,
+    local_path: Optional[str] = None,
+    content_base64: Optional[str] = None,
     name: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Update an existing Drive file's content and optionally rename it.
+    """Replace an existing Drive file's content. Same input modes as drive_upload.
 
-    The ``source`` parameter is the same discriminated union as
-    ``drive_upload`` — pass an inline source (works under any transport)
-    or a server-local path source (stdio only). See ``drive_upload`` for
-    the full shape.
+    - **``local_path``** → stdio: read + update directly (any size);
+      HTTP: returns a self-authorizing resumable *update* URL + ``curl
+      -T`` command (bytes go straight to Google).
+    - **``content_base64``** → small inline update, any transport.
+
+    Revisions stack on ``file_id`` either way.
 
     Args:
         file_id: Drive file ID to update.
-        source: Where the new content comes from (inline or path).
+        local_path: Path to a local file with the new content.
+        content_base64: Base64 content for a small inline update.
         name: Optional new name for the file.
-        keep_revision_forever: Pin the resulting new head revision
-            (``keepForever``) in the same call, so this version survives
-            Drive's auto-pruning — update + pin atomically, no separate
-            ``drive_keep_revision`` call needed.
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
+        keep_revision_forever: Pin the resulting head revision
+            (``keepForever``) — applies to the direct stdio/inline path;
+            the out-of-band URL path does not set it.
+        account: Optional account selector (name or email).
 
     Returns:
-        Dict with updated file ``id``, ``name``, ``url``, and
-        ``keep_revision_forever``.
+        Completed update → dict with file ``id``, ``name``, ``url``.
+        Out-of-band path → dict with ``mode="out_of_band"`` + ``run``.
     """
     try:
-        data, _src_name, mime_type = resolve_source(source)
-        return drive.update_bytes(
-            file_id=file_id,
-            data=data,
-            mime_type=mime_type,
-            new_name=name,
-            keep_revision_forever=keep_revision_forever,
-            account=account,
+        if content_base64 is not None:
+            data, _n, mime_type = decode_inline_upload(content_base64, name=name)
+            return drive.update_bytes(
+                file_id=file_id, data=data, mime_type=mime_type, new_name=name,
+                keep_revision_forever=keep_revision_forever, account=account,
+            )
+
+        if local_path is not None:
+            # Server can see the file → stdio → update directly, any size.
+            if os.path.isfile(local_path):
+                return drive.update_file(
+                    file_id=file_id, local_path=local_path, new_name=name,
+                    keep_revision_forever=keep_revision_forever, account=account,
+                )
+            # Can't see it → remote → resumable update session URL.
+            mime_type, _ = mimetypes.guess_type(local_path)
+            session_uri = drive.begin_resumable_update(
+                file_id=file_id,
+                mime_type=mime_type or "application/octet-stream",
+                new_name=name, account=account,
+            )
+            return _upload_session_response(session_uri, name or file_id, local_path)
+
+        session_uri = drive.begin_resumable_update(
+            file_id=file_id, new_name=name, account=account,
         )
+        return _upload_session_response(session_uri, name or file_id)
     except InlineSourceTooLargeError as e:
         return {
-            "success": False,
-            "error": str(e),
-            "size_bytes": e.size_bytes,
-            "cap_bytes": e.cap_bytes,
-            "hint": (
-                "Update via a server-readable path under stdio, or raise "
-                "max_size_bytes on the inline source if the client allows "
-                "larger request bodies."
-            ),
+            "success": False, "error": str(e),
+            "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
+            "hint": "Too large to inline. Pass local_path for a resumable update URL.",
         }
-    except (InvalidInlineSourceError, FileNotFoundError) as e:
+    except InvalidInlineSourceError as e:
         return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error updating file: {e}")
@@ -239,55 +296,90 @@ async def drive_update(
 
 async def drive_download(
     file_id: str,
-    max_size_bytes: Optional[int] = None,
+    save_to: Optional[str] = None,
     account: Optional[str] = None,
 ) -> list[ContentBlock] | dict[str, Any]:
-    """Fetch a Drive file's contents inline as an MCP EmbeddedResource.
+    """Download a Drive file's contents. Transport is chosen automatically.
 
-    Returns ``[TextContent summary, EmbeddedResource]``. The bytes are
-    base64-encoded in the embedded resource so the agent receives them
-    directly under any transport (stdio, HTTP, anything else).
+    The caller never picks how the bytes travel:
 
-    For larger files or files the agent doesn't need to consume
-    immediately, leave the file in Drive and operate on it via
-    ``drive_move`` / ``drive_delete`` / sharing — Drive is already the
-    canonical store.
+    - **``save_to`` (local/stdio server only)** → stream the file
+      straight to that local path, **any size, no base64**. This is the
+      one-step path when the server shares your filesystem (stdio). It is
+      rejected on a remote (HTTP) server, which can't write to your disk
+      — omit it there and use the returned URL.
+    - **Small files** (≤ ~60 KB), no ``save_to`` → returned **inline** as
+      ``[TextContent summary, EmbeddedResource]`` (base64), so the agent
+      gets the bytes directly under any transport, including
+      browser/mobile MCP connectors.
+    - **Larger files**, no ``save_to`` → a **Drive download link**. The
+      file is already in the user's Drive, so opening the link in a
+      browser signed in to that account downloads it — no server proxy,
+      no token, no size cap. (Prefer ``save_to`` on a local server to get
+      the file straight to disk.)
 
     Args:
         file_id: Drive file ID to fetch.
-        max_size_bytes: Override the default inline size cap on raw
-            bytes (default 60,000 — sized so base64 + envelope fits
-            inside Claude Code's ~25K-token tool-response budget; see
-            :data:`gwsa.sdk.destinations.DEFAULT_INLINE_SIZE_CAP_BYTES`
-            for the math). Files larger than the cap return an error
-            envelope rather than risking client truncation. Use
-            ``drive_get_metadata`` first to check ``size`` before
-            calling.
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
+        save_to: Local path to write to — local/stdio server only.
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
     """
     try:
-        fetched = drive.download_bytes(file_id=file_id, account=account)
-        result = materialize(
-            fetched["data"],
-            name=fetched["name"] or f"drive-{file_id[:8]}",
-            mime_type=fetched["mime_type"] or "application/octet-stream",
-            destination=InlineDestination(max_size_bytes=max_size_bytes),
-            account=account,
-        )
-        # materialize() on InlineDestination always returns InlinePayload.
-        assert isinstance(result, InlinePayload)
-        return inline_payload_to_blocks(result)
-    except InlineTooLargeError as e:
+        # save_to is meaningful only when the server shares the agent's
+        # filesystem (stdio). If the target directory exists on the
+        # server, write straight to it — any size, no base64.
+        if save_to is not None:
+            parent = os.path.dirname(os.path.abspath(save_to))
+            if os.path.isdir(parent):
+                result = drive.download_file(file_id, save_to, account=account)
+                return {
+                    "mode": "saved",
+                    "path": result["file_path"],
+                    "size_bytes": result.get("size"),
+                    "name": result.get("name"),
+                }
+            # Directory not present on the server → remote (HTTP); can't
+            # write the agent's disk. Fall through to the Drive link.
+
+        meta = drive.get_download_metadata(file_id, account=account)
+        raw_size = meta.get("size")
+        size = int(raw_size) if raw_size not in (None, "") else None
+        name = meta.get("name") or f"drive-{file_id[:8]}"
+        mime_type = meta.get("mime_type") or "application/octet-stream"
+
+        # Small + known size → inline (works on every client).
+        if size is not None and size <= DEFAULT_INLINE_SIZE_CAP_BYTES:
+            try:
+                fetched = drive.download_bytes(file_id=file_id, account=account)
+                result = materialize(
+                    fetched["data"],
+                    name=fetched["name"] or name,
+                    mime_type=fetched["mime_type"] or mime_type,
+                    destination=InlineDestination(),
+                    account=account,
+                )
+                assert isinstance(result, InlinePayload)
+                return inline_payload_to_blocks(result)
+            except InlineTooLargeError:
+                # Size metadata was stale/under-reported — fall through to
+                # the Drive link, which has no size cap.
+                pass
+
+        # Large (or unknown size) → a Drive download link. The file is
+        # already in the user's Drive and their browser is signed in, so
+        # opening this link downloads it — no server proxy, no token.
+        link = meta.get("web_content_link") or meta.get("web_view_link")
         return {
-            "success": False,
-            "error": str(e),
-            "size_bytes": e.size_bytes,
-            "cap_bytes": e.cap_bytes,
-            "hint": (
-                "File is too large to return inline. Read it in pieces "
-                "via Drive's UI / API, or share the Drive URL with the "
-                "user directly."
+            "mode": "link",
+            "url": link,
+            "name": name,
+            "size_bytes": size,
+            "mime_type": mime_type,
+            "note": (
+                "Too large to return inline. Open this link in a browser "
+                "signed in to this Google account to download the file. On a "
+                "local (stdio) server, pass save_to=<path> to write it "
+                "straight to disk instead."
             ),
         }
     except Exception as e:

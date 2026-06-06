@@ -35,7 +35,7 @@ service (HTTP, JWT-authenticated).
 ## Install
 
 ```bash
-pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.16.0
+pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.20.0
 ```
 
 Installs three commands:
@@ -247,6 +247,26 @@ existing event.
 > `acquire-token` and `accounts add` (see
 > [Rotating tokens](#rotating-tokens-when-refresh-fails)) so your
 > stored token carries the Calendar scopes.
+
+### Large file upload & download
+
+The Drive MCP tools (`drive_upload`, `drive_update`, `drive_download`)
+move files of any size without base64 bloat, and adapt automatically to
+how the server is reached — you never choose a transport:
+
+- **Small files** travel inline in the tool call / response.
+- **Local stdio server** (shares your filesystem): pass `local_path=` to
+  upload, or `save_to=` to download — read/written straight to disk, any
+  size.
+- **Hosted (HTTP) server**: a large **upload** returns a direct-to-Google
+  resumable URL you PUT the bytes to (they never pass through the
+  server); a large **download** returns the file's Drive download link
+  (open it in a browser signed in to that account). No size cap, no
+  server proxy, no extra credentials.
+
+There are no extra HTTP endpoints and no separate auth — uploads go
+straight to Google, downloads come from Drive's own link, and stdio uses
+the shared filesystem.
 
 ### Drive revisions as a version store
 
