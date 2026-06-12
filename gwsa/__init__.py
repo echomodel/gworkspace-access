@@ -18,9 +18,10 @@ from gwsa.mcp.tools import chat as chat_tools
 from gwsa.mcp.tools import docs as docs_tools
 from gwsa.mcp.tools import drive as drive_tools
 from gwsa.mcp.tools import mail as mail_tools
+from gwsa.mcp.tools import sheets as sheets_tools
 
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 
 class GoogleAccount(BaseModel):
@@ -99,6 +100,7 @@ app = App(
         drive_tools,
         chat_tools,
         calendar_tools,
+        sheets_tools,
     ],
     profile_model=Profile,
     profile_expand=False,

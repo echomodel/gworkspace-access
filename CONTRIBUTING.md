@@ -12,7 +12,7 @@ gworkspace-access/
 │   ├── __init__.py               # App composition root (declares mcp-app App, profile model, admin extensions).
 │   ├── sdk/                      # All behavior. Layered access to Google APIs.
 │   │   ├── auth.py               # Credential resolution (bridges mcp-app + legacy vault).
-│   │   ├── mail/, docs/, drive/, chat/, calendar/, people/
+│   │   ├── mail/, docs/, drive/, sheets/, chat/, calendar/, people/
 │   │   └── profiles.py, config.py    # Legacy vault — read path during migration.
 │   ├── cli/                      # Thin Click wrappers over the SDK. Domain commands only.
 │   │   ├── __main__.py           # gwsa entry point (mail / sheets / docs / drive / chat / calendar).

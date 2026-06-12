@@ -188,6 +188,7 @@ default account:
 gwsa mail search "from:bob after:2026-01-01"
 gwsa drive list
 gwsa docs read DOC_ID
+gwsa sheets tail SPREADSHEET_ID -n 5
 gwsa chat spaces list
 gwsa calendar events --time-min 2026-06-01T00:00:00Z
 ```
@@ -337,12 +338,52 @@ cleanly to a hosted MCP tool, since a remote server can't read the
 agent's filesystem and shipping the whole file inline just to hash it
 defeats the purpose.)
 
+### Sheets: append-style logs and tail reads
+
+Sheets support covers create / list / read / write, shaped around
+the Sheets API's natural grain — append-at-bottom logs:
+
+```bash
+gwsa sheets create "Workout Log" --folder-id FOLDER_ID --sheet-title Log
+gwsa sheets append SPREADSHEET_ID '["2026-06-12", 5, "felt great"]' --range "Log!A1"
+gwsa sheets tail SPREADSHEET_ID -n 7 --sheet Log
+gwsa sheets read SPREADSHEET_ID "Log!A1:C10"
+gwsa sheets update-cell SPREADSHEET_ID "Log!C5" "updated"
+gwsa sheets info SPREADSHEET_ID
+```
+
+- **`append` is the write primitive for logs** — one atomic call,
+  no read-before-write; the API appends after the last data row.
+- **`tail` reads the last N rows without loading the sheet.** The
+  API has no "last N rows" primitive, so `tail` probes the anchor
+  column (default `A`) to find the data extent, then range-reads
+  exactly the trailing rows. Payloads stay small no matter how
+  large a log grows. It also reports the row numbers it read, so a
+  follow-up `update` can target a specific recent row (the
+  read-modify-write "upsert the latest row" pattern).
+- **`tail` also pages backwards (newest → oldest).** The response's
+  `start_row` is a cursor: pass it back as `before_row`
+  (`--before-row` on the CLI) to get the N next-older rows, and
+  repeat while `has_more` is true. Cursor pages skip the extent
+  probe — each is a single bounded read of exactly N rows. N counts
+  rows (entries), not calendar days, so sparse logs and
+  multiple-entries-per-day logs page the same way.
+- **Writes default to `USER_ENTERED`** — dates, times, and numbers
+  parse as if typed in the UI. (`update-cell` keeps its historical
+  `RAW` behavior; `append` takes `--raw` to opt out of parsing.)
+
+The same operations are exposed as MCP tools: `sheets_create`,
+`sheets_list`, `sheets_get_metadata`, `sheets_read`,
+`sheets_read_tail`, `sheets_update`, `sheets_append`. Creating
+directly into a Drive folder is supported via `folder_id` (resolve
+a path with `drive_find_folder`); relocating later is `drive_move`.
+
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 45 tools across mail,
-docs, drive, chat, calendar, and account discovery. (Sheets is
-CLI-only for now.) Tools are discovered by mcp-app from
-`gwsa.mcp.tools.{accounts,mail,docs,drive,chat,calendar}`.
+`gwsa-mcp` is a stdio MCP server exposing 52 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery.
+Tools are discovered by mcp-app from
+`gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.
 
 Every Google-touching MCP tool accepts an optional `account`
 argument — the account `name` (e.g. `"work"`) or its Google

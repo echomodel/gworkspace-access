@@ -1,5 +1,29 @@
 # Release Notes
 
+## v0.21.0 — Sheets MCP tools + SDK (create, read, write, tail)
+
+Sheets graduates from CLI-only to a full SDK domain with MCP tools,
+shaped around append-style logs:
+
+- **New SDK module `gwsa.sdk.sheets`**: `create_spreadsheet` (with
+  optional Drive `folder_id` and first-tab title), `read_values`,
+  `read_tail`, `update_values`, `append_rows`, `list_spreadsheets`,
+  `get_spreadsheet`.
+- **7 new MCP tools**: `sheets_create`, `sheets_list`,
+  `sheets_get_metadata`, `sheets_read`, `sheets_read_tail`,
+  `sheets_update`, `sheets_append` (server total: 52).
+- **`sheets_read_tail`** reads the last N data rows without loading
+  the whole sheet (anchor-column extent probe + bounded range read)
+  and reports row numbers, enabling targeted updates of recent rows.
+  It also supports **cursor pagination newest → oldest**: pass the
+  previous response's `start_row` as `before_row` to fetch the next-
+  older N rows (a single bounded read per page) and repeat while
+  `has_more` is true.
+- **CLI additions**: `gwsa sheets create / info / tail / append`;
+  existing `list` / `read` / `update-cell` are now thin wrappers over
+  the SDK. Writes default to `USER_ENTERED` parsing (`update-cell`
+  keeps its historical `RAW` behavior; `append --raw` opts out).
+
 ## v0.20.0 — large-file Drive upload & download (transport-aware)
 
 `drive_upload`, `drive_update`, and `drive_download` now move files of

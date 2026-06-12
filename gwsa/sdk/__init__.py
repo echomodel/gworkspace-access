@@ -21,5 +21,6 @@ from . import auth
 from . import mail
 from . import docs
 from . import drive
+from . import sheets
 
-__all__ = ["config", "auth", "mail", "docs", "drive"]
+__all__ = ["config", "auth", "mail", "docs", "drive", "sheets"]
