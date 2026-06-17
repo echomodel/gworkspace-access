@@ -425,3 +425,21 @@ def search_chat_messages(space_id, query, limit):
 
     except Exception as e:
         click.echo(f"Error searching messages: {e}", err=True)
+
+@messages.command("download-attachment")
+@click.argument("resource_name")
+@click.option("-o", "--out", required=True, type=click.Path(), help="Output file path where the attachment will be saved.")
+def download_attachment_cmd(resource_name, out):
+    """Download a chat message attachment by its base64 resourceName."""
+    try:
+        from gwsa.sdk.chat.service import download_attachment
+        
+        click.echo(f"Downloading attachment {resource_name[:20]}... to {out}")
+        content = download_attachment(resource_name)
+        
+        with open(out, "wb") as f:
+            f.write(content)
+            
+        click.echo(f"Saved {len(content)} bytes successfully.")
+    except Exception as e:
+        click.echo(f"Error downloading attachment: {e}", err=True)

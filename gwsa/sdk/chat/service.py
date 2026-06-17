@@ -116,7 +116,8 @@ def search_messages(
                     "text": text,
                     "createTime": msg.get("createTime"),
                     "author": author_name,
-                    "thread": msg.get("thread", {}).get("name")
+                    "thread": msg.get("thread", {}).get("name"),
+                    "attachment": msg.get("attachment")
                 })
         
         page_token = response.get('nextPageToken')
@@ -204,3 +205,28 @@ def get_recent_chats(
         })
 
     return recent_chats
+
+
+def download_attachment(
+    resource_name: str,
+    account: Optional[str] = None
+) -> bytes:
+    """Download Google Chat attachment media bytes.
+
+    Args:
+        resource_name: The base64 resourceName of the attachment (from attachmentDataRef.resourceName).
+        account: Optional account selector (name or email).
+    """
+    import io
+    from googleapiclient.http import MediaIoBaseDownload
+
+    chat_service = get_chat_service(account=account)
+    request = chat_service.media().download_media(resourceName=resource_name)
+    
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+        
+    return buffer.getvalue()

@@ -97,6 +97,10 @@ A token issued by `gcloud auth application-default login` (no
     project of its own, so the API call needs a billing project
     explicitly.
 
+    > [!IMPORTANT]
+    > **Synchronizing Scope Updates:** `gwsa` stores a static copy of the token at the time of `accounts add`. If you re-authenticate `gcloud` with new scopes (e.g. adding Chat scopes via `gcloud auth application-default login --scopes=...`), the updated scopes will **not** take effect in `gwsa` until you remove the old account (`gwsa-admin accounts remove <name>`) and re-add it.
+
+
 ### 3. User-Owned OAuth Client via Gcloud (BYOC-ADC)
 
 `gcloud auth application-default login --client-id-file=PATH` — uses
@@ -210,6 +214,12 @@ Re-acquire the token (`gwsa-admin acquire-token ...` or re-run
 remove the stale account
 (`gwsa-admin accounts remove <name>`), and add the fresh one
 (`gwsa-admin accounts add <name> ...`).
+
+### "Request had insufficient authentication scopes" after gcloud login
+
+If you re-authenticated `gcloud` with new scopes, the updated token will not propagate to `gwsa` automatically. You must replace the stored account:
+1. Remove the old cached account: `gwsa-admin accounts remove <name>`
+2. Add the updated token back: `gwsa-admin accounts add <name> --email <email> --token=@~/.config/gcloud/application_default_credentials.json --quota-project <project>`
 
 ---
 

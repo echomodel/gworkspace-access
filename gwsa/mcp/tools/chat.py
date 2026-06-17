@@ -20,6 +20,18 @@ from typing import Any, Optional
 from gwsa.sdk import chat
 from gwsa.sdk.cache import get_cached_members, set_cached_members
 from gwsa.sdk.people import get_person_name
+from gwsa.sdk.destinations import (
+    Destination,
+    DriveDestination,
+    InlinePayload,
+    InlineTooLargeError,
+    materialize,
+)
+from gwsa.mcp.content import (
+    ContentBlock,
+    drive_upload_to_dict,
+    inline_payload_to_blocks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +198,7 @@ async def list_chat_messages(
                 "text": message.get("text"),
                 "createTime": message.get("createTime"),
                 "author": get_person_name(sender.get("name"), account=account),
+                "attachment": message.get("attachment"),
             })
         return {
             "messages": simplified,
@@ -235,6 +248,7 @@ async def search_chat_messages(
                 "author": get_person_name(
                     msg.get("sender", {}).get("name"), account=account
                 ),
+                "attachment": msg.get("attachment"),
             })
         return {
             "messages": simplified,
@@ -291,3 +305,55 @@ async def get_recent_group_chats(
     except Exception as e:
         logger.error(f"Error getting recent group chats: {e}")
         return {"error": str(e)}
+
+
+async def download_chat_attachment(
+    resource_name: str,
+    filename: str,
+    mime_type: str,
+    destination: Destination = DriveDestination(),
+    account: Optional[str] = None,
+) -> list[ContentBlock] | dict[str, Any]:
+    """Download a Google Chat attachment.
+
+    The ``destination`` parameter is a discriminated union; pass one of:
+
+    - ``{"kind": "drive", "folder_id": "<id>", "name": "<name>"}`` —
+      upload to the user's Google Drive (default: My Drive root, with
+      the attachment's original filename).
+    - ``{"kind": "inline", "max_size_bytes": <int>}`` — return the
+      bytes inline as an ``EmbeddedResource`` paired with a JSON
+      summary.
+
+    Args:
+        resource_name: The base64 resourceName of the attachment (from attachmentDataRef.resourceName).
+        filename: Human-readable filename.
+        mime_type: MIME type of the file.
+        destination: Where to deliver the bytes. See above.
+        account: Optional account selector.
+    """
+    try:
+        data = chat.download_attachment(resource_name, account=account)
+
+        result = materialize(
+            data,
+            name=filename,
+            mime_type=mime_type,
+            destination=destination,
+            account=account,
+        )
+        if isinstance(result, InlinePayload):
+            return inline_payload_to_blocks(result)
+        return drive_upload_to_dict(result)
+    except InlineTooLargeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "size_bytes": e.size_bytes,
+            "cap_bytes": e.cap_bytes,
+            "retry_with": {"kind": "drive"},
+        }
+    except Exception as e:
+        logger.error(f"Error downloading chat attachment: {e}")
+        return {"success": False, "error": str(e)}
+
