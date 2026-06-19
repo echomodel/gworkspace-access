@@ -350,11 +350,16 @@ be **found by tag instead of a hardcoded ID** — useful when a skill or
 script needs to relocate its backing file across machines:
 
 ```bash
-# Tag once (namespaced public key)
+# Tag once (CLI, namespaced public key)
 gwsa drive set-properties FILE_ID --prop myapp=expense-tracker
+```
 
-# Discover thereafter
-gwsa drive search "properties has { key='myapp' and value='expense-tracker' }"
+Discover the file later with the `drive_search` MCP tool (or any Drive
+`files.list` query) — tag lookup has no dedicated CLI command, it's a
+normal Drive query:
+
+```
+properties has { key='myapp' and value='expense-tracker' }
 ```
 
 - **Merge per key, one call.** A passed key is added/updated; `--prop key=`
