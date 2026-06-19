@@ -14,12 +14,12 @@ and emails.
 from __future__ import annotations
 
 import logging
-import mimetypes
 import os
 import shlex
 from typing import Any, Optional
 
 from googleapiclient.errors import HttpError
+from mcp_app import mcp_transport
 
 from gwsa.sdk import drive
 from gwsa.sdk.destinations import (
@@ -130,41 +130,35 @@ def _upload_session_response(
 
 async def drive_upload(
     name: Optional[str] = None,
-    local_path: Optional[str] = None,
     content_base64: Optional[str] = None,
     folder_id: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Upload a new file to Google Drive. Provide the content one of two ways.
+    """Upload a new file to Google Drive (works on every transport).
 
-    You pick based on what you have — never on how the bytes travel:
+    Two ways to supply the bytes — neither reads a file off the server:
 
-    - **You have a local file** → pass ``local_path``. On a local (stdio)
-      server it's read and uploaded directly — **any size, no base64**.
-      On a remote (HTTP) server the tool returns a self-authorizing
-      upload URL and a ready-to-run ``curl -T`` command for your
-      ``local_path``; the bytes go **straight to Google**, no size limit.
-    - **You have the bytes in hand** (small) → pass ``content_base64``.
-      Works on any transport; subject to the inline size cap.
+    - **``content_base64``** → small inline upload (subject to the inline
+      size cap).
+    - **omit content (pass just ``name``)** → returns a self-authorizing
+      resumable upload URL. PUT the bytes to it directly — any size,
+      straight to Google, no server proxy, no token.
 
-    On a remote server you may omit both to get a bare upload URL to PUT
-    your bytes to. ``name`` defaults to the ``local_path`` basename.
+    To upload a file by **local path**, use ``drive_upload_local`` — that
+    tool is stdio-only, because reading a caller-named path off the server
+    over HTTP would be an arbitrary server-file read.
 
     Args:
-        name: File name in Drive. Defaults to the ``local_path`` basename;
-            required for an inline or URL upload that has no path.
-        local_path: Path to a local file (see above).
+        name: File name in Drive. Required for the resumable-URL path.
         content_base64: Base64-encoded content for a small inline upload.
         folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
         keep_revision_forever: Pin the initial revision (``keepForever``).
-            Applies to the direct stdio/inline uploads; the out-of-band
-            URL path does not set it.
         account: Optional account selector (name or email).
 
     Returns:
         Completed upload → dict with file ``id``, ``name``, ``url``,
-        ``keep_revision_forever``. Out-of-band path → dict with
+        ``keep_revision_forever``. Resumable path → dict with
         ``mode="out_of_band"``, ``upload_url`` and a ``run`` command.
     """
     try:
@@ -179,30 +173,11 @@ async def drive_upload(
                 keep_revision_forever=keep_revision_forever, account=account,
             )
 
-        if local_path is not None:
-            final_name = name or os.path.basename(local_path)
-            # If the server can see the file, it shares the agent's
-            # filesystem (stdio) → read + upload directly, any size.
-            if os.path.isfile(local_path):
-                return drive.upload_file(
-                    local_path=local_path, folder_id=folder_id, name=name,
-                    keep_revision_forever=keep_revision_forever, account=account,
-                )
-            # The server can't see the file → remote (HTTP). Hand back a
-            # direct-to-Google resumable session URL to PUT the bytes to.
-            mime_type, _ = mimetypes.guess_type(final_name)
-            session_uri = drive.begin_resumable_upload(
-                name=final_name,
-                mime_type=mime_type or "application/octet-stream",
-                folder_id=folder_id, account=account,
-            )
-            return _upload_session_response(session_uri, final_name, local_path)
-
-        # Neither inline nor a path → start an upload session to PUT to.
         if not name:
             return {
-                "error": "Provide content_base64 (small), local_path, or a "
-                         "name to start an upload session."
+                "error": "Provide content_base64 (small) or a name to start a "
+                         "resumable upload session. To upload a local file by "
+                         "path, use drive_upload_local (stdio only)."
             }
         session_uri = drive.begin_resumable_upload(
             name=name, folder_id=folder_id, account=account,
@@ -213,8 +188,9 @@ async def drive_upload(
             "success": False, "error": str(e),
             "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
             "hint": (
-                "Too large to inline. Pass local_path instead — on a remote "
-                "server you'll get a direct-to-Google upload URL."
+                "Too large to inline. Omit content and pass just 'name' for a "
+                "direct-to-Google resumable upload URL, or use "
+                "drive_upload_local on a stdio server."
             ),
         }
     except InvalidInlineSourceError as e:
@@ -224,36 +200,68 @@ async def drive_upload(
         return {"error": str(e)}
 
 
+@mcp_transport("stdio")
+async def drive_upload_local(
+    local_path: str,
+    name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+    keep_revision_forever: bool = False,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Upload a local file to Drive by path — **stdio only**.
+
+    Registered only over stdio, where the server runs as the local user, so
+    reading the path is no privilege escalation. Reads the file and uploads
+    it directly — any size, no base64. Over HTTP this capability is
+    deliberately absent (a server-side read of a caller-named path would be
+    an arbitrary-file read); use ``drive_upload`` with ``content_base64`` or
+    its resumable URL there instead.
+
+    Args:
+        local_path: Path to the local file to upload.
+        name: File name in Drive (default: the file's base name).
+        folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
+        keep_revision_forever: Pin the initial revision (``keepForever``).
+        account: Optional account selector (name or email).
+    """
+    try:
+        if not os.path.isfile(local_path):
+            return {"error": f"File not found: {local_path}"}
+        return drive.upload_file(
+            local_path=local_path, folder_id=folder_id, name=name,
+            keep_revision_forever=keep_revision_forever, account=account,
+        )
+    except Exception as e:
+        logger.error(f"Error uploading local file: {e}")
+        return {"error": str(e)}
+
+
 async def drive_update(
     file_id: str,
-    local_path: Optional[str] = None,
     content_base64: Optional[str] = None,
     name: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Replace an existing Drive file's content. Same input modes as drive_upload.
+    """Replace an existing Drive file's content (works on every transport).
 
-    - **``local_path``** → stdio: read + update directly (any size);
-      HTTP: returns a self-authorizing resumable *update* URL + ``curl
-      -T`` command (bytes go straight to Google).
-    - **``content_base64``** → small inline update, any transport.
+    - **``content_base64``** → small inline update.
+    - **omit content** → returns a self-authorizing resumable *update* URL to
+      PUT the new bytes to (any size, straight to Google).
 
+    To update from a **local path**, use ``drive_update_local`` (stdio only).
     Revisions stack on ``file_id`` either way.
 
     Args:
         file_id: Drive file ID to update.
-        local_path: Path to a local file with the new content.
         content_base64: Base64 content for a small inline update.
         name: Optional new name for the file.
-        keep_revision_forever: Pin the resulting head revision
-            (``keepForever``) — applies to the direct stdio/inline path;
-            the out-of-band URL path does not set it.
+        keep_revision_forever: Pin the resulting head revision.
         account: Optional account selector (name or email).
 
     Returns:
         Completed update → dict with file ``id``, ``name``, ``url``.
-        Out-of-band path → dict with ``mode="out_of_band"`` + ``run``.
+        Resumable path → dict with ``mode="out_of_band"`` + ``run``.
     """
     try:
         if content_base64 is not None:
@@ -263,22 +271,6 @@ async def drive_update(
                 keep_revision_forever=keep_revision_forever, account=account,
             )
 
-        if local_path is not None:
-            # Server can see the file → stdio → update directly, any size.
-            if os.path.isfile(local_path):
-                return drive.update_file(
-                    file_id=file_id, local_path=local_path, new_name=name,
-                    keep_revision_forever=keep_revision_forever, account=account,
-                )
-            # Can't see it → remote → resumable update session URL.
-            mime_type, _ = mimetypes.guess_type(local_path)
-            session_uri = drive.begin_resumable_update(
-                file_id=file_id,
-                mime_type=mime_type or "application/octet-stream",
-                new_name=name, account=account,
-            )
-            return _upload_session_response(session_uri, name or file_id, local_path)
-
         session_uri = drive.begin_resumable_update(
             file_id=file_id, new_name=name, account=account,
         )
@@ -287,7 +279,8 @@ async def drive_update(
         return {
             "success": False, "error": str(e),
             "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
-            "hint": "Too large to inline. Pass local_path for a resumable update URL.",
+            "hint": ("Too large to inline. Omit content for a resumable update "
+                     "URL, or use drive_update_local on a stdio server."),
         }
     except InvalidInlineSourceError as e:
         return {"error": str(e)}
@@ -296,53 +289,64 @@ async def drive_update(
         return {"error": str(e)}
 
 
+@mcp_transport("stdio")
+async def drive_update_local(
+    file_id: str,
+    local_path: str,
+    name: Optional[str] = None,
+    keep_revision_forever: bool = False,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Replace a Drive file's content from a local file by path — **stdio only**.
+
+    Stdio-only for the same reason as ``drive_upload_local``: a server-side
+    read of a caller-named path over HTTP would be an arbitrary-file read.
+    Reads + updates directly, any size. Over HTTP use ``drive_update`` with
+    ``content_base64`` or its resumable URL.
+
+    Args:
+        file_id: Drive file ID to update.
+        local_path: Path to a local file with the new content.
+        name: Optional new name for the file.
+        keep_revision_forever: Pin the resulting head revision.
+        account: Optional account selector (name or email).
+    """
+    try:
+        if not os.path.isfile(local_path):
+            return {"error": f"File not found: {local_path}"}
+        return drive.update_file(
+            file_id=file_id, local_path=local_path, new_name=name,
+            keep_revision_forever=keep_revision_forever, account=account,
+        )
+    except Exception as e:
+        logger.error(f"Error updating file from local path: {e}")
+        return {"error": str(e)}
+
+
 async def drive_download(
     file_id: str,
-    save_to: Optional[str] = None,
     account: Optional[str] = None,
 ) -> list[ContentBlock] | dict[str, Any]:
-    """Download a Drive file's contents. Transport is chosen automatically.
+    """Download a Drive file's contents (works on every transport).
 
-    The caller never picks how the bytes travel:
-
-    - **``save_to`` (local/stdio server only)** → stream the file
-      straight to that local path, **any size, no base64**. This is the
-      one-step path when the server shares your filesystem (stdio). It is
-      rejected on a remote (HTTP) server, which can't write to your disk
-      — omit it there and use the returned URL.
-    - **Small files** (≤ ~60 KB), no ``save_to`` → returned **inline** as
+    - **Small files** (≤ ~60 KB) → returned **inline** as
       ``[TextContent summary, EmbeddedResource]`` (base64), so the agent
-      gets the bytes directly under any transport, including
-      browser/mobile MCP connectors.
-    - **Larger files**, no ``save_to`` → a **Drive download link**. The
-      file is already in the user's Drive, so opening the link in a
-      browser signed in to that account downloads it — no server proxy,
-      no token, no size cap. (Prefer ``save_to`` on a local server to get
-      the file straight to disk.)
+      gets the bytes directly under any transport, including browser/mobile
+      MCP connectors.
+    - **Larger files** → a **Drive download link**. The file is already in
+      the user's Drive, so opening the link in a browser signed in to that
+      account downloads it — no server proxy, no token, no size cap.
+
+    To stream the file straight to a **local path**, use
+    ``drive_download_to_path`` (stdio only) — writing to a caller-named path
+    on the server over HTTP would be an arbitrary server-file write.
 
     Args:
         file_id: Drive file ID to fetch.
-        save_to: Local path to write to — local/stdio server only.
         account: Optional account selector (name or email). Omit to use
             the user's default account.
     """
     try:
-        # save_to is meaningful only when the server shares the agent's
-        # filesystem (stdio). If the target directory exists on the
-        # server, write straight to it — any size, no base64.
-        if save_to is not None:
-            parent = os.path.dirname(os.path.abspath(save_to))
-            if os.path.isdir(parent):
-                result = drive.download_file(file_id, save_to, account=account)
-                return {
-                    "mode": "saved",
-                    "path": result["file_path"],
-                    "size_bytes": result.get("size"),
-                    "name": result.get("name"),
-                }
-            # Directory not present on the server → remote (HTTP); can't
-            # write the agent's disk. Fall through to the Drive link.
-
         meta = drive.get_download_metadata(file_id, account=account)
         raw_size = meta.get("size")
         size = int(raw_size) if raw_size not in (None, "") else None
@@ -380,12 +384,46 @@ async def drive_download(
             "note": (
                 "Too large to return inline. Open this link in a browser "
                 "signed in to this Google account to download the file. On a "
-                "local (stdio) server, pass save_to=<path> to write it "
-                "straight to disk instead."
+                "stdio server, use drive_download_to_path to write it straight "
+                "to disk instead."
             ),
         }
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
+        return {"error": str(e)}
+
+
+@mcp_transport("stdio")
+async def drive_download_to_path(
+    file_id: str,
+    save_to: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Download a Drive file straight to a local path — **stdio only**.
+
+    Stdio-only: writing to a caller-named path on the server over HTTP would
+    be an arbitrary server-file write (overwriting other users' data or app
+    files). On stdio the server runs as the local user, so writing to their
+    own disk is fine — any size, no base64.
+
+    Args:
+        file_id: Drive file ID to fetch.
+        save_to: Local path to write the file to.
+        account: Optional account selector (name or email).
+    """
+    try:
+        parent = os.path.dirname(os.path.abspath(save_to))
+        if not os.path.isdir(parent):
+            return {"error": f"Directory does not exist: {parent}"}
+        result = drive.download_file(file_id, save_to, account=account)
+        return {
+            "mode": "saved",
+            "path": result["file_path"],
+            "size_bytes": result.get("size"),
+            "name": result.get("name"),
+        }
+    except Exception as e:
+        logger.error(f"Error downloading file to path: {e}")
         return {"error": str(e)}
 
 

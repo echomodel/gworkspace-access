@@ -1,5 +1,33 @@
 # Release Notes
 
+## v0.23.0 — security: host-path Drive I/O is stdio-only
+
+Closes an arbitrary server-side file read/write on the **hosted (HTTP)**
+deployment. `drive_upload` / `drive_update` accepted a `local_path` and
+`drive_download` a `save_to` that the server read/wrote off its **own**
+filesystem. Over HTTP the server is multi-tenant and reachable by untrusted
+callers, so a caller could name `/proc/self/environ` (the signing key lives
+in the process env) or another user's data file and exfiltrate it — or
+overwrite server files. The transport was inferred from whether the path
+existed on the server, a check a caller bypasses by naming a real server
+path.
+
+- **The network-exposed tools no longer touch the server filesystem.**
+  `drive_upload` / `drive_update` take `content_base64` (small) or return a
+  direct-to-Google resumable URL (any size); `drive_download` returns inline
+  bytes or a Drive link.
+- **Host-path I/O moved to stdio-only tools** —
+  `drive_upload_local`, `drive_update_local`, `drive_download_to_path`,
+  annotated `@mcp_transport("stdio")` (requires mcp-app ≥ 0.9.0). The
+  framework never registers them on the HTTP surface, so they aren't even
+  advertised to remote clients. On stdio the server runs as the local user,
+  so touching their own disk is no escalation.
+- **Migration:** callers using `drive_upload(local_path=…)` →
+  `drive_upload_local(local_path=…)`; `drive_update(local_path=…)` →
+  `drive_update_local(…)`; `drive_download(save_to=…)` →
+  `drive_download_to_path(save_to=…)`. These work over stdio only. Over HTTP,
+  use `content_base64` / the resumable URL / the Drive link.
+
 ## v0.22.0 — custom Drive properties (tag files for discovery)
 
 Adds the ability to attach custom key/value metadata to any Drive file

@@ -251,23 +251,28 @@ existing event.
 
 ### Large file upload & download
 
-The Drive MCP tools (`drive_upload`, `drive_update`, `drive_download`)
-move files of any size without base64 bloat, and adapt automatically to
-how the server is reached — you never choose a transport:
+The Drive MCP tools move files of any size without base64 bloat. The
+**network-exposed** tools never touch the server's filesystem; reading or
+writing a local path lives in **stdio-only** companion tools.
 
-- **Small files** travel inline in the tool call / response.
-- **Local stdio server** (shares your filesystem): pass `local_path=` to
-  upload, or `save_to=` to download — read/written straight to disk, any
-  size.
-- **Hosted (HTTP) server**: a large **upload** returns a direct-to-Google
-  resumable URL you PUT the bytes to (they never pass through the
-  server); a large **download** returns the file's Drive download link
-  (open it in a browser signed in to that account). No size cap, no
-  server proxy, no extra credentials.
+- **Small files** travel inline in the tool call / response
+  (`drive_upload` / `drive_update` with `content_base64`).
+- **Hosted (HTTP) server**: a large **upload** — call `drive_upload`
+  (or `drive_update`) with just a name to get a direct-to-Google resumable
+  URL you PUT the bytes to (they never pass through the server); a large
+  **download** — `drive_download` returns the file's Drive download link
+  (open it in a browser signed in to that account). No size cap, no server
+  proxy, no extra credentials.
+- **Local stdio server** (shares your filesystem): use the stdio-only tools
+  `drive_upload_local` / `drive_update_local` (pass `local_path=`) and
+  `drive_download_to_path` (pass `save_to=`) — read/written straight to
+  disk, any size.
 
-There are no extra HTTP endpoints and no separate auth — uploads go
-straight to Google, downloads come from Drive's own link, and stdio uses
-the shared filesystem.
+The host-path tools are **stdio-only by design** (`@mcp_transport("stdio")`):
+over HTTP the server is multi-tenant, so reading or writing a caller-named
+server path would be an arbitrary server-file read/write. They are never
+registered — nor advertised — on the HTTP surface. There are no extra HTTP
+endpoints and no separate auth.
 
 ### Drive revisions as a version store
 

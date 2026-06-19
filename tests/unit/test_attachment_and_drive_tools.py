@@ -24,6 +24,7 @@ from gwsa import GoogleAccount, Profile
 from gwsa.mcp.tools.drive import (
     drive_delete,
     drive_download,
+    drive_download_to_path,
     drive_move,
 )
 from gwsa.mcp.tools.mail import download_email_attachment
@@ -330,15 +331,15 @@ def test_drive_download_large_returns_drive_link():
         current_user.reset(tok)
 
 
-def test_drive_download_save_to_writes_locally(tmp_path):
-    """save_to with an existing local dir (stdio) writes the file to disk."""
+def test_drive_download_to_path_writes_locally(tmp_path):
+    """drive_download_to_path (stdio only) writes the file to a local dir."""
     tok = _set_user_with_account()
     try:
         dest = str(tmp_path / "out.bin")
         saved = {"file_path": dest, "size": 1234, "name": "out.bin"}
         with patch("gwsa.sdk.drive.download_file", return_value=saved) as dl:
             result = asyncio.run(
-                drive_download(file_id="drive-file-1", save_to=dest)
+                drive_download_to_path(file_id="drive-file-1", save_to=dest)
             )
         dl.assert_called_once()
         assert result["mode"] == "saved"
