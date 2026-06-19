@@ -338,6 +338,34 @@ cleanly to a hosted MCP tool, since a remote server can't read the
 agent's filesystem and shipping the whole file inline just to hash it
 defeats the purpose.)
 
+### Tag files for discovery (custom properties)
+
+Attach custom key/value metadata to any Drive file or folder so it can
+be **found by tag instead of a hardcoded ID** — useful when a skill or
+script needs to relocate its backing file across machines:
+
+```bash
+# Tag once (namespaced public key)
+gwsa drive set-properties FILE_ID --prop myapp=expense-tracker
+
+# Discover thereafter
+gwsa drive search "properties has { key='myapp' and value='expense-tracker' }"
+```
+
+- **Merge per key, one call.** A passed key is added/updated; `--prop key=`
+  (empty value) deletes it; keys you don't pass are untouched — it never
+  clobbers other apps' tags, and needs no read-before-write.
+- **`properties` (public) vs `appProperties` (`--app-prop`).** Public
+  properties are visible to any app with file access and share one
+  namespace (so namespace your keys). `appProperties` are private to the
+  OAuth client that wrote them — good for secrecy, but **invisible to
+  other clients**, so a cloud deployment and a local CLI won't see each
+  other's. For cross-environment discovery, use public `properties`.
+- Tags are **API-only**: they don't appear in the Drive/Docs/Sheets UI
+  and don't travel with a downloaded copy of the file.
+
+MCP tool: `drive_set_properties`; discovery via `drive_search`.
+
 ### Sheets: append-style logs and tail reads
 
 Sheets support covers create / list / read / write, shaped around
@@ -380,7 +408,7 @@ a path with `drive_find_folder`); relocating later is `drive_move`.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 52 tools across mail,
+`gwsa-mcp` is a stdio MCP server exposing 53 tools across mail,
 docs, drive, sheets, chat, calendar, and account discovery.
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

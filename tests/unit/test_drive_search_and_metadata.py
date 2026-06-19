@@ -13,7 +13,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gwsa import GoogleAccount, Profile
-from gwsa.mcp.tools.drive import drive_get_metadata, drive_search
+from gwsa.mcp.tools.drive import (
+    drive_get_metadata,
+    drive_search,
+    drive_set_properties,
+)
 from gwsa.sdk import drive
 from mcp_app.context import current_user
 from mcp_app.models import UserRecord
@@ -347,5 +351,104 @@ def test_drive_get_metadata_mcp_returns_error_envelope_on_failure():
             result = asyncio.run(drive_get_metadata(file_id="bogus-id"))
         assert "error" in result
         assert "bogus-id" in result["error"]
+    finally:
+        current_user.reset(tok)
+
+
+# --- set_properties SDK ----------------------------------------------
+
+
+def test_set_properties_sends_merge_body_single_call():
+    raw = {
+        "id": "f1",
+        "name": "Daily Energy Log",
+        "properties": {"myapp": "expense-tracker"},
+    }
+    fake_service = MagicMock()
+    fake_service.files.return_value.update.return_value.execute.return_value = raw
+    with patch(
+        "gwsa.sdk.drive.files.get_drive_service", return_value=fake_service
+    ):
+        result = drive.set_properties(
+            file_id="f1",
+            properties={"myapp": "expense-tracker"},
+        )
+    # One update call, no prior get (merge is server-side).
+    fake_service.files.return_value.get.assert_not_called()
+    call = fake_service.files.return_value.update.call_args.kwargs
+    assert call["fileId"] == "f1"
+    assert call["body"] == {"properties": {"myapp": "expense-tracker"}}
+    assert call["supportsAllDrives"] is True
+    assert result["properties"] == {"myapp": "expense-tracker"}
+    assert result["app_properties"] == {}
+
+
+def test_set_properties_null_value_deletes_key():
+    raw = {"id": "f1", "name": "x", "properties": {}}
+    fake_service = MagicMock()
+    fake_service.files.return_value.update.return_value.execute.return_value = raw
+    with patch(
+        "gwsa.sdk.drive.files.get_drive_service", return_value=fake_service
+    ):
+        drive.set_properties(file_id="f1", properties={"stale": None})
+    body = fake_service.files.return_value.update.call_args.kwargs["body"]
+    assert body == {"properties": {"stale": None}}
+
+
+def test_set_properties_supports_app_properties():
+    raw = {"id": "f1", "name": "x", "appProperties": {"k": "v"}}
+    fake_service = MagicMock()
+    fake_service.files.return_value.update.return_value.execute.return_value = raw
+    with patch(
+        "gwsa.sdk.drive.files.get_drive_service", return_value=fake_service
+    ):
+        result = drive.set_properties(file_id="f1", app_properties={"k": "v"})
+    body = fake_service.files.return_value.update.call_args.kwargs["body"]
+    assert body == {"appProperties": {"k": "v"}}
+    assert result["app_properties"] == {"k": "v"}
+
+
+def test_set_properties_requires_at_least_one_map():
+    with pytest.raises(ValueError):
+        drive.set_properties(file_id="f1")
+
+
+# --- set_properties MCP tool -----------------------------------------
+
+
+def test_drive_set_properties_mcp_happy_path():
+    tok = _set_user_with_account()
+    try:
+        sdk_response = {
+            "id": "f1",
+            "name": "Daily Energy Log",
+            "properties": {"myapp": "expense-tracker"},
+            "app_properties": {},
+        }
+        with patch(
+            "gwsa.sdk.drive.set_properties", return_value=sdk_response
+        ) as patched:
+            result = asyncio.run(
+                drive_set_properties(
+                    file_id="f1",
+                    properties={"myapp": "expense-tracker"},
+                )
+            )
+        patched.assert_called_once_with(
+            "f1",
+            properties={"myapp": "expense-tracker"},
+            app_properties=None,
+            account=None,
+        )
+        assert result == sdk_response
+    finally:
+        current_user.reset(tok)
+
+
+def test_drive_set_properties_mcp_missing_maps_returns_error():
+    tok = _set_user_with_account()
+    try:
+        result = asyncio.run(drive_set_properties(file_id="f1"))
+        assert "error" in result
     finally:
         current_user.reset(tok)

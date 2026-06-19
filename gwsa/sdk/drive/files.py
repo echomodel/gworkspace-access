@@ -111,6 +111,86 @@ def move_file(
     }
 
 
+def set_properties(
+    file_id: str,
+    properties: Optional[dict] = None,
+    app_properties: Optional[dict] = None,
+    account: Optional[str] = None,
+) -> dict:
+    """Set custom key/value metadata on a Drive file or folder.
+
+    Drive carries two custom-metadata maps on every file:
+
+    - ``properties`` — visible to any app that can access the file.
+      A single flat namespace shared across all apps, so **namespace
+      your keys** (e.g. ``myapp``) to avoid collisions.
+    - ``appProperties`` — private to the OAuth client that wrote them;
+      invisible to other clients. Good for secrecy, but **not for
+      discovery across different OAuth clients** (e.g. a cloud
+      deployment vs. a local CLI), which won't see each other's
+      appProperties.
+
+    The update is a **per-key merge**, in one ``files.update`` call:
+
+    - A key present in the map → added or updated.
+    - A key whose value is ``None`` → deleted.
+    - Keys not mentioned → left untouched (this never clobbers
+      properties set by other apps or earlier calls).
+
+    No read-before-write is needed — the merge happens server-side, so
+    this is a single round-trip. These tags are API-only: they do not
+    appear anywhere in the Drive/Docs/Sheets UI and do not travel with
+    a downloaded copy of the file.
+
+    Discover tagged files later with :func:`gwsa.sdk.drive.search_drive`
+    using a query like
+    ``properties has { key='myapp' and value='expense-tracker' }``.
+
+    Args:
+        file_id: Drive file or folder ID.
+        properties: Public custom properties to merge. Value ``None``
+            for a key deletes that key.
+        app_properties: App-private custom properties to merge (same
+            null-deletes semantics).
+        account: Optional account selector — name or email. Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``id``, ``name``, and the resulting ``properties`` and
+        ``app_properties`` maps (echoed from the same call — no extra
+        read).
+
+    Raises:
+        ValueError: if neither ``properties`` nor ``app_properties`` is
+            given.
+    """
+    if properties is None and app_properties is None:
+        raise ValueError(
+            "set_properties requires properties and/or app_properties"
+        )
+
+    body: dict = {}
+    if properties is not None:
+        body["properties"] = properties
+    if app_properties is not None:
+        body["appProperties"] = app_properties
+
+    service = get_drive_service(account=account)
+    updated = service.files().update(
+        fileId=file_id,
+        body=body,
+        fields="id, name, properties, appProperties",
+        supportsAllDrives=True,
+    ).execute()
+
+    return {
+        "id": updated.get("id"),
+        "name": updated.get("name"),
+        "properties": updated.get("properties", {}),
+        "app_properties": updated.get("appProperties", {}),
+    }
+
+
 def delete_file(
     file_id: str,
     account: Optional[str] = None,

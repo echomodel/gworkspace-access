@@ -19,6 +19,8 @@ import os
 import shlex
 from typing import Any, Optional
 
+from googleapiclient.errors import HttpError
+
 from gwsa.sdk import drive
 from gwsa.sdk.destinations import (
     DEFAULT_INLINE_SIZE_CAP_BYTES,
@@ -414,6 +416,76 @@ async def drive_move(
         return drive.move_file(file_id, destination_folder_id, account=account)
     except Exception as e:
         logger.error(f"Error moving file: {e}")
+        return {"error": str(e)}
+
+
+async def drive_set_properties(
+    file_id: str,
+    properties: Optional[dict] = None,
+    app_properties: Optional[dict] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Set custom key/value metadata on a Drive file or folder.
+
+    Use this to tag a file for later programmatic discovery — e.g. mark
+    a backing spreadsheet so a skill can find it by tag instead of a
+    hardcoded ID. Tag once; discover thereafter with ``drive_search``
+    using ``properties has { key='...' and value='...' }``.
+
+    Two maps are available:
+
+    - ``properties`` — visible to any app with file access. One shared
+      namespace across apps, so **namespace your keys** (e.g.
+      ``myapp``). Use this for cross-environment discovery
+      (cloud connector + local CLI + mobile all see it).
+    - ``app_properties`` — private to the OAuth client that wrote them;
+      other clients can't see them. Good for secrecy, **bad for
+      cross-client discovery**.
+
+    The update is a **per-key merge** in a single API call: a key in
+    the map is added/updated; a key with value ``null`` is deleted;
+    keys not mentioned are left untouched (never clobbers other apps'
+    tags). No read-before-write. These tags are API-only — they never
+    appear in the Drive/Docs/Sheets UI and do not travel with a
+    downloaded copy.
+
+    Args:
+        file_id: Drive file or folder ID.
+        properties: Public custom properties to merge (``null`` value
+            deletes a key).
+        app_properties: App-private custom properties to merge.
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``id``, ``name``, and the resulting ``properties`` /
+        ``app_properties`` maps. Error envelope if neither map is given
+        or the file can't be reached.
+    """
+    try:
+        return drive.set_properties(
+            file_id,
+            properties=properties,
+            app_properties=app_properties,
+            account=account,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except HttpError as e:
+        if e.resp.status == 403:
+            logger.error(f"Permission error setting properties: {e}")
+            return {
+                "error": "The caller does not have permission.",
+                "details": str(e),
+                "hint": (
+                    "The chosen gwsa account may not have edit access to "
+                    "this file. Try a different account via the 'account' "
+                    "parameter (see 'list_google_accounts')."
+                ),
+            }
+        raise
+    except Exception as e:
+        logger.error(f"Error setting properties: {e}")
         return {"error": str(e)}
 
 

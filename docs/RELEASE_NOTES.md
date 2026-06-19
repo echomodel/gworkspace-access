@@ -1,5 +1,25 @@
 # Release Notes
 
+## v0.22.0 — custom Drive properties (tag files for discovery)
+
+Adds the ability to attach custom key/value metadata to any Drive file
+or folder, so a file can be **found by tag instead of a hardcoded ID**.
+
+- **New SDK `gwsa.sdk.drive.set_properties`** + MCP tool
+  `drive_set_properties` + CLI `gwsa drive set-properties`. Sets public
+  `properties` and/or app-private `appProperties`.
+- **Per-key merge in a single `files.update` call** — a key in the map
+  is added/updated, a `null` value deletes a key, and keys not mentioned
+  are left untouched (never clobbers other apps' or earlier tags). No
+  read-before-write.
+- **Discovery** uses the existing `drive_search` with Drive's native
+  query, e.g. `properties has { key='myapp' and value='…' }`.
+- Tags are API-only: they don't appear in the Drive/Docs/Sheets UI and
+  don't travel with a downloaded copy of the file.
+- Guidance: prefer **public `properties` with a namespaced key** for
+  discovery that must work across different OAuth clients (a cloud
+  deployment and a local CLI don't share each other's `appProperties`).
+
 ## v0.21.0 — Sheets MCP tools + SDK (create, read, write, tail)
 
 Sheets graduates from CLI-only to a full SDK domain with MCP tools,

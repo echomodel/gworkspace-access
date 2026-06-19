@@ -157,6 +157,45 @@ def create_folder(name, parent_id):
         raise SystemExit(1)
 
 
+@drive_group.command('set-properties')
+@click.argument('file_id')
+@click.option('--prop', 'props', multiple=True, metavar='KEY=VALUE',
+              help='Public property to set (repeatable). Use KEY= to '
+                   'delete a key.')
+@click.option('--app-prop', 'app_props', multiple=True, metavar='KEY=VALUE',
+              help='App-private property to set (repeatable).')
+@require_scopes('drive')
+def set_properties(file_id, props, app_props):
+    """Set custom key/value metadata on a Drive file or folder.
+
+    Tags are API-only (invisible in the Drive UI) and merge per key —
+    keys you don't pass are left untouched; KEY= (empty value) deletes
+    a key. Discover later with: drive search "properties has { key='K'
+    and value='V' }".
+    """
+    def _parse(pairs):
+        out = {}
+        for p in pairs:
+            if '=' not in p:
+                raise click.ClickException(
+                    f"Property must be KEY=VALUE, got: {p}")
+            k, v = p.split('=', 1)
+            out[k] = (None if v == '' else v)
+        return out
+
+    properties = _parse(props) if props else None
+    app_properties = _parse(app_props) if app_props else None
+    if properties is None and app_properties is None:
+        raise click.ClickException("Pass at least one --prop or --app-prop.")
+    try:
+        result = drive.set_properties(
+            file_id, properties=properties, app_properties=app_properties)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
 @drive_group.group('revisions')
 def revisions_group():
     """File revision history — a lightweight version store for uploaded files.
