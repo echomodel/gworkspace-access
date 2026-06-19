@@ -361,7 +361,7 @@ def test_drive_get_metadata_mcp_returns_error_envelope_on_failure():
 def test_set_properties_sends_merge_body_single_call():
     raw = {
         "id": "f1",
-        "name": "Daily Energy Log",
+        "name": "Test File",
         "properties": {"myapp": "expense-tracker"},
     }
     fake_service = MagicMock()
@@ -421,7 +421,7 @@ def test_drive_set_properties_mcp_happy_path():
     try:
         sdk_response = {
             "id": "f1",
-            "name": "Daily Energy Log",
+            "name": "Test File",
             "properties": {"myapp": "expense-tracker"},
             "app_properties": {},
         }
