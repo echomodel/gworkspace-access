@@ -1,6 +1,7 @@
-"""Google Docs creation operations."""
-
+import io
 from typing import Optional
+
+from googleapiclient.http import MediaIoBaseUpload
 
 from .service import get_docs_service
 from ..drive.service import get_drive_service
@@ -10,6 +11,7 @@ def create_document(
     title: str,
     body_text: Optional[str] = None,
     folder_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """
@@ -19,6 +21,7 @@ def create_document(
         title: The title for the new document
         body_text: Optional initial body text to insert
         folder_id: Optional folder ID to create the doc in (default: My Drive root)
+        mime_type: Optional MIME type for body_text (e.g. 'text/html')
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -28,6 +31,35 @@ def create_document(
             - title: Document title
             - url: URL to open the document
     """
+    if body_text and mime_type == "text/html":
+        drive_service = get_drive_service(account=account)
+
+        file_metadata = {
+            "name": title,
+            "mimeType": "application/vnd.google-apps.document",
+        }
+        if folder_id:
+            file_metadata["parents"] = [folder_id]
+
+        media = MediaIoBaseUpload(
+            io.BytesIO(body_text.encode("utf-8")),
+            mimetype="text/html",
+            resumable=True,
+        )
+
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+
+        return {
+            "id": file.get("id"),
+            "title": file.get("name"),
+            "url": file.get("webViewLink"),
+        }
+
     docs_service = get_docs_service(account=account)
 
     # Create the document

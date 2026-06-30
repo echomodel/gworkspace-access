@@ -145,6 +145,14 @@ async def test_list_chat_messages_includes_attachments(patch_chat_service):
 
 
 @pytest.mark.asyncio
+async def test_list_chat_messages_passes_page_token(patch_chat_service):
+    await chat_tools.list_chat_messages(
+        space_id="spaces/space-id", page_token="dummy-token"
+    )
+    assert patch_chat_service["list_kwargs"].get("pageToken") == "dummy-token"
+
+
+@pytest.mark.asyncio
 async def test_download_chat_attachment_inline(patch_chat_service):
     res = await chat_tools.download_chat_attachment(
         resource_name="base64-ref",

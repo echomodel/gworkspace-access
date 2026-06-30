@@ -58,6 +58,7 @@ async def create_doc(
     title: str,
     body_text: Optional[str] = None,
     folder_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a new Google Doc.
@@ -68,6 +69,7 @@ async def create_doc(
         title: Title for the new document.
         body_text: Optional initial body text to insert.
         folder_id: Optional folder ID (defaults to My Drive root).
+        mime_type: Optional MIME type for body_text (e.g. 'text/html' to parse and convert HTML formatting).
         account: Optional account selector (name or email). Omit to
             create in the user's default account.
 
@@ -79,6 +81,7 @@ async def create_doc(
             title=title,
             body_text=body_text,
             folder_id=folder_id,
+            mime_type=mime_type,
             account=account,
         )
     except Exception as e:

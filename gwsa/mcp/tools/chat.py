@@ -164,6 +164,7 @@ async def list_chat_messages(
     space_id: str,
     filter: Optional[str] = None,
     page_size: int = 25,
+    page_token: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     """List messages in a Google Chat space, with an optional filter.
@@ -177,6 +178,7 @@ async def list_chat_messages(
         space_id: Resource name of the space (e.g., "spaces/AAA...").
         filter: Optional filter query.
         page_size: Maximum number of messages to return.
+        page_token: Optional page token to retrieve the next page of results.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
@@ -187,7 +189,7 @@ async def list_chat_messages(
     try:
         chat_service = chat.get_chat_service(account=account)
         response = chat_service.spaces().messages().list(
-            parent=space_id, filter=filter, pageSize=page_size
+            parent=space_id, filter=filter, pageSize=page_size, pageToken=page_token
         ).execute()
         messages = response.get("messages", [])
         simplified = []
