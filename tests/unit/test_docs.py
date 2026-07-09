@@ -7,6 +7,7 @@ from mcp_app.models import UserRecord
 
 from gwsa import GoogleAccount, Profile
 from gwsa.sdk.docs.create import create_document
+from gwsa.sdk.docs import get_document, get_document_text, get_document_content
 
 
 def _set_user_with_account():
@@ -102,3 +103,96 @@ class TestCreateDocument:
             assert call_args["body"]["mimeType"] == "application/vnd.google-apps.document"
         finally:
             current_user.reset(tok)
+
+
+class TestReadDocument:
+    """Test suite for reading documents, including tabbed document support."""
+
+    @patch("gwsa.sdk.docs.read.get_docs_service")
+    @patch("gwsa.sdk.docs.read.get_drive_service")
+    def test_get_document_passes_include_tabs_content(self, mock_get_drive_service, mock_get_docs_service):
+        """Should pass includeTabsContent=True to the Google Docs API get request."""
+        tok = _set_user_with_account()
+        try:
+            mock_drive = MagicMock()
+            mock_get_drive_service.return_value = mock_drive
+            mock_drive.files().get().execute.return_value = {"mimeType": "application/vnd.google-apps.document"}
+
+            mock_docs = MagicMock()
+            mock_get_docs_service.return_value = mock_docs
+            mock_get = mock_docs.documents().get
+            mock_get.return_value.execute.return_value = {
+                "documentId": "test-doc-id",
+                "title": "Test Doc",
+                "body": {"content": []}
+            }
+
+            get_document("test-doc-id")
+
+            # Verify that includeTabsContent=True was passed to documents().get()
+            mock_get.assert_called_once_with(documentId="test-doc-id", includeTabsContent=True)
+        finally:
+            current_user.reset(tok)
+
+    @patch("gwsa.sdk.docs.read.get_docs_service")
+    @patch("gwsa.sdk.docs.read.get_drive_service")
+    def test_get_document_content_extracts_text_from_nested_tabs(self, mock_get_drive_service, mock_get_docs_service):
+        """Should recursively extract text from all tabs and child tabs in a tabbed document."""
+        tok = _set_user_with_account()
+        try:
+            mock_drive = MagicMock()
+            mock_get_drive_service.return_value = mock_drive
+            mock_drive.files().get().execute.return_value = {"mimeType": "application/vnd.google-apps.document"}
+
+            mock_docs = MagicMock()
+            mock_get_docs_service.return_value = mock_docs
+            mock_docs.documents().get().execute.return_value = {
+                "documentId": "test-tabbed-doc",
+                "title": "Tabbed SOW",
+                "revisionId": "rev-123",
+                "tabs": [
+                    {
+                        "tabProperties": {"title": "Tab 1", "tabId": "tab.1"},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [{"textRun": {"content": "Content of Tab 1\n"}}]
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "tabProperties": {"title": "Tab 2", "tabId": "tab.2"},
+                        "childTabs": [
+                            {
+                                "tabProperties": {"title": "Subtab 2a", "tabId": "tab.2a"},
+                                "documentTab": {
+                                    "body": {
+                                        "content": [
+                                            {
+                                                "paragraph": {
+                                                    "elements": [{"textRun": {"content": "Content of Subtab 2a\n"}}]
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+
+            result = get_document_content("test-tabbed-doc")
+
+            assert result["id"] == "test-tabbed-doc"
+            assert result["title"] == "Tabbed SOW"
+            assert result["text"] == "Content of Tab 1\nContent of Subtab 2a\n"
+            assert result["revision_id"] == "rev-123"
+        finally:
+            current_user.reset(tok)
+

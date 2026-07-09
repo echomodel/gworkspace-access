@@ -42,7 +42,7 @@ def get_document(doc_id: str, account: Optional[str] = None) -> dict:
         pass
 
     service = get_docs_service(account=account)
-    return service.documents().get(documentId=doc_id).execute()
+    return service.documents().get(documentId=doc_id, includeTabsContent=True).execute()
 
 
 def get_document_text(doc_id: str, account: Optional[str] = None) -> str:
@@ -81,7 +81,7 @@ def get_document_content(doc_id: str, account: Optional[str] = None) -> dict:
 
 def extract_text_from_document(doc: dict) -> str:
     """
-    Extract plain text from a document structure.
+    Extract plain text from a document structure, supporting both tabbed and non-tabbed documents.
 
     Args:
         doc: The document object from the API
@@ -89,7 +89,27 @@ def extract_text_from_document(doc: dict) -> str:
     Returns:
         Plain text content
     """
-    content = doc.get("body", {}).get("content", [])
+    if "tabs" in doc:
+        return extract_text_from_tabs(doc["tabs"])
+    return extract_text_from_body(doc.get("body", {}))
+
+
+def extract_text_from_tabs(tabs: list) -> str:
+    """Recursively extract text from a list of tabs and their child tabs."""
+    text_parts = []
+    for tab in tabs:
+        if "documentTab" in tab:
+            doc_tab = tab["documentTab"]
+            if "body" in doc_tab:
+                text_parts.append(extract_text_from_body(doc_tab["body"]))
+        if "childTabs" in tab:
+            text_parts.append(extract_text_from_tabs(tab["childTabs"]))
+    return "".join(text_parts)
+
+
+def extract_text_from_body(body: dict) -> str:
+    """Extract text from a single document or tab body."""
+    content = body.get("content", [])
     text_parts = []
 
     for element in content:

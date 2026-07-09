@@ -21,7 +21,7 @@ from gwsa.mcp.tools import mail as mail_tools
 from gwsa.mcp.tools import sheets as sheets_tools
 
 
-__version__ = "0.24.0"
+__version__ = "0.24.1"
 
 
 class GoogleAccount(BaseModel):
