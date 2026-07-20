@@ -1,5 +1,27 @@
 # Release Notes
 
+## v0.25.0 — one batch label tool replaces add/remove
+
+Gmail label changes now go through a single batch primitive so a whole
+set of messages can be relabeled — e.g. mass-archived — in one call.
+
+- **MCP:** `modify_email_labels(message_ids, add=[...], remove=[...])`
+  replaces the single-message `add_email_label` and `remove_email_label`
+  tools. It applies the same label delta to every message via Gmail's
+  `messages.batchModify` (chunked at 1000 ids). Archive = `remove=["INBOX"]`.
+- **CLI:** `gwsa mail label MID [MID ...] --add LABEL --remove LABEL`
+  (repeatable flags; `-` reads whitespace-separated IDs from stdin). The
+  old `gwsa mail label <id> <label> [--remove]` positional form is gone.
+- **SDK:** `mail.modify_labels(message_ids, add_labels=…, remove_labels=…)`
+  now takes a list of IDs (a bare string is still accepted as one).
+  `add_label` / `remove_label` removed.
+- **Idempotent:** adding a present label or removing an absent one is a
+  no-op — each message converges to the desired state without failures.
+- **Scope:** messages only. Threads are not handled by this tool.
+
+Connectors that cache tool schemas (claude.ai / Cowork) need a reconnect
+after upgrading to see the new shape.
+
 ## v0.23.0 — security: host-path Drive I/O is stdio-only
 
 Closes an arbitrary server-side file read/write on the **hosted (HTTP)**

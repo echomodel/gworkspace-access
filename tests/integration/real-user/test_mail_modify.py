@@ -22,7 +22,7 @@ def cleanup_test_labels(cli_runner, search_query, today_minus_n_days, test_label
 
     if search_result["returncode"] == 0 and search_result["json"]:
         for msg in search_result["json"]:
-            cli_runner(["mail", "label", msg["id"], test_label, "--remove"])
+            cli_runner(["mail", "label", msg["id"], "--remove", test_label])
 
     # Yield control to tests
     yield
@@ -32,7 +32,7 @@ def cleanup_test_labels(cli_runner, search_query, today_minus_n_days, test_label
 
     if search_result["returncode"] == 0 and search_result["json"]:
         for msg in search_result["json"]:
-            cli_runner(["mail", "label", msg["id"], test_label, "--remove"])
+            cli_runner(["mail", "label", msg["id"], "--remove", test_label])
 
 
 @pytest.mark.integration
@@ -79,7 +79,7 @@ def test_mail_label_apply(cli_runner, search_query, today_minus_n_days, test_ema
     )
 
     # Step 3: Apply the test label
-    label_result = cli_runner(["mail", "label", message_id, test_label])
+    label_result = cli_runner(["mail", "label", message_id, "--add", test_label])
 
     assert label_result["returncode"] == 0, f"Label command failed: {label_result['stderr']}"
     assert label_result["json"] is not None, "Invalid JSON response from label command"
@@ -150,7 +150,7 @@ def test_mail_label_remove(cli_runner, search_query, today_minus_n_days, test_em
     assert len(label_ids_before) > 0, "Message has no labels"
 
     # Step 3: Remove the test label
-    remove_result = cli_runner(["mail", "label", message_id, test_label, "--remove"])
+    remove_result = cli_runner(["mail", "label", message_id, "--remove", test_label])
 
     assert remove_result["returncode"] == 0, f"Remove label command failed: {remove_result['stderr']}"
     assert remove_result["json"] is not None, "Invalid JSON response from remove command"

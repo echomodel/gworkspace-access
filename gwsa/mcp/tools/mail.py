@@ -104,63 +104,48 @@ async def read_email(
         return {"error": str(e)}
 
 
-async def add_email_label(
-    message_id: str,
-    label_name: str,
+async def modify_email_labels(
+    message_ids: list[str],
+    add: Optional[list[str]] = None,
+    remove: Optional[list[str]] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Add a label to a Gmail message. Creates the label if missing.
+    """Add and/or remove labels across one or more Gmail messages.
+
+    Applies the same label delta to every message in one batch. Labels
+    in ``add`` are created if missing; labels in ``remove`` that don't
+    exist are ignored. The operation is idempotent — adding a label
+    already present or removing one already absent is a no-op, so each
+    message converges to the desired state without per-message failures.
+
+    Use this for both single-message and bulk changes (e.g. mass-archive
+    by removing the ``INBOX`` label from many messages at once). A single
+    message is just a one-element ``message_ids`` list.
 
     Args:
-        message_id: Gmail message ID.
-        label_name: Label name (e.g., "Important", "ToReview").
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
+        message_ids: Gmail message IDs to modify.
+        add: Label names to ensure present (e.g. ["ToReview"]).
+        remove: Label names to ensure absent (e.g. ["INBOX"] to archive).
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
 
     Returns:
-        Dict with ``success``, ``message_id``, ``label_added``, and
-        ``current_labels``.
+        Dict with ``success``, ``count``, ``message_ids``, ``added``,
+        and ``removed``.
     """
     try:
-        result = mail.add_label(message_id, label_name, account=account)
+        result = mail.modify_labels(
+            message_ids, add_labels=add, remove_labels=remove, account=account
+        )
         return {
             "success": True,
-            "message_id": message_id,
-            "label_added": label_name,
-            "current_labels": result.get("labelIds", []),
+            "count": result["count"],
+            "message_ids": result["message_ids"],
+            "added": result["added"],
+            "removed": result["removed"],
         }
     except Exception as e:
-        logger.error(f"Error adding label: {e}")
-        return {"error": str(e)}
-
-
-async def remove_email_label(
-    message_id: str,
-    label_name: str,
-    account: Optional[str] = None,
-) -> dict[str, Any]:
-    """Remove a label from a Gmail message.
-
-    Args:
-        message_id: Gmail message ID.
-        label_name: Label name to remove.
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
-
-    Returns:
-        Dict with ``success``, ``message_id``, ``label_removed``, and
-        ``current_labels``.
-    """
-    try:
-        result = mail.remove_label(message_id, label_name, account=account)
-        return {
-            "success": True,
-            "message_id": message_id,
-            "label_removed": label_name,
-            "current_labels": result.get("labelIds", []),
-        }
-    except Exception as e:
-        logger.error(f"Error removing label: {e}")
+        logger.error(f"Error modifying labels: {e}")
         return {"error": str(e)}
 
 

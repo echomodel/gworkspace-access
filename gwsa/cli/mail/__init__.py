@@ -6,8 +6,6 @@ from gwsa.sdk.mail import (
     search_messages,
     read_message,
     modify_labels,
-    add_label,
-    remove_label,
     list_labels,
 )
 
@@ -27,7 +25,5 @@ __all__ = [
     "search_messages",
     "read_message",
     "modify_labels",
-    "add_label",
-    "remove_label",
     "list_labels",
 ]

@@ -418,7 +418,7 @@ a path with `drive_find_folder`); relocating later is `drive_move`.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 53 tools across mail,
+`gwsa-mcp` is a stdio MCP server exposing 52 tools across mail,
 docs, drive, sheets, chat, calendar, and account discovery.
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

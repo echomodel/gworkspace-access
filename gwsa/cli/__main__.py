@@ -137,20 +137,39 @@ def mail_read(message_id):
 
 
 @mail.command("label")
-@click.argument('message_id')
-@click.argument('label_name')
-@click.option('--remove', is_flag=True,
-              help='Remove the label instead of adding it.')
-def mail_label(message_id, label_name, remove):
-    """Add or remove a label on a message."""
+@click.argument('message_ids', nargs=-1)
+@click.option('--add', 'add_labels', multiple=True,
+              help='Label to add (repeatable). Created if missing.')
+@click.option('--remove', 'remove_labels', multiple=True,
+              help='Label to remove (repeatable). Use "INBOX" to archive.')
+def mail_label(message_ids, add_labels, remove_labels):
+    """Add and/or remove labels across one or more messages (idempotent).
+
+    MESSAGE_IDS is one or more Gmail message IDs; pass "-" to read
+    whitespace-separated IDs from stdin. Applies the same label delta to
+    every message in a single batch. Examples:
+
+        gwsa mail label MID1 MID2 --remove INBOX          # archive
+        gwsa mail label MID --add ToReview --remove INBOX # relabel
+    """
     try:
-        if remove:
-            updated = sdk_mail.remove_label(message_id, label_name)
-        else:
-            updated = sdk_mail.add_label(message_id, label_name)
-        click.echo(json.dumps(updated, indent=2))
+        ids = list(message_ids)
+        if ids == ["-"]:
+            ids = sys.stdin.read().split()
+        if not ids:
+            raise click.UsageError("No message IDs provided.")
+        if not add_labels and not remove_labels:
+            raise click.UsageError("Provide at least one --add or --remove label.")
+        result = sdk_mail.modify_labels(
+            ids,
+            add_labels=list(add_labels) or None,
+            remove_labels=list(remove_labels) or None,
+        )
+        click.echo(json.dumps(result, indent=2))
+    except click.UsageError:
+        raise
     except Exception as e:
-        logger.critical(f"Mail label failed for {message_id}: {e}", exc_info=True)
+        logger.critical(f"Mail label failed: {e}", exc_info=True)
         sys.exit(1)
 
 

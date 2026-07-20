@@ -80,7 +80,7 @@ functions from each module:
 
 - **`gwsa.mcp.tools.accounts`** (1): list_google_accounts
 - **`gwsa.mcp.tools.mail`** (10): search_emails, read_email,
-  add_email_label, remove_email_label, list_email_labels,
+  modify_email_labels, list_email_labels,
   send_email, reply_email, create_email_draft,
   download_email_attachment, get_email_thread
 - **`gwsa.mcp.tools.docs`** (6): list_docs, create_doc, read_doc,

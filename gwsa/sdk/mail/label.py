@@ -56,24 +56,43 @@ def get_or_create_label(
     return created['id']
 
 
+# Gmail's batchModify accepts at most 1000 message ids per call.
+_BATCH_MODIFY_LIMIT = 1000
+
+
 def modify_labels(
-    message_id: str,
+    message_ids: List[str] | str,
     add_labels: Optional[List[str]] = None,
     remove_labels: Optional[List[str]] = None,
     account: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Modify labels on a Gmail message.
+    """Add and/or remove labels across one or more Gmail messages.
+
+    Applies the same label delta to every message via Gmail's
+    ``messages.batchModify`` (chunked at 1000 ids per API call). Labels
+    named in ``add_labels`` are created if missing; labels named in
+    ``remove_labels`` that don't exist are skipped.
+
+    The operation is idempotent: adding a label already present, or
+    removing one already absent, is a silent no-op — each message
+    converges to the desired state without per-message failures.
 
     Args:
-        message_id: The Gmail message ID.
-        add_labels: List of label names to add.
-        remove_labels: List of label names to remove.
+        message_ids: One Gmail message ID or a list of them. A bare
+            string is treated as a single-element list.
+        add_labels: Label names to ensure present.
+        remove_labels: Label names to ensure absent.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
     Returns:
-        Updated message resource dict.
+        Summary dict: ``message_ids``, ``count``, ``added``, ``removed``.
+        (``batchModify`` returns no per-message body, so the confirmed
+        delta is reported rather than fetched message resources.)
     """
+    if isinstance(message_ids, str):
+        message_ids = [message_ids]
+
     service = get_gmail_service(account=account)
 
     add_label_ids = []
@@ -89,37 +108,26 @@ def modify_labels(
             if name in label_map:
                 remove_label_ids.append(label_map[name])
 
-    if not add_label_ids and not remove_label_ids:
-        return service.users().messages().get(
-            userId='me', id=message_id, format='minimal'
-        ).execute()
+    summary: Dict[str, Any] = {
+        'message_ids': message_ids,
+        'count': len(message_ids),
+        'added': add_labels or [],
+        'removed': remove_labels or [],
+    }
 
-    body = {
+    if not message_ids or (not add_label_ids and not remove_label_ids):
+        return summary
+
+    label_delta = {
         'addLabelIds': add_label_ids,
         'removeLabelIds': remove_label_ids,
     }
 
-    updated = service.users().messages().modify(
-        userId='me', id=message_id, body=body
-    ).execute()
+    for start in range(0, len(message_ids), _BATCH_MODIFY_LIMIT):
+        chunk = message_ids[start:start + _BATCH_MODIFY_LIMIT]
+        service.users().messages().batchModify(
+            userId='me', body={'ids': chunk, **label_delta}
+        ).execute()
 
-    logger.debug(f"Modified labels for message {message_id}")
-    return updated
-
-
-def add_label(
-    message_id: str,
-    label_name: str,
-    account: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Add a label to a Gmail message."""
-    return modify_labels(message_id, add_labels=[label_name], account=account)
-
-
-def remove_label(
-    message_id: str,
-    label_name: str,
-    account: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Remove a label from a Gmail message."""
-    return modify_labels(message_id, remove_labels=[label_name], account=account)
+    logger.debug(f"Modified labels on {len(message_ids)} message(s)")
+    return summary

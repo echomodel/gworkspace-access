@@ -11,8 +11,8 @@ Example usage:
     # Read a specific message
     message = mail.read("message_id_here")
 
-    # Add a label to a message
-    mail.add_label("message_id_here", "MyLabel")
+    # Add and/or remove labels across one or more messages (batch, idempotent)
+    mail.modify_labels(["id1", "id2"], add_labels=["MyLabel"], remove_labels=["INBOX"])
 
     # Send an email
     result = mail.send("test@example.com", "Subject", "Body text")
@@ -28,7 +28,7 @@ from .read import (
     get_attachment_with_metadata,
     get_thread,
 )
-from .label import modify_labels, add_label, remove_label, list_labels
+from .label import modify_labels, list_labels
 from .send import send_message, create_draft, reply_message, forward_message
 
 __all__ = [
@@ -41,8 +41,6 @@ __all__ = [
     "get_attachment_with_metadata",
     "get_thread",
     "modify_labels",
-    "add_label",
-    "remove_label",
     "list_labels",
     "send_message",
     "create_draft",
