@@ -100,8 +100,11 @@ async def read_doc(
 
     Args:
         doc_id: Google Doc ID.
-        format: "content" (metadata + text), "text" (plain text only),
-            or "raw" (full API response).
+        format: "content" (metadata + text + revision_id), "text" (plain
+            text only), or "raw" (the full Docs API document — every element's
+            start/end indices, existing text/paragraph styles, named ranges,
+            tab IDs, and revisionId). Use "raw" to get the indices and
+            revision id needed to build ``batch_update_doc`` requests.
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
@@ -294,14 +297,58 @@ async def batch_update_doc(
         account: Optional account selector (name or email). Omit to use the
             user's default account.
 
+    Getting the inputs from a read: call ``read_doc(doc_id, format="raw")``
+    first. The raw document gives you everything needed to build requests —
+    each element's ``startIndex``/``endIndex`` (for index-based requests),
+    existing ``textStyle``/``paragraphStyle``, named ranges, tab IDs, and the
+    ``revisionId`` (pass as ``required_revision_id``). Text-anchored requests
+    (``replaceAllText``) need none of that — just the text.
+
+    Common request recipes (each item is one entry in ``requests``):
+      - Replace a placeholder / phrase (formatting preserved):
+        ``{"replaceAllText": {"containsText": {"text": "{{TITLE}}",
+        "matchCase": true}, "replaceText": "Q3 Report"}}``
+      - Bold a span (indices from a raw read):
+        ``{"updateTextStyle": {"range": {"startIndex": 5, "endIndex": 12},
+        "textStyle": {"bold": true}, "fields": "bold"}}``
+      - Make a paragraph a heading:
+        ``{"updateParagraphStyle": {"range": {"startIndex": 1, "endIndex": 9},
+        "paragraphStyle": {"namedStyleType": "HEADING_1"},
+        "fields": "namedStyleType"}}``
+      - Bullet a range:
+        ``{"createParagraphBullets": {"range": {"startIndex": 1,
+        "endIndex": 40}, "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"}}``
+      - Delete a span:
+        ``{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 12}}}``
+      - Insert text at a point:
+        ``{"insertText": {"location": {"index": 1}, "text": "Intro\n"}}``
+
+    Example use cases:
+      - Update one section of a living doc: raw-read to find the section's
+        anchor/indices, send a single ``replaceAllText`` (or a delete+insert
+        pair) — the rest of the doc is untouched.
+      - Fill a template: one call with several ``replaceAllText`` requests, one
+        per ``{{placeholder}}``; atomic, so it's all-or-nothing.
+      - Format a heading and bullet a list in one atomic call by sending an
+        ``updateParagraphStyle`` plus a ``createParagraphBullets`` request.
+
     Returns:
-        Dict with ``success``, ``document_id``, ``revision_id`` (the NEW
-        revision after the write — pass it as ``required_revision_id`` on the
-        next guarded edit), and ``replies`` (per-request results, e.g.
-        ``replaceAllText.occurrencesChanged`` — use these to VERIFY each edit
-        did exactly what you intended). On failure returns an ``error``
-        envelope; a stale ``required_revision_id`` surfaces as an error so you
-        re-read and retry rather than overwrite.
+        On success, a dict with:
+          - ``success``: ``True``.
+          - ``document_id``: the document's ID.
+          - ``revision_id``: the NEW revision after this write. Pass it as
+            ``required_revision_id`` on your next guarded edit to chain safely.
+          - ``replies``: a list, one entry per request, in order. Style/insert
+            requests return ``{}``; ``replaceAllText`` returns
+            ``{"replaceAllText": {"occurrencesChanged": N}}`` — check ``N`` to
+            VERIFY each edit changed exactly what you intended. If N is 0 your
+            anchor missed; if higher than expected the anchor wasn't unique.
+          - ``write_control``: Google's raw writeControl object (the resulting
+            revision), passed through unmodified.
+        On failure, an ``error`` envelope with ``error``/``details``/``hint``.
+        A stale ``required_revision_id`` (the doc changed since you read it) or
+        a malformed request both surface as errors — nothing is applied (the
+        batch is atomic), so re-read for the current ``revision_id`` and retry.
     """
     try:
         result = docs.batch_update(
@@ -316,6 +363,7 @@ async def batch_update_doc(
                 or write_control.get("targetRevisionId")
             ),
             "replies": result.get("replies", []),
+            "write_control": write_control,
         }
     except (LocalPathError, InvalidDocIdError) as e:
         return {"error": str(e)}
