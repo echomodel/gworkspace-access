@@ -256,3 +256,94 @@ async def replace_in_doc(
     except Exception as e:
         logger.error(f"Error replacing in doc: {e}")
         return {"error": str(e)}
+
+
+async def batch_update_doc(
+    doc_id: str,
+    requests: list[dict[str, Any]],
+    required_revision_id: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply a raw Google Docs ``batchUpdate`` to a document — the full editing primitive.
+
+    NOTE: Works only with remote Google Docs in the cloud.
+
+    Faithful passthrough to the Docs API ``documents.batchUpdate``: it accepts
+    the same request objects the API accepts, so it can do in-place edits
+    beyond simple text swaps — text/paragraph styling (bold, headings), bullets,
+    inserting/deleting ranges, tables, named ranges, and more. The batch is
+    ATOMIC: if any request is invalid, none are applied (no partial writes).
+
+    Choosing a tool: for plain find/replace prefer ``replace_in_doc``; for a
+    simple insert use ``insert_in_doc``; use this when you need formatting or
+    structural edits. Text-anchored requests (``replaceAllText``) are safest —
+    they need no indices and preserve the containing paragraph's formatting.
+    Index-based requests need indices from a prior ``read_doc(format="raw")``.
+
+    Args:
+        doc_id: Google Doc ID.
+        requests: List of Docs API request objects. Examples:
+            ``{"replaceAllText": {"containsText": {"text": "{{TITLE}}",
+            "matchCase": true}, "replaceText": "Q3 Report"}}`` or
+            ``{"updateTextStyle": {"range": {"startIndex": 5, "endIndex": 12},
+            "textStyle": {"bold": true}, "fields": "bold"}}``.
+        required_revision_id: Optional optimistic-concurrency guard. When set,
+            the write is REJECTED if the document changed since that revision
+            (prevents clobbering a concurrent edit). Get it from
+            ``read_doc(format="raw")``'s ``revisionId`` / ``revision_id``.
+        account: Optional account selector (name or email). Omit to use the
+            user's default account.
+
+    Returns:
+        Dict with ``success``, ``document_id``, ``revision_id`` (the NEW
+        revision after the write — pass it as ``required_revision_id`` on the
+        next guarded edit), and ``replies`` (per-request results, e.g.
+        ``replaceAllText.occurrencesChanged`` — use these to VERIFY each edit
+        did exactly what you intended). On failure returns an ``error``
+        envelope; a stale ``required_revision_id`` surfaces as an error so you
+        re-read and retry rather than overwrite.
+    """
+    try:
+        result = docs.batch_update(
+            doc_id, requests, account, required_revision_id
+        )
+        write_control = result.get("writeControl", {})
+        return {
+            "success": True,
+            "document_id": doc_id,
+            "revision_id": (
+                write_control.get("requiredRevisionId")
+                or write_control.get("targetRevisionId")
+            ),
+            "replies": result.get("replies", []),
+        }
+    except (LocalPathError, InvalidDocIdError) as e:
+        return {"error": str(e)}
+    except HttpError as e:
+        status = getattr(getattr(e, "resp", None), "status", None)
+        if status == 403:
+            return {
+                "error": "The caller does not have permission.",
+                "details": str(e),
+                "hint": (
+                    "The chosen gwsa account may not have access to this "
+                    "document. Try a different account via the 'account' "
+                    "parameter (see 'list_google_accounts')."
+                ),
+            }
+        if status == 400:
+            return {
+                "error": "batchUpdate rejected (invalid request or stale revision).",
+                "details": str(e),
+                "hint": (
+                    "Either a request object was malformed (fix it — nothing "
+                    "was applied, the batch is atomic), or required_revision_id "
+                    "is stale (the doc changed since you read it — re-read to "
+                    "get the current revision_id, then retry)."
+                ),
+            }
+        logger.error(f"HTTP error in batch_update_doc: {e}")
+        return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"Error in batch_update_doc: {e}")
+        return {"error": str(e)}

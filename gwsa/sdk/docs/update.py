@@ -105,20 +105,33 @@ def batch_update(
     doc_id: str,
     requests: list,
     account: Optional[str] = None,
+    required_revision_id: Optional[str] = None,
 ) -> dict:
     """Execute a batch of update requests on a document.
 
+    Faithful passthrough to the Docs API ``documents.batchUpdate``. The batch
+    is atomic — if any request is invalid, none are applied.
+
     Args:
         doc_id: The Google Doc ID
-        requests: List of update request objects
+        requests: List of Docs API request objects (replaceAllText, insertText,
+            deleteContentRange, updateTextStyle, updateParagraphStyle,
+            createParagraphBullets, named ranges, etc.)
         account: Optional account selector — name or email. Omit to use
             the user's default account.
+        required_revision_id: Optional optimistic-concurrency guard. When set,
+            the write is rejected (HttpError 400) if the document has changed
+            since that revision, instead of clobbering a concurrent edit. Get
+            it from a prior read (``revisionId``).
 
     Returns:
-        The batchUpdate response.
+        The batchUpdate response (documentId, replies, writeControl).
     """
     validate_doc_id(doc_id)
     service = get_docs_service(account=account)
+    body: dict = {"requests": requests}
+    if required_revision_id:
+        body["writeControl"] = {"requiredRevisionId": required_revision_id}
     return service.documents().batchUpdate(
-        documentId=doc_id, body={"requests": requests}
+        documentId=doc_id, body=body
     ).execute()

@@ -137,5 +137,47 @@ def replace_in_doc(doc_id, find_text, replace_with, ignore_case):
         raise click.ClickException(f"An error occurred: {e}")
 
 
+@docs.command('batch-update')
+@click.argument('doc_id')
+@click.option('--requests-json', '-r', required=True,
+              help='JSON array of Docs API batchUpdate request objects.')
+@click.option('--required-revision-id', default=None,
+              help='Optimistic-concurrency guard: reject the write if the '
+                   'document changed since this revision.')
+@require_scopes('docs')
+def batch_update_doc(doc_id, requests_json, required_revision_id):
+    """Apply a raw Docs API batchUpdate to a document (the full editing primitive).
+
+    REQUESTS-JSON is a JSON array of Docs API request objects, e.g.
+    '[{"replaceAllText": {"containsText": {"text": "{{X}}", "matchCase": true}, "replaceText": "Y"}}]'.
+    The batch is atomic: if any request is invalid, none are applied.
+    """
+    try:
+        requests = json.loads(requests_json)
+        if not isinstance(requests, list):
+            raise click.ClickException(
+                "--requests-json must be a JSON array of request objects."
+            )
+        result = sdk_docs.batch_update(
+            doc_id, requests, None, required_revision_id
+        )
+        write_control = result.get("writeControl", {})
+        revision = (
+            write_control.get("requiredRevisionId")
+            or write_control.get("targetRevisionId")
+        )
+        click.echo(f"batchUpdate applied ({len(requests)} request(s)).")
+        if revision:
+            click.echo(f"  New revision: {revision}")
+        replies = result.get("replies", [])
+        if replies:
+            click.echo(f"  Replies: {json.dumps(replies)}")
+
+    except (LocalPathError, InvalidDocIdError) as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
 if __name__ == '__main__':
     docs()

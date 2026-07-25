@@ -7,7 +7,12 @@ from mcp_app.models import UserRecord
 
 from gwsa import GoogleAccount, Profile
 from gwsa.sdk.docs.create import create_document
-from gwsa.sdk.docs import get_document, get_document_text, get_document_content
+from gwsa.sdk.docs import (
+    get_document,
+    get_document_text,
+    get_document_content,
+    batch_update,
+)
 
 
 def _set_user_with_account():
@@ -193,6 +198,59 @@ class TestReadDocument:
             assert result["title"] == "Tabbed SOW"
             assert result["text"] == "Content of Tab 1\nContent of Subtab 2a\n"
             assert result["revision_id"] == "rev-123"
+        finally:
+            current_user.reset(tok)
+
+
+class TestBatchUpdate:
+    """Test suite for the batch_update passthrough SDK function."""
+
+    @patch("gwsa.sdk.docs.update.get_docs_service")
+    def test_batch_update_passes_requests(self, mock_get_docs_service):
+        """Should send the requests list to documents.batchUpdate as-is."""
+        tok = _set_user_with_account()
+        try:
+            mock_service = MagicMock()
+            mock_get_docs_service.return_value = mock_service
+            mock_batch = mock_service.documents().batchUpdate
+            mock_batch.return_value.execute.return_value = {"replies": []}
+
+            reqs = [
+                {
+                    "replaceAllText": {
+                        "containsText": {"text": "{{X}}", "matchCase": True},
+                        "replaceText": "Y",
+                    }
+                }
+            ]
+            batch_update("test-doc-1234567890", reqs)
+
+            mock_batch.assert_called_once_with(
+                documentId="test-doc-1234567890", body={"requests": reqs}
+            )
+        finally:
+            current_user.reset(tok)
+
+    @patch("gwsa.sdk.docs.update.get_docs_service")
+    def test_batch_update_adds_write_control(self, mock_get_docs_service):
+        """Should include writeControl.requiredRevisionId when given."""
+        tok = _set_user_with_account()
+        try:
+            mock_service = MagicMock()
+            mock_get_docs_service.return_value = mock_service
+            mock_batch = mock_service.documents().batchUpdate
+            mock_batch.return_value.execute.return_value = {}
+
+            reqs = [{"insertText": {"location": {"index": 1}, "text": "hi"}}]
+            batch_update("test-doc-1234567890", reqs, None, "rev-7")
+
+            mock_batch.assert_called_once_with(
+                documentId="test-doc-1234567890",
+                body={
+                    "requests": reqs,
+                    "writeControl": {"requiredRevisionId": "rev-7"},
+                },
+            )
         finally:
             current_user.reset(tok)
 
