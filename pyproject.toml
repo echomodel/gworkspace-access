@@ -17,7 +17,7 @@ dependencies = [
     "click>=8.0",
     "PyYAML",
     "click_option_group",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "rich",
     "pydantic>=2",
     "httpx",
