@@ -321,3 +321,297 @@ async def sheets_append(
     except Exception as e:
         logger.error(f"Error appending sheet rows: {e}")
         return {"error": str(e)}
+
+
+def _structure_error(action: str, e: Exception) -> dict[str, Any]:
+    """Shared error handling for the structural (batchUpdate-backed) tools."""
+    if isinstance(e, HttpError) and e.resp.status == 403:
+        logger.error(f"Permission error {action}: {e}")
+        return _permission_envelope(e)
+    logger.error(f"Error {action}: {e}")
+    return {"error": str(e)}
+
+
+async def sheets_batch_update(
+    spreadsheet_id: str,
+    requests: list,
+    allow_destructive: bool = False,
+    include_spreadsheet_in_response: bool = False,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply a raw Sheets API ``spreadsheets.batchUpdate`` — the full
+    structural-editing primitive.
+
+    Use this for anything the other sheets tools don't cover: rename,
+    reorder, hide, or delete tabs; insert/delete/move rows or columns;
+    formatting (``repeatCell``, ``updateBorders``); freezing header
+    rows; data validation; protected ranges; developer metadata. For
+    cell *values*, use ``sheets_update`` / ``sheets_append`` instead.
+
+    The batch is **atomic**: if any request is invalid, none are
+    applied. Requests run in order, and later requests see the effects
+    of earlier ones.
+
+    Destructive gate: a batch containing ``deleteSheet`` is rejected
+    unless ``allow_destructive`` is true.
+
+    Tabs are addressed by numeric ``sheetId`` (not title) inside
+    requests — get it from ``sheets_get_metadata``. Row/column
+    ``startIndex``/``endIndex`` are **0-based, end-exclusive** (row 5 in
+    the UI is ``startIndex: 4, endIndex: 5``).
+
+    Common requests::
+
+        {"addSheet": {"properties": {"title": "Archive"}}}
+        {"updateSheetProperties": {"properties": {"sheetId": 123,
+            "title": "New name"}, "fields": "title"}}
+        {"updateSheetProperties": {"properties": {"sheetId": 0,
+            "gridProperties": {"frozenRowCount": 1}},
+            "fields": "gridProperties.frozenRowCount"}}
+        {"deleteDimension": {"range": {"sheetId": 0,
+            "dimension": "ROWS", "startIndex": 4, "endIndex": 5}}}
+        {"repeatCell": {"range": {"sheetId": 0, "startRowIndex": 0,
+            "endRowIndex": 1}, "cell": {"userEnteredFormat":
+            {"textFormat": {"bold": true}}},
+            "fields": "userEnteredFormat.textFormat.bold"}}
+        {"deleteSheet": {"sheetId": 123}}   # needs allow_destructive
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        requests: List of Sheets API request objects, applied in order.
+        allow_destructive: Must be true to apply a batch containing
+            ``deleteSheet``.
+        include_spreadsheet_in_response: Also return the updated
+            spreadsheet resource as ``updatedSpreadsheet``.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        The raw API response: ``spreadsheetId``, ``replies`` (one entry
+        per request, in order — e.g. ``addSheet.properties.sheetId`` for
+        a new tab; ``{}`` for requests with no reply), and
+        ``updatedSpreadsheet`` when requested. On failure, ``error``.
+    """
+    try:
+        return sheets.batch_update(
+            spreadsheet_id,
+            requests,
+            allow_destructive=allow_destructive,
+            include_spreadsheet_in_response=include_spreadsheet_in_response,
+            account=account,
+        )
+    except Exception as e:
+        return _structure_error("applying sheets batchUpdate", e)
+
+
+async def sheets_add_tab(
+    spreadsheet_id: str,
+    title: str,
+    index: Optional[int] = None,
+    row_count: Optional[int] = None,
+    column_count: Optional[int] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Add a sheet (tab) to an existing spreadsheet.
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        title: Title of the new tab (must be unique in the spreadsheet).
+        index: Optional 0-based position among the tabs (default: last).
+        row_count: Optional initial row count (API default 1000).
+        column_count: Optional initial column count (API default 26).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with the new tab's ``sheet_id``, ``title``, ``index``,
+        ``row_count``, and ``column_count``.
+    """
+    try:
+        return sheets.add_tab(
+            spreadsheet_id,
+            title,
+            index=index,
+            row_count=row_count,
+            column_count=column_count,
+            account=account,
+        )
+    except Exception as e:
+        return _structure_error("adding sheet tab", e)
+
+
+async def sheets_insert_rows(
+    spreadsheet_id: str,
+    start_row: int,
+    count: int = 1,
+    sheet: Optional[str] = None,
+    inherit_from_before: bool = False,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Insert empty rows into a tab, shifting existing rows down.
+
+    Row numbers are 1-based, as shown in the Sheets UI and returned by
+    ``sheets_read_tail``. Fill the new rows afterwards with
+    ``sheets_update``.
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        start_row: Row number the first new row will occupy; the row
+            currently there (and everything below) moves down.
+        count: Number of rows to insert (default 1).
+        sheet: Optional tab title. Defaults to the first tab.
+        inherit_from_before: Copy formatting from the row above instead
+            of the row below (default false). Not allowed at row 1.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``sheet_id``, ``start_row`` / ``end_row`` (the new
+        empty rows, inclusive), and ``count``.
+    """
+    try:
+        return sheets.insert_rows(
+            spreadsheet_id,
+            start_row,
+            count=count,
+            sheet=sheet,
+            inherit_from_before=inherit_from_before,
+            account=account,
+        )
+    except Exception as e:
+        return _structure_error("inserting sheet rows", e)
+
+
+async def sheets_delete_rows(
+    spreadsheet_id: str,
+    start_row: int,
+    count: int = 1,
+    sheet: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Delete rows from a tab, shifting the rows below up.
+
+    One call regardless of sheet size — no need to rewrite the rows
+    below. Row numbers are 1-based, as shown in the Sheets UI and
+    returned by ``sheets_read_tail``. Row numbers below the deleted
+    range shift up by ``count`` afterwards.
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        start_row: Number of the first row to delete.
+        count: Number of rows to delete (default 1) — rows
+            ``start_row`` through ``start_row + count - 1``.
+        sheet: Optional tab title. Defaults to the first tab.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``sheet_id``, ``start_row`` / ``end_row`` (the rows
+        removed, inclusive), and ``count``.
+    """
+    try:
+        return sheets.delete_rows(
+            spreadsheet_id,
+            start_row,
+            count=count,
+            sheet=sheet,
+            account=account,
+        )
+    except Exception as e:
+        return _structure_error("deleting sheet rows", e)
+
+
+async def sheets_set_metadata(
+    spreadsheet_id: str,
+    key: str,
+    value: Optional[str] = None,
+    sheet: Optional[str] = None,
+    row: Optional[int] = None,
+    column: Optional[str] = None,
+    visibility: str = "DOCUMENT",
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Tag a spreadsheet, tab, row, or column with developer metadata
+    (a key/value pair) so it can be found later with
+    ``sheets_find_by_metadata`` instead of by title or position.
+
+    A tab tagged e.g. ``role=inventory`` stays discoverable even if the
+    user renames it; row/column tags move with their row/column as rows
+    are inserted or deleted around them. Tags are invisible in the
+    Sheets UI.
+
+    Location (pick by which arguments you pass):
+        - none of ``sheet``/``row``/``column`` → the whole spreadsheet
+        - ``sheet`` only → that tab
+        - ``row`` → that row (of ``sheet``, default first tab)
+        - ``column`` → that column (of ``sheet``, default first tab)
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        key: Metadata key, e.g. ``"role"``.
+        value: Optional metadata value, e.g. ``"inventory"``.
+        sheet: Optional tab title.
+        row: Optional 1-based row number.
+        column: Optional column letter, e.g. ``"C"``.
+        visibility: ``"DOCUMENT"`` (default — discoverable by any client
+            with access to the file) or ``"PROJECT"`` (only the Cloud
+            project that created it can see it).
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        The created tag: ``metadata_id``, ``key``, ``value``,
+        ``visibility``, ``location_type``, ``sheet_id``,
+        ``sheet_title``, ``row``, ``end_row``, ``column``, ``range``.
+    """
+    try:
+        return sheets.set_metadata(
+            spreadsheet_id,
+            key,
+            value=value,
+            sheet=sheet,
+            row=row,
+            column=column,
+            visibility=visibility,
+            account=account,
+        )
+    except Exception as e:
+        return _structure_error("setting sheet metadata", e)
+
+
+async def sheets_find_by_metadata(
+    spreadsheet_id: str,
+    key: Optional[str] = None,
+    value: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Find tabs, rows, or columns tagged with developer metadata
+    (see ``sheets_set_metadata``).
+
+    Typical use: locate a data-store tab by role rather than by title —
+    ``key="role", value="inventory"`` → the match's ``sheet_title`` is
+    the tab's current name, usable in ``sheets_read`` / ``sheets_append``
+    ranges.
+
+    Args:
+        spreadsheet_id: Spreadsheet ID.
+        key: Metadata key to match.
+        value: Metadata value to match. At least one of ``key`` or
+            ``value`` is required.
+        account: Optional account selector (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``matches`` — each with ``metadata_id``, ``key``,
+        ``value``, ``visibility``, ``location_type`` (SPREADSHEET,
+        SHEET, ROW, or COLUMN), ``sheet_id``, ``sheet_title``, ``row`` /
+        ``end_row`` (1-based, ROW tags), ``column`` (letter, COLUMN
+        tags), and ``range`` (A1 notation, e.g. ``'Log'!5:5``). Empty
+        list when nothing matches.
+    """
+    try:
+        return sheets.find_by_metadata(
+            spreadsheet_id, key=key, value=value, account=account
+        )
+    except Exception as e:
+        return _structure_error("finding sheet metadata", e)

@@ -1,5 +1,32 @@
 # Release Notes
 
+## v0.27.0 — Sheets structure: tabs, rows, developer metadata
+
+Spreadsheets used as multi-tab data stores can now be restructured
+without the Sheets UI.
+
+- **`sheets_batch_update`** (CLI `gwsa sheets batch-update`) — raw
+  pass-through to `spreadsheets.batchUpdate`: add/rename/reorder tabs,
+  insert/delete rows and columns, formatting, frozen rows, developer
+  metadata, and anything else the API supports. Atomic; returns the raw
+  response. A batch containing `deleteSheet` is rejected unless
+  `allow_destructive=true` (`--allow-destructive`).
+- **`sheets_add_tab`** (`add-tab`) — add a tab to an existing
+  spreadsheet, with optional position and grid size.
+- **`sheets_insert_rows` / `sheets_delete_rows`** (`insert-rows` /
+  `delete-rows`) — 1-based row edits that shift surrounding rows in one
+  call.
+- **`sheets_set_metadata` / `sheets_find_by_metadata`** (`set-metadata`
+  / `find-metadata`) — tag a spreadsheet, tab, row, or column with a
+  key/value and find it by tag; results report the tab's current title
+  and an A1 range. Visibility defaults to `DOCUMENT`.
+- **SDK**: `gwsa.sdk.sheets.batch_update`, `add_tab`, `insert_rows`,
+  `delete_rows`, `set_metadata`, `find_by_metadata`, plus
+  `DestructiveRequestError` and `SheetNotFoundError`.
+
+Server total: 63 tools over stdio, 60 over HTTP. Connectors that cache
+tool schemas (claude.ai / Cowork) need a reconnect to see the new tools.
+
 ## v0.25.0 — one batch label tool replaces add/remove
 
 Gmail label changes now go through a single batch primitive so a whole

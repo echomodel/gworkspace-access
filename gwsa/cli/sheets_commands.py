@@ -193,5 +193,160 @@ def append_row(spreadsheet_id, row_json, range_name, raw):
         raise click.ClickException(f"An error occurred: {e}")
 
 
+def _echo_json(result):
+    click.echo(json.dumps(result, indent=2))
+
+
+@sheets.command('batch-update')
+@click.argument('spreadsheet_id')
+@click.option('--requests-json', '-r', required=True,
+              help='JSON array of Sheets API batchUpdate request objects.')
+@click.option('--allow-destructive', is_flag=True, default=False,
+              help='Required to apply a batch containing deleteSheet.')
+@require_scopes('sheets')
+def batch_update_sheet(spreadsheet_id, requests_json, allow_destructive):
+    """Apply a raw Sheets API batchUpdate (the structural-editing primitive).
+
+    REQUESTS-JSON is a JSON array of request objects, e.g.
+    '[{"addSheet": {"properties": {"title": "Archive"}}}]'.
+    The batch is atomic: if any request is invalid, none are applied.
+    Prints the raw API response (including per-request replies).
+    """
+    try:
+        requests = json.loads(requests_json)
+        if not isinstance(requests, list):
+            raise click.ClickException(
+                "--requests-json must be a JSON array of request objects."
+            )
+        result = sdk_sheets.batch_update(
+            spreadsheet_id, requests, allow_destructive=allow_destructive,
+        )
+        _echo_json(result)
+
+    except json.JSONDecodeError as e:
+        raise click.ClickException(f"Invalid JSON for --requests-json: {e}")
+    except click.ClickException:
+        raise
+    except (sdk_sheets.DestructiveRequestError, ValueError) as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
+@sheets.command('add-tab')
+@click.argument('spreadsheet_id')
+@click.argument('title')
+@click.option('--index', type=int, default=None,
+              help='0-based position among the tabs (default: last).')
+@click.option('--rows', 'row_count', type=int, default=None,
+              help='Initial row count (API default 1000).')
+@click.option('--columns', 'column_count', type=int, default=None,
+              help='Initial column count (API default 26).')
+@require_scopes('sheets')
+def add_tab(spreadsheet_id, title, index, row_count, column_count):
+    """Add a sheet (tab) to an existing spreadsheet."""
+    try:
+        _echo_json(sdk_sheets.add_tab(
+            spreadsheet_id, title, index=index,
+            row_count=row_count, column_count=column_count,
+        ))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
+@sheets.command('insert-rows')
+@click.argument('spreadsheet_id')
+@click.argument('start_row', type=int)
+@click.option('--count', '-c', type=int, default=1,
+              help='Number of rows to insert (default 1).')
+@click.option('--sheet', default=None,
+              help='Sheet (tab) title. Defaults to the first tab.')
+@click.option('--inherit-from-before', is_flag=True, default=False,
+              help='Copy formatting from the row above instead of below.')
+@require_scopes('sheets')
+def insert_rows(spreadsheet_id, start_row, count, sheet, inherit_from_before):
+    """Insert empty rows at START_ROW (1-based), shifting rows down."""
+    try:
+        result = sdk_sheets.insert_rows(
+            spreadsheet_id, start_row, count=count, sheet=sheet,
+            inherit_from_before=inherit_from_before,
+        )
+        click.echo(
+            f"Inserted {result['count']} row(s): "
+            f"rows {result['start_row']}-{result['end_row']}."
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
+@sheets.command('delete-rows')
+@click.argument('spreadsheet_id')
+@click.argument('start_row', type=int)
+@click.option('--count', '-c', type=int, default=1,
+              help='Number of rows to delete (default 1).')
+@click.option('--sheet', default=None,
+              help='Sheet (tab) title. Defaults to the first tab.')
+@require_scopes('sheets')
+def delete_rows(spreadsheet_id, start_row, count, sheet):
+    """Delete COUNT rows starting at START_ROW (1-based), shifting rows up."""
+    try:
+        result = sdk_sheets.delete_rows(
+            spreadsheet_id, start_row, count=count, sheet=sheet,
+        )
+        click.echo(
+            f"Deleted {result['count']} row(s): "
+            f"rows {result['start_row']}-{result['end_row']}."
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
+@sheets.command('set-metadata')
+@click.argument('spreadsheet_id')
+@click.argument('key')
+@click.argument('value', required=False)
+@click.option('--sheet', default=None,
+              help='Tag this tab (or, with --row/--column, a row/column of it).')
+@click.option('--row', type=int, default=None, help='Tag this 1-based row.')
+@click.option('--column', default=None, help='Tag this column (letter, e.g. C).')
+@click.option('--visibility', type=click.Choice(['DOCUMENT', 'PROJECT']),
+              default='DOCUMENT', show_default=True,
+              help='DOCUMENT: any client with file access can find it.')
+@require_scopes('sheets')
+def set_metadata(spreadsheet_id, key, value, sheet, row, column, visibility):
+    """Tag the spreadsheet, a tab, a row, or a column with KEY[=VALUE]
+    developer metadata, discoverable later with find-metadata."""
+    try:
+        _echo_json(sdk_sheets.set_metadata(
+            spreadsheet_id, key, value=value, sheet=sheet,
+            row=row, column=column, visibility=visibility,
+        ))
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
+@sheets.command('find-metadata')
+@click.argument('spreadsheet_id')
+@click.option('--key', default=None, help='Metadata key to match.')
+@click.option('--value', default=None, help='Metadata value to match.')
+@require_scopes('sheets-read')
+def find_metadata(spreadsheet_id, key, value):
+    """Find tabs/rows/columns tagged with developer metadata."""
+    try:
+        _echo_json(sdk_sheets.find_by_metadata(
+            spreadsheet_id, key=key, value=value,
+        ))
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"An error occurred: {e}")
+
+
 if __name__ == '__main__':
     sheets()

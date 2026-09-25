@@ -416,10 +416,50 @@ The same operations are exposed as MCP tools: `sheets_create`,
 directly into a Drive folder is supported via `folder_id` (resolve
 a path with `drive_find_folder`); relocating later is `drive_move`.
 
+### Sheets: tabs, rows, and developer metadata
+
+Structural changes go through the Sheets API's `batchUpdate`
+primitive — exposed raw, plus convenience wrappers for the common
+cases:
+
+```bash
+gwsa sheets add-tab SPREADSHEET_ID Inventory
+gwsa sheets insert-rows SPREADSHEET_ID 5 --count 2 --sheet Log
+gwsa sheets delete-rows SPREADSHEET_ID 5 --sheet Log
+gwsa sheets set-metadata SPREADSHEET_ID role inventory --sheet Inventory
+gwsa sheets find-metadata SPREADSHEET_ID --key role --value inventory
+gwsa sheets batch-update SPREADSHEET_ID -r '[{"updateSheetProperties": {"properties": {"sheetId": 0, "gridProperties": {"frozenRowCount": 1}}, "fields": "gridProperties.frozenRowCount"}}]'
+```
+
+- **Row numbers are 1-based**, as in the Sheets UI and the row
+  numbers `tail` returns. Insert/delete shift the surrounding rows
+  in one call — no rewriting of the data below.
+- **Developer metadata makes tabs rename-proof.** Tag a tab (or a
+  row, a column, or the whole spreadsheet) with a key/value, then
+  find it by that tag instead of by title. Row and column tags move
+  with their row/column as rows are inserted or deleted. Tags
+  default to `DOCUMENT` visibility so any client with access to the
+  file can find them — the same cross-client reasoning as public
+  Drive `properties`. Tags don't appear in the Sheets UI.
+- **`batch-update` is a faithful pass-through**: requests are sent
+  as-is, the batch is atomic, and the raw response (per-request
+  `replies`) is returned. Requests address tabs by numeric
+  `sheetId` (see `info`), with 0-based, end-exclusive indices.
+- **Deleting a tab is gated.** A batch containing `deleteSheet` is
+  rejected unless `--allow-destructive` (MCP:
+  `allow_destructive=true`) is passed. There are deliberately no
+  rename-tab or delete-tab wrappers — renaming is harmless once
+  lookups go through metadata, and deleting stays behind the gate.
+
+MCP tools: `sheets_batch_update`, `sheets_add_tab`,
+`sheets_insert_rows`, `sheets_delete_rows`, `sheets_set_metadata`,
+`sheets_find_by_metadata`.
+
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 52 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery.
+`gwsa-mcp` is a stdio MCP server exposing 63 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (60 over
+HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.
 
