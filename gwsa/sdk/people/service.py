@@ -29,6 +29,47 @@ def _fetch_person_from_api(resource_name: str, fields: str = 'names', account: O
         personFields=fields
     ).execute()
 
+def _resolve_person_profile(user_id: Optional[str], account: Optional[str] = None) -> Dict[str, Optional[str]]:
+    """Resolve and cache a Google User ID's displayName and primary email address."""
+    if not user_id:
+        return {"displayName": "Unknown", "email": None}
+
+    if user_id.startswith("users/"):
+        user_id = user_id.split("/")[1]
+
+    resource_name = f"people/{user_id}"
+
+    cached_data = get_cached_profile(user_id)
+    if cached_data and "email" in cached_data:
+        return {
+            "displayName": cached_data.get("displayName", "Unknown"),
+            "email": cached_data.get("email"),
+        }
+
+    try:
+        person = _fetch_person_from_api(
+            resource_name, fields="names,emailAddresses", account=account
+        )
+
+        display_name = "Unknown"
+        if "names" in person and len(person["names"]) > 0:
+            display_name = person["names"][0].get("displayName", "Unknown")
+
+        email = None
+        if "emailAddresses" in person and len(person["emailAddresses"]) > 0:
+            email = person["emailAddresses"][0].get("value")
+
+        profile = {"displayName": display_name, "email": email}
+        set_cached_profile(user_id, profile)
+        return profile
+    except Exception as e:
+        logger.error(f"Error fetching profile for {user_id}: {e}")
+        return {
+            "displayName": (cached_data or {}).get("displayName", "Unknown"),
+            "email": None,
+        }
+
+
 @time_api_call
 def get_person_name(user_id: str, account: Optional[str] = None) -> str:
     """Resolve a Google User ID (e.g., 'users/12345') to a display name.
@@ -41,34 +82,13 @@ def get_person_name(user_id: str, account: Optional[str] = None) -> str:
         account: Optional account selector — name or email. Omit to use
             the user's default account.
     """
-    if not user_id:
-        return 'Unknown'
+    return _resolve_person_profile(user_id, account=account).get("displayName") or "Unknown"
 
-    # Standardize ID
-    if user_id.startswith('users/'):
-        user_id = user_id.split('/')[1]
 
-    resource_name = f"people/{user_id}"
+def get_person_email(user_id: Optional[str], account: Optional[str] = None) -> Optional[str]:
+    """Resolve a Google User ID (e.g., 'users/12345') to a primary email address if available."""
+    return _resolve_person_profile(user_id, account=account).get("email")
 
-    # Try the cache first
-    cached_data = get_cached_profile(user_id)
-    if cached_data:
-        return cached_data.get('displayName', 'Unknown')
-
-    # Fetch from API
-    try:
-        person = _fetch_person_from_api(resource_name, fields='names', account=account)
-
-        display_name = "Unknown"
-        if 'names' in person and len(person['names']) > 0:
-            display_name = person['names'][0].get('displayName', 'Unknown')
-
-        # Cache the result
-        set_cached_profile(user_id, {'displayName': display_name})
-        return display_name
-    except Exception as e:
-        logger.error(f"Error fetching name for {user_id}: {e}")
-        return "Unknown"
 
 @time_api_call
 def get_me(account: Optional[str] = None) -> Dict[str, Any]:

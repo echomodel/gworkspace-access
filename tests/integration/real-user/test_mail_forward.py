@@ -11,7 +11,13 @@ exhaustively by the offline unit tests; this test confirms the live
 import pytest
 from mcp_app.context import current_user
 
-from gwsa.sdk.mail import create_draft, forward_message, read_message
+from gwsa.sdk.mail import (
+    create_draft,
+    forward_message,
+    get_gmail_service,
+    read_message,
+    reply_message,
+)
 
 
 def _self_email() -> str:
@@ -26,6 +32,17 @@ def _self_email() -> str:
     return chosen.email if chosen else "me"
 
 
+def _safe_delete_draft(draft_id: str | None) -> None:
+    if not draft_id:
+        return
+    try:
+        get_gmail_service().users().drafts().delete(
+            userId="me", id=draft_id
+        ).execute()
+    except Exception:
+        pass
+
+
 @pytest.mark.integration
 def test_forward_draft_preserves_subject_and_body():
     email_address = _self_email()
@@ -37,24 +54,78 @@ def test_forward_draft_preserves_subject_and_body():
         body=f"Original body. {unique}",
         html_body=f"<p>Original body. {unique}</p>",
     )
-    source_message_id = draft.get("message", {}).get("id")
-    assert source_message_id, "Draft did not return an inner message id."
+    source_draft_id = draft.get("id")
+    forward_draft_id = None
+    try:
+        source_message_id = draft.get("message", {}).get("id")
+        assert source_message_id, "Draft did not return an inner message id."
 
-    result = forward_message(
-        message_id=source_message_id,
+        result = forward_message(
+            message_id=source_message_id,
+            to=email_address,
+            note="Forwarding for your records.",
+            as_draft=True,
+        )
+        forward_draft_id = result.get("id")
+        forwarded_message_id = result.get("message", {}).get("id")
+        assert result["is_draft"] is True
+        assert forwarded_message_id, "Forward draft did not return a message id."
+
+        msg = read_message(forwarded_message_id)
+        assert msg.get("subject") == "Fwd: Forward Source Message"
+
+        body = msg.get("body", {})
+        text = body.get("text") or ""
+        assert "Forwarding for your records." in text
+        assert "Forwarded message" in text
+        assert unique in text
+    finally:
+        _safe_delete_draft(forward_draft_id)
+        _safe_delete_draft(source_draft_id)
+
+
+@pytest.mark.integration
+def test_reply_draft_preserves_thread_quote_and_recipients():
+    email_address = _self_email()
+    unique = "reply-integration-marker-7b2c"
+
+    draft = create_draft(
         to=email_address,
-        note="Forwarding for your records.",
-        as_draft=True,
+        cc="colleague@example.com",
+        subject="Reply Source Message",
+        body=f"Original thread body. {unique}",
+        html_body=f"<p>Original thread body. {unique}</p>",
     )
-    forwarded_message_id = result.get("message", {}).get("id")
-    assert result["is_draft"] is True
-    assert forwarded_message_id, "Forward draft did not return a message id."
+    source_draft_id = draft.get("id")
+    reply_draft_id = None
+    try:
+        source_message_id = draft.get("message", {}).get("id")
+        assert source_message_id, "Draft did not return an inner message id."
 
-    msg = read_message(forwarded_message_id)
-    assert msg.get("subject") == "Fwd: Forward Source Message"
+        source_msg = read_message(source_message_id)
+        source_thread_id = source_msg.get("threadId")
+        assert source_thread_id, "Source message did not have a threadId."
+        assert "colleague@example.com" in (source_msg.get("cc") or "")
 
-    body = msg.get("body", {})
-    text = body.get("text") or ""
-    assert "Forwarding for your records." in text
-    assert "Forwarded message" in text
-    assert unique in text
+        result = reply_message(
+            reply_to_message_id=source_message_id,
+            body="Follow-up reply note.",
+            as_draft=True,
+        )
+        reply_draft_id = result.get("id")
+        reply_message_id = result.get("message", {}).get("id")
+        assert result["is_draft"] is True
+        assert result["threadId"] == source_thread_id
+        assert reply_message_id, "Reply draft did not return a message id."
+
+        reply_msg = read_message(reply_message_id)
+        assert reply_msg.get("threadId") == source_thread_id
+        assert reply_msg.get("subject") == "Re: Reply Source Message"
+        assert "colleague@example.com" in (reply_msg.get("cc") or "")
+
+        text = reply_msg.get("body", {}).get("text") or ""
+        assert "Follow-up reply note." in text
+        assert unique in text
+    finally:
+        _safe_delete_draft(reply_draft_id)
+        _safe_delete_draft(source_draft_id)

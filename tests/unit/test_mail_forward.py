@@ -85,47 +85,94 @@ class _Exec:
 
 
 class _Messages:
-    def __init__(self, raw, sink):
+    def __init__(self, raw, sink, thread_id="thread-1"):
         self._raw = raw
         self._sink = sink
+        self._thread_id = thread_id
 
-    def get(self, userId, id, format):  # noqa: A002 - mirror API kwarg
-        assert format == "raw"
-        return _Exec({"raw": self._raw})
+    def get(self, userId, id, format="full"):  # noqa: A002 - mirror API kwarg
+        if format == "raw":
+            return _Exec({"raw": self._raw, "threadId": self._thread_id})
+        assert format == "full"
+        msg = _decode_sent(self._raw)
+        headers = [{"name": k, "value": v} for k, v in msg.items()]
+        text_body, html_body, _, _ = split_parts(msg)
+        parts = []
+        if text_body is not None:
+            parts.append({
+                "mimeType": "text/plain",
+                "body": {
+                    "data": base64.urlsafe_b64encode(
+                        text_body.encode("utf-8")
+                    ).decode("utf-8")
+                },
+            })
+        if html_body is not None:
+            parts.append({
+                "mimeType": "text/html",
+                "body": {
+                    "data": base64.urlsafe_b64encode(
+                        html_body.encode("utf-8")
+                    ).decode("utf-8")
+                },
+            })
+        return _Exec({
+            "id": id,
+            "threadId": self._thread_id,
+            "snippet": (text_body or "")[:100],
+            "labelIds": ["INBOX"],
+            "payload": {
+                "headers": headers,
+                "parts": parts,
+            },
+        })
 
     def send(self, userId, body):
         self._sink.append(body["raw"])
-        return _Exec({"id": "sent-1", "threadId": "thread-1"})
+        return _Exec({
+            "id": "sent-1",
+            "threadId": body.get("threadId", self._thread_id),
+        })
 
 
 class _Drafts:
     def __init__(self, sink):
         self._sink = sink
+        self.created_bodies: list[dict] = []
 
     def create(self, userId, body):
+        self.created_bodies.append(body)
         self._sink.append(body["message"]["raw"])
-        return _Exec({"id": "draft-1", "message": {"id": "m-1"}})
+        return _Exec({
+            "id": "draft-1",
+            "message": {
+                "id": "m-1",
+                "threadId": body["message"].get("threadId"),
+            },
+        })
 
 
 class _Users:
-    def __init__(self, raw, sink):
+    def __init__(self, raw, sink, drafts_obj):
         self._raw = raw
         self._sink = sink
+        self._drafts = drafts_obj
 
     def messages(self):
         return _Messages(self._raw, self._sink)
 
     def drafts(self):
-        return _Drafts(self._sink)
+        return self._drafts
 
 
 class FakeGmailService:
     def __init__(self, raw):
         self._raw = raw
         self.sent: list[str] = []
+        self.drafts_obj = _Drafts(self.sent)
 
     def users(self):
-        return _Users(self._raw, self.sent)
+        return _Users(self._raw, self.sent, self.drafts_obj)
 
 
 # --- helpers ---------------------------------------------------------------
@@ -315,4 +362,114 @@ def test_reply_with_custom_html_body_preserves_html():
     assert html is not None
     assert "<h1>Custom HTML Reply</h1>" in html.get_content()
     assert "blockquote" in html.get_content()
+
+
+def _set_active_user(email_addr: str = "me@example.com"):
+    from mcp_app.context import current_user
+    from mcp_app.models import UserRecord
+    from gwsa import GoogleAccount, Profile
+
+    profile = Profile(
+        accounts=[
+            GoogleAccount(
+                name="personal",
+                email=email_addr,
+                token={
+                    "client_id": "user-owned-client",
+                    "client_secret": "test-secret",
+                    "refresh_token": "test-refresh",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                },
+            ),
+        ],
+    )
+    user = UserRecord(
+        email=email_addr,
+        profile=profile.model_dump(mode="json"),
+    )
+    return current_user, current_user.set(user)
+
+
+def test_reply_all_preserves_to_and_cc_excluding_self():
+    """Replying to a multi-recipient email reads Cc/References via read_message,
+    preserves other To and Cc addresses by default (reply_all=True), and
+    excludes the active account's own email address."""
+    msg = _rich_source()
+    del msg["To"]
+    msg["To"] = "Me <me@example.com>, Bob <bob@example.com>"
+    msg["Cc"] = "Carol <carol@example.com>, me@example.com, Dave <dave@example.com>"
+    msg["References"] = "<root-000@example.com>"
+
+    service = FakeGmailService(_raw_of(msg))
+    ctx_var, tok = _set_active_user("me@example.com")
+    try:
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
+            result = reply_message("orig-id", body="Replying to all.", as_draft=True)
+    finally:
+        ctx_var.reset(tok)
+
+    assert result["is_draft"] is True
+    assert result["threadId"] == "thread-1"
+    sent = _decode_sent(service.sent[0])
+
+    # To has sender (Alice) + other To recipient (Bob), excluding self (me@example.com)
+    assert "alice@example.com" in sent["To"]
+    assert "bob@example.com" in sent["To"]
+    assert "me@example.com" not in sent["To"]
+
+    # Cc has Carol and Dave, excluding self
+    assert "carol@example.com" in sent["Cc"]
+    assert "dave@example.com" in sent["Cc"]
+    assert "me@example.com" not in sent["Cc"]
+
+    # References chains original references + messageId
+    assert sent["In-Reply-To"] == "<orig-123@example.com>"
+    assert sent["References"] == "<root-000@example.com> <orig-123@example.com>"
+
+
+def test_reply_to_own_sent_message_targets_original_recipients():
+    """When following up on a message sent by the user themselves, reply_message
+    addresses the original To/Cc recipients instead of addressing To to self."""
+    msg = EmailMessage()
+    msg["From"] = "Me <me@example.com>"
+    msg["To"] = "Alice <alice@example.com>, Bob <bob@example.com>"
+    msg["Cc"] = "Carol <carol@example.com>"
+    msg["Subject"] = "Re: Project kickoff"
+    msg["Date"] = "Mon, 01 Jan 2026 10:00:00 +0000"
+    msg["Message-ID"] = "<sent-by-me@example.com>"
+    msg.set_content("My earlier message.")
+
+    service = FakeGmailService(_raw_of(msg))
+    ctx_var, tok = _set_active_user("me@example.com")
+    try:
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
+            reply_message("sent-id", body="Quick follow-up addendum.", as_draft=True)
+    finally:
+        ctx_var.reset(tok)
+
+    sent = _decode_sent(service.sent[0])
+    assert "alice@example.com" in sent["To"]
+    assert "bob@example.com" in sent["To"]
+    assert "me@example.com" not in sent["To"]
+    assert "carol@example.com" in sent["Cc"]
+
+
+def test_reply_single_sender_when_reply_all_false():
+    """Setting reply_all=False replies only to the sender and omits Cc."""
+    msg = _plain_source()
+    del msg["To"]
+    msg["To"] = "Me <me@example.com>, Bob <bob@example.com>"
+    msg["Cc"] = "Carol <carol@example.com>"
+
+    service = FakeGmailService(_raw_of(msg))
+    ctx_var, tok = _set_active_user("me@example.com")
+    try:
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
+            reply_message("orig-id", body="Just to Alice.", reply_all=False)
+    finally:
+        ctx_var.reset(tok)
+
+    sent = _decode_sent(service.sent[0])
+    assert sent["To"] == "Alice <alice@example.com>"
+    assert sent["Cc"] is None
 

@@ -64,12 +64,19 @@ async def create_doc(
     """Create a new Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
+    IMPORTANT: For rich-text formatting (headings, bold, lists, links, tables,
+    or code blocks), pass an HTML string in ``body_text`` and set
+    ``mime_type="text/html"``. Do NOT pass raw Markdown syntax (e.g. ``##`` or
+    ``**``) in ``body_text``, as Google Docs does not parse Markdown on import
+    and will display the literal syntax characters.
 
     Args:
         title: Title for the new document.
-        body_text: Optional initial body text to insert.
+        body_text: Optional initial body text (plain text by default, or HTML
+            when ``mime_type="text/html"``).
         folder_id: Optional folder ID (defaults to My Drive root).
-        mime_type: Optional MIME type for body_text (e.g. 'text/html' to parse and convert HTML formatting).
+        mime_type: Optional MIME type for ``body_text`` — pass ``"text/html"``
+            to convert HTML tags into native Google Docs formatting.
         account: Optional account selector (name or email). Omit to
             create in the user's default account.
 
@@ -147,13 +154,18 @@ async def append_to_doc(
     text: str,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Append text to the end of a Google Doc.
+    """Append plain text to the end of a Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
+    IMPORTANT: ``text`` is inserted as literal plain text. Do NOT pass raw
+    Markdown (e.g. ``##``, ``**``) or HTML tags here — they will render as
+    literal characters. For headings, bold, links, or bulleted lists, use
+    ``batch_update_doc`` (or ``create_doc(..., mime_type="text/html")`` when
+    creating a new document).
 
     Args:
         doc_id: Google Doc ID.
-        text: Text to append.
+        text: Plain text to append (no Markdown or HTML markup).
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
@@ -180,13 +192,17 @@ async def insert_in_doc(
     index: int = 1,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Insert text at a specific position in a Google Doc.
+    """Insert plain text at a specific position in a Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
+    IMPORTANT: ``text`` is inserted as literal plain text. Do NOT pass raw
+    Markdown (e.g. ``##``, ``**``) or HTML tags here — they will render as
+    literal characters. For headings, bold, links, or bulleted lists, use
+    ``batch_update_doc``.
 
     Args:
         doc_id: Google Doc ID.
-        text: Text to insert.
+        text: Plain text to insert (no Markdown or HTML markup).
         index: Position to insert at (1 = beginning of document).
         account: Optional account selector (name or email). Omit to
             use the user's default account.
@@ -217,14 +233,18 @@ async def replace_in_doc(
     match_case: bool = True,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Replace all occurrences of text in a Google Doc.
+    """Replace all occurrences of plain text in a Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
+    IMPORTANT: ``replace_with`` is inserted as literal plain text (inheriting
+    the surrounding span's style). Do NOT pass raw Markdown (``##``, ``**``) or
+    HTML tags in ``replace_with``. For rich-text styling changes, use
+    ``batch_update_doc``.
 
     Args:
         doc_id: Google Doc ID.
         find_text: Text to find.
-        replace_with: Text to replace with.
+        replace_with: Plain text to replace with (no Markdown or HTML markup).
         match_case: Whether to match case (default True).
         account: Optional account selector (name or email). Omit to
             use the user's default account.

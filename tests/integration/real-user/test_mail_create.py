@@ -5,7 +5,18 @@ Integration tests for creating draft emails.
 import pytest
 from mcp_app.context import current_user
 
-from gwsa.sdk.mail import create_draft, read_message
+from gwsa.sdk.mail import create_draft, get_gmail_service, read_message
+
+
+def _safe_delete_draft(draft_id: str | None) -> None:
+    if not draft_id:
+        return
+    try:
+        get_gmail_service().users().drafts().delete(
+            userId="me", id=draft_id
+        ).execute()
+    except Exception:
+        pass
 
 
 @pytest.mark.integration
@@ -35,25 +46,28 @@ def test_create_html_draft_email():
         body=plain_text,
         html_body=html_text,
     )
+    draft_id = draft_result.get("id")
+    assert draft_id, "Draft creation failed, no draft ID returned."
 
-    assert draft_result.get("id"), "Draft creation failed, no draft ID returned."
-    
-    # Drafts contain a fully formed message inside them with its own ID
-    message_id = draft_result.get("message", {}).get("id")
-    assert message_id, "Draft creation failed to return a message ID."
+    try:
+        # Drafts contain a fully formed message inside them with its own ID
+        message_id = draft_result.get("message", {}).get("id")
+        assert message_id, "Draft creation failed to return a message ID."
 
-    # Step 2: Read the newly created message to verify contents
-    msg = read_message(message_id)
+        # Step 2: Read the newly created message to verify contents
+        msg = read_message(message_id)
 
-    # Validate fields
-    assert msg.get("subject") == subject_text
-    
-    body = msg.get("body", {})
-    
-    # Verify the plain text part is present
-    assert body.get("text") is not None, "Plain text body is missing."
-    assert plain_text in body.get("text"), "Plain text body did not match the input."
-    
-    # Verify the HTML part is present
-    assert body.get("html") is not None, "HTML body is missing."
-    assert html_text in body.get("html"), "HTML body did not match the input."
+        # Validate fields
+        assert msg.get("subject") == subject_text
+        
+        body = msg.get("body", {})
+        
+        # Verify the plain text part is present
+        assert body.get("text") is not None, "Plain text body is missing."
+        assert plain_text in body.get("text"), "Plain text body did not match the input."
+        
+        # Verify the HTML part is present
+        assert body.get("html") is not None, "HTML body is missing."
+        assert html_text in body.get("html"), "HTML body did not match the input."
+    finally:
+        _safe_delete_draft(draft_id)

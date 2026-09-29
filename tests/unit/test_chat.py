@@ -94,15 +94,19 @@ def patch_chat_service(monkeypatch):
         "googleapiclient.http.MediaIoBaseDownload", MockMediaIoBaseDownload
     )
     
-    # Mock get_person_name in all modules to avoid caching/import issues
+    # Mock get_person_name and get_person_email in all modules to avoid caching/import issues
     mock_get_name = lambda uid, account=None: f"Resolved {uid}"
+    mock_get_email = lambda uid, account=None: None
     
     # original definition
     monkeypatch.setattr("gwsa.sdk.people.service.get_person_name", mock_get_name)
+    monkeypatch.setattr("gwsa.sdk.people.service.get_person_email", mock_get_email)
     # package exports
     monkeypatch.setattr("gwsa.sdk.people.get_person_name", mock_get_name)
+    monkeypatch.setattr("gwsa.sdk.people.get_person_email", mock_get_email)
     # module imports
     monkeypatch.setattr("gwsa.mcp.tools.chat.get_person_name", mock_get_name)
+    monkeypatch.setattr("gwsa.mcp.tools.chat.get_person_email", mock_get_email)
     
     return store
 
@@ -169,3 +173,133 @@ async def test_download_chat_attachment_inline(patch_chat_service):
     # Second is embedded resource blob
     assert res[1].type == "resource"
     assert res[1].resource.mimeType == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_chat_urls_full_names_and_emails_sociable(monkeypatch, tmp_path):
+    """Sociable unit test: Chat tools return canonical URLs, full names, and emails."""
+    monkeypatch.setattr("gwsa.sdk.cache.CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "gwsa.sdk.cache.PROFILES_CACHE_FILE", str(tmp_path / "profiles.json")
+    )
+    monkeypatch.setattr(
+        "gwsa.sdk.cache.MEMBERS_CACHE_FILE", str(tmp_path / "members.json")
+    )
+
+    people_calls: list[dict[str, Any]] = []
+
+    class FakePeopleResource:
+        def get(self, **kwargs):
+            people_calls.append(kwargs)
+            return FakeExecute(
+                {
+                    "names": [{"displayName": "Alice Smith"}],
+                    "emailAddresses": [{"value": "alice@example.com"}],
+                }
+            )
+
+    class FakePeopleApi:
+        def people(self):
+            return FakePeopleResource()
+
+    class FakeMembersResource:
+        def list(self, **kwargs):
+            return FakeExecute(
+                {
+                    "memberships": [
+                        {
+                            "member": {
+                                "name": "users/111222",
+                                "type": "HUMAN",
+                            }
+                        }
+                    ]
+                }
+            )
+
+    class FakeMessagesResource:
+        def list(self, **kwargs):
+            return FakeExecute(
+                {
+                    "messages": [
+                        {
+                            "name": "spaces/AAA123/messages/m1",
+                            "text": "Deployment ready for review",
+                            "createTime": "2026-09-29T10:00:00Z",
+                            "sender": {"name": "users/111222"},
+                        }
+                    ],
+                    "nextPageToken": None,
+                }
+            )
+
+    class FakeSpacesResource:
+        def list(self, **kwargs):
+            return FakeExecute(
+                {
+                    "spaces": [
+                        {
+                            "name": "spaces/AAA123",
+                            "displayName": "Unknown",
+                            "spaceType": "DIRECT_MESSAGE",
+                            "lastActiveTime": "2026-09-29T10:00:00Z",
+                        }
+                    ]
+                }
+            )
+
+        def members(self):
+            return FakeMembersResource()
+
+        def messages(self):
+            return FakeMessagesResource()
+
+    class FakeChatApi:
+        def spaces(self):
+            return FakeSpacesResource()
+
+    monkeypatch.setattr(
+        "gwsa.sdk.chat.service.get_credentials",
+        lambda account=None: (object(), "adc"),
+    )
+    monkeypatch.setattr(
+        "gwsa.sdk.people.service.get_credentials",
+        lambda account=None: (object(), "adc"),
+    )
+    monkeypatch.setattr(
+        "gwsa.sdk.chat.service.build",
+        lambda service, version, credentials=None, **kw: FakeChatApi(),
+    )
+    monkeypatch.setattr(
+        "gwsa.sdk.people.service.build",
+        lambda service, version, credentials=None, **kw: FakePeopleApi(),
+    )
+
+    spaces_res = await chat_tools.list_chat_spaces(resolve_names=True)
+    assert spaces_res["spaces"][0]["displayName"] == "Alice Smith"
+    assert spaces_res["spaces"][0]["url"] == "https://chat.google.com/room/AAA123"
+
+    dms_res = await chat_tools.get_recent_direct_messages(limit=5)
+    assert dms_res["direct_messages"][0]["url"] == "https://chat.google.com/room/AAA123"
+    assert dms_res["direct_messages"][0]["displayName"] == "Alice Smith"
+
+    members_res = await chat_tools.list_chat_members(space_id="spaces/AAA123")
+    assert members_res["members"][0]["displayName"] == "Alice Smith"
+    assert members_res["members"][0]["email"] == "alice@example.com"
+
+    msgs_res = await chat_tools.list_chat_messages(space_id="spaces/AAA123")
+    assert msgs_res["url"] == "https://chat.google.com/room/AAA123"
+    assert msgs_res["messages"][0]["url"] == "https://chat.google.com/room/AAA123"
+    assert msgs_res["messages"][0]["author"] == "Alice Smith"
+    assert msgs_res["messages"][0]["authorEmail"] == "alice@example.com"
+
+    search_res = await chat_tools.search_chat_messages(
+        space_id="spaces/AAA123", query="Deployment"
+    )
+    assert search_res["url"] == "https://chat.google.com/room/AAA123"
+    assert search_res["messages"][0]["url"] == "https://chat.google.com/room/AAA123"
+    assert search_res["messages"][0]["author"] == "Alice Smith"
+    assert search_res["messages"][0]["authorEmail"] == "alice@example.com"
+    assert len(people_calls) == 1
+    assert "emailAddresses" in people_calls[0]["personFields"]
+

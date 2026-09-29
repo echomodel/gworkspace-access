@@ -5,6 +5,7 @@ import base64
 import html
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr, getaddresses
 from typing import Dict, Any, Optional, List, Tuple
 
 from .service import get_gmail_service
@@ -12,6 +13,107 @@ from .read import read_message
 from .mime import assemble_message, fetch_raw_message, split_parts
 
 logger = logging.getLogger(__name__)
+
+
+def _get_active_account_email(account: Optional[str] = None) -> Optional[str]:
+    """Return the active GoogleAccount email from context if available."""
+    try:
+        from ..auth import get_google_account_creds
+
+        _, chosen = get_google_account_creds(account=account)
+        return chosen.email if chosen else None
+    except Exception:
+        return None
+
+
+def _parse_addrs(header_val: Optional[str]) -> List[Tuple[str, str]]:
+    """Parse an RFC 2822 address header into (display_name, email) pairs."""
+    if not header_val or header_val == "N/A":
+        return []
+    return [(name, addr) for name, addr in getaddresses([header_val]) if addr]
+
+
+def _resolve_reply_recipients(
+    original: Dict[str, Any],
+    self_email: Optional[str],
+    reply_all: bool = True,
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Resolve (to, cc) headers for a reply or follow-up message."""
+    self_norm = self_email.strip().lower() if self_email else None
+    from_addrs = _parse_addrs(original.get("from"))
+    reply_to_addrs = _parse_addrs(original.get("replyTo"))
+    orig_to_addrs = _parse_addrs(original.get("to"))
+    orig_cc_addrs = _parse_addrs(original.get("cc"))
+
+    is_self_sent = bool(
+        self_norm
+        and from_addrs
+        and all(addr.lower() == self_norm for _, addr in from_addrs)
+    )
+
+    if to is not None:
+        resolved_to = to
+        to_seen = {addr.lower() for _, addr in _parse_addrs(to)}
+    else:
+        to_pairs: List[Tuple[str, str]] = []
+        to_seen = set()
+
+        if is_self_sent:
+            candidates = orig_to_addrs if reply_all else orig_to_addrs[:1]
+            for name, addr in candidates:
+                key = addr.lower()
+                if key != self_norm and key not in to_seen:
+                    to_seen.add(key)
+                    to_pairs.append((name, addr))
+        else:
+            primary = reply_to_addrs or from_addrs
+            for name, addr in primary:
+                key = addr.lower()
+                if key not in to_seen:
+                    to_seen.add(key)
+                    to_pairs.append((name, addr))
+            if reply_all:
+                for name, addr in orig_to_addrs:
+                    key = addr.lower()
+                    if key != self_norm and key not in to_seen:
+                        to_seen.add(key)
+                        to_pairs.append((name, addr))
+
+        if not to_pairs:
+            fallback = orig_to_addrs if is_self_sent else (reply_to_addrs or from_addrs)
+            for name, addr in fallback:
+                key = addr.lower()
+                if key not in to_seen:
+                    to_seen.add(key)
+                    to_pairs.append((name, addr))
+
+        resolved_to = (
+            ", ".join(formataddr(pair) for pair in to_pairs)
+            if to_pairs
+            else (original.get("from") or "")
+        )
+
+    if cc is not None:
+        resolved_cc = cc or None
+    elif reply_all:
+        cc_pairs: List[Tuple[str, str]] = []
+        cc_seen = set(to_seen)
+        if self_norm:
+            cc_seen.add(self_norm)
+        for name, addr in orig_cc_addrs:
+            key = addr.lower()
+            if key not in cc_seen:
+                cc_seen.add(key)
+                cc_pairs.append((name, addr))
+        resolved_cc = (
+            ", ".join(formataddr(pair) for pair in cc_pairs) if cc_pairs else None
+        )
+    else:
+        resolved_cc = None
+
+    return resolved_to, resolved_cc
 
 
 def _format_quoted_reply(
@@ -66,7 +168,7 @@ def _format_quoted_reply(
 def send_message(
     to: str,
     subject: str,
-    body: str,
+    body: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
@@ -78,10 +180,10 @@ def send_message(
     Args:
         to: Recipient email address (comma-separated for multiple)
         subject: Email subject line
-        body: Plain text body of the email
+        body: Optional plain text body of the email
         cc: Optional CC recipients (comma-separated)
         bcc: Optional BCC recipients (comma-separated)
-        html_body: Optional HTML body (if provided, sends multipart)
+        html_body: Optional HTML body (if provided, sends HTML or multipart)
         account: Optional account selector — name or email. Omit to
             send as the user's default account.
 
@@ -95,12 +197,14 @@ def send_message(
     logger.debug(f"Sending email to: {to}, subject: {subject}")
 
     # Build the message
-    if html_body:
+    if html_body and body is not None:
         message = MIMEMultipart("alternative")
         message.attach(MIMEText(body, "plain"))
         message.attach(MIMEText(html_body, "html"))
+    elif html_body:
+        message = MIMEText(html_body, "html")
     else:
-        message = MIMEText(body, "plain")
+        message = MIMEText(body or "", "plain")
 
     message["to"] = to
     message["subject"] = subject
@@ -131,7 +235,7 @@ def send_message(
 def create_draft(
     to: str,
     subject: str,
-    body: str,
+    body: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
@@ -143,10 +247,10 @@ def create_draft(
     Args:
         to: Recipient email address (comma-separated for multiple)
         subject: Email subject line
-        body: Plain text body of the email
+        body: Optional plain text body of the email
         cc: Optional CC recipients (comma-separated)
         bcc: Optional BCC recipients (comma-separated)
-        html_body: Optional HTML body (if provided, sends multipart)
+        html_body: Optional HTML body (if provided, sends HTML or multipart)
         account: Optional account selector — name or email. Omit to
             create the draft in the user's default account.
 
@@ -157,12 +261,14 @@ def create_draft(
     logger.debug(f"Creating draft to: {to}, subject: {subject}")
 
     # Build the message
-    if html_body:
+    if html_body and body is not None:
         message = MIMEMultipart("alternative")
         message.attach(MIMEText(body, "plain"))
         message.attach(MIMEText(html_body, "html"))
+    elif html_body:
+        message = MIMEText(html_body, "html")
     else:
-        message = MIMEText(body, "plain")
+        message = MIMEText(body or "", "plain")
 
     message["to"] = to
     message["subject"] = subject
@@ -191,24 +297,35 @@ def create_draft(
 
 def reply_message(
     reply_to_message_id: str,
-    body: str,
+    body: Optional[str] = None,
     include_quote: bool = True,
     as_draft: bool = False,
     html_body: Optional[str] = None,
+    reply_all: bool = True,
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
     account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Reply to an existing email message.
 
-    Creates a properly threaded reply with quoted original content.
+    Creates a properly threaded reply with quoted original content and
+    full recipient preservation.
 
     Args:
         reply_to_message_id: The message ID to reply to
-        body: Plain text body of the reply
+        body: Optional plain text body of the reply
         include_quote: Whether to include quoted original (default True)
         as_draft: If True, create a draft instead of sending (default False)
         html_body: Optional HTML body of the reply. If include_quote is True,
             this HTML content is prepended above the quoted original.
+        reply_all: If True (default), include all other original To and Cc
+            recipients (excluding the active user's own email address). If
+            False, reply only to the sender.
+        to: Optional explicit To override (comma-separated).
+        cc: Optional explicit Cc override (comma-separated).
+        bcc: Optional BCC recipients (comma-separated).
         account: Optional account selector — name or email. Omit to
             reply as the user's default account.
 
@@ -216,6 +333,9 @@ def reply_message(
         Dict containing:
             - id: Message/draft ID
             - threadId: Thread ID
+            - to: Resolved To header
+            - cc: Resolved Cc header (or None)
+            - subject: Reply subject line
             - If draft: includes draft info
     """
     service = get_gmail_service(account=account)
@@ -223,8 +343,21 @@ def reply_message(
     original = read_message(reply_to_message_id, account=account)
     thread_id = original.get("threadId")
     message_id = original.get("messageId")  # RFC 2822 Message-ID header
+    if message_id == "N/A":
+        message_id = None
+    orig_references = original.get("references")
+    if orig_references == "N/A":
+        orig_references = None
     original_subject = original.get("subject", "")
-    reply_to_addr = original.get("from")
+
+    self_email = _get_active_account_email(account=account)
+    resolved_to, resolved_cc = _resolve_reply_recipients(
+        original=original,
+        self_email=self_email,
+        reply_all=reply_all,
+        to=to,
+        cc=cc,
+    )
 
     logger.debug(f"Replying to message {reply_to_message_id} in thread {thread_id}")
 
@@ -235,29 +368,42 @@ def reply_message(
         subject = f"Re: {original_subject}"
 
     # Build body with or without quoted content
+    effective_body = body or ""
     if include_quote:
-        plain_body, html_body = _format_quoted_reply(original, body, html_body)
+        plain_body, html_body = _format_quoted_reply(
+            original, effective_body, html_body
+        )
     else:
-        plain_body = body
-        html_body = None
+        plain_body = effective_body
 
     # Threading headers (RFC 2822)
     headers = {}
     if message_id:
         headers["In-Reply-To"] = message_id
-        headers["References"] = message_id
+        if orig_references:
+            headers["References"] = (
+                f"{orig_references} {message_id}"
+                if message_id not in orig_references
+                else orig_references
+            )
+        else:
+            headers["References"] = message_id
+    elif orig_references:
+        headers["References"] = orig_references
 
     # When the quoted html carries inline cid: images (signature logos,
     # embedded charts), re-attach the matching Content-ID parts so the
     # quoted tail still renders. A reply does NOT re-carry the original's
     # file attachments — only the inline parts the quoted html points at.
     inline_parts = []
-    if html_body and original.get("body", {}).get("html"):
+    if include_quote and html_body and original.get("body", {}).get("html"):
         raw = fetch_raw_message(service, reply_to_message_id)
         _, _, inline_parts, _ = split_parts(raw)
 
     message = assemble_message(
-        to=reply_to_addr,
+        to=resolved_to,
+        cc=resolved_cc,
+        bcc=bcc,
         subject=subject,
         text_body=plain_body,
         html_body=html_body,
@@ -284,6 +430,9 @@ def reply_message(
         return {
             "id": result.get("id"),
             "threadId": thread_id,
+            "to": resolved_to,
+            "cc": resolved_cc,
+            "subject": subject,
             "message": result.get("message", {}),
             "is_draft": True,
         }
@@ -300,6 +449,9 @@ def reply_message(
         return {
             "id": result.get("id"),
             "threadId": result.get("threadId"),
+            "to": resolved_to,
+            "cc": resolved_cc,
+            "subject": subject,
             "labelIds": result.get("labelIds", []),
             "is_draft": False,
         }

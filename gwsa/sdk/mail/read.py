@@ -91,6 +91,9 @@ def read_message(
     subject = _get_header(headers, 'Subject')
     from_addr = _get_header(headers, 'From')
     to_addr = _get_header(headers, 'To')
+    cc_addr = _get_header(headers, 'Cc', default=None)
+    reply_to = _get_header(headers, 'Reply-To', default=None)
+    references = _get_header(headers, 'References', default=None)
     date = _get_header(headers, 'Date')
 
     # Extract both text and html body parts
@@ -102,10 +105,13 @@ def read_message(
     message_details = {
         "id": message_id,
         "threadId": msg.get('threadId'),
-        "messageId": _get_header(headers, 'Message-ID'),  # RFC 2822 Message-ID for replies
+        "messageId": _get_header(headers, 'Message-ID', default=None),  # RFC 2822 Message-ID for replies
+        "references": references,
+        "replyTo": reply_to,
         "subject": subject,
         "from": from_addr,
         "to": to_addr,
+        "cc": cc_addr,
         "date": date,
         "snippet": msg.get('snippet', ''),
         "body": {
@@ -157,9 +163,13 @@ def read_messages(
             msg_details = {
                 "id": msg_id,
                 "threadId": response.get('threadId'),
+                "messageId": _get_header(headers, 'Message-ID', default=None),
+                "references": _get_header(headers, 'References', default=None),
+                "replyTo": _get_header(headers, 'Reply-To', default=None),
                 "subject": _get_header(headers, 'Subject'),
                 "from": _get_header(headers, 'From'),
                 "to": _get_header(headers, 'To'),
+                "cc": _get_header(headers, 'Cc', default=None),
                 "date": _get_header(headers, 'Date'),
                 "snippet": response.get('snippet', ''),
                 "labelIds": response.get('labelIds', []),
@@ -186,7 +196,7 @@ def read_messages(
     return results
 
 
-def _get_header(headers: list, name: str, default: str = 'N/A') -> str:
+def _get_header(headers: list, name: str, default: Optional[str] = 'N/A') -> Optional[str]:
     """Get a header value by name."""
     for header in headers:
         if header['name'].lower() == name.lower():
@@ -401,13 +411,16 @@ def get_thread(
         subject = _get_header(headers, 'Subject')
         from_addr = _get_header(headers, 'From')
         to_addr = _get_header(headers, 'To')
+        cc_addr = _get_header(headers, 'Cc', default=None)
         date = _get_header(headers, 'Date')
         
         simplified_messages.append({
             'id': msg.get('id'),
+            'messageId': _get_header(headers, 'Message-ID', default=None),
             'subject': subject,
             'from': from_addr,
             'to': to_addr,
+            'cc': cc_addr,
             'date': date,
             'snippet': msg.get('snippet', ''),
         })

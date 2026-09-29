@@ -100,44 +100,144 @@ def test_list_email_labels_empty_response():
 
 def test_reply_email_tool_sociable():
     from gwsa.mcp.tools.mail import reply_email
-    from tests.unit.test_mail_forward import FakeGmailService, _raw_of, _rich_source, _decode_sent, _find
-    
-    tok = _set_user_with_account()
-    service = FakeGmailService(_raw_of(_rich_source()))
-    original_view = {
-        "threadId": "thread-1",
-        "messageId": "<orig-123@example.com>",
-        "subject": "Quarterly report",
-        "from": "Alice <alice@example.com>",
-        "date": "Mon, 01 Jan 2026 10:00:00 +0000",
-        "body": {
-            "text": "Plain body text.",
-            "html": '<p>HTML body</p><img src="cid:logo123">',
-        },
-    }
-    
+    from tests.unit.test_mail_forward import (
+        FakeGmailService,
+        _decode_sent,
+        _find,
+        _raw_of,
+        _rich_source,
+    )
+
+    tok = _set_user_with_account()  # alice@example.com
+    msg = _rich_source()
+    del msg["From"]
+    del msg["To"]
+    msg["From"] = "Sender <sender@example.com>"
+    msg["To"] = "Alice <alice@example.com>, Bob <bob@example.com>"
+    msg["Cc"] = "Carol <carol@example.com>"
+    service = FakeGmailService(_raw_of(msg))
+
     try:
-        with patch("gwsa.sdk.mail.send.get_gmail_service", return_value=service), \
-             patch("gwsa.sdk.mail.send.read_message", return_value=original_view):
-            
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
             result = asyncio.run(
                 reply_email(
                     message_id="orig-id",
                     body="Plain reply text.",
                     html_body="<h1>HTML Reply</h1>",
-                    as_draft=False,
+                    as_draft=True,
                 )
             )
-            
+
         assert result["success"] is True
-        assert result["is_draft"] is False
-        assert result["id"] == "sent-1"
-        
+        assert result["is_draft"] is True
+        assert result["id"] == "draft-1"
+        assert result["thread_id"] == "thread-1"
+        assert "sender@example.com" in result["to"]
+        assert "bob@example.com" in result["to"]
+        assert "carol@example.com" in (result["cc"] or "")
+
         sent = _decode_sent(service.sent[0])
         html = _find(sent, "text/html")
         assert html is not None
         assert "<h1>HTML Reply</h1>" in html.get_content()
+        assert "sender@example.com" in sent["To"]
+        assert "bob@example.com" in sent["To"]
+        assert "alice@example.com" not in sent["To"]
+        assert "carol@example.com" in sent["Cc"]
     finally:
         current_user.reset(tok)
 
 
+def test_email_tools_allow_html_body_without_plain_body():
+    """Calling create_email_draft, send_email, or reply_email with only
+    html_body (omitting body) succeeds and emits valid text/html content."""
+    from gwsa.mcp.tools.mail import create_email_draft, reply_email, send_email
+    from tests.unit.test_mail_forward import (
+        FakeGmailService,
+        _decode_sent,
+        _find,
+        _raw_of,
+        _rich_source,
+    )
+
+    tok = _set_user_with_account()
+    service = FakeGmailService(_raw_of(_rich_source()))
+
+    try:
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
+            draft_res = asyncio.run(
+                create_email_draft(
+                    to="bob@example.com",
+                    subject="HTML-only Draft",
+                    html_body="<p>Hello <b>Bob</b></p>",
+                )
+            )
+            send_res = asyncio.run(
+                send_email(
+                    to="bob@example.com",
+                    subject="HTML-only Send",
+                    html_body="<p>Sent <b>HTML</b></p>",
+                )
+            )
+            reply_res = asyncio.run(
+                reply_email(
+                    message_id="orig-id",
+                    html_body="<p>Reply <b>HTML</b></p>",
+                    as_draft=True,
+                )
+            )
+
+        assert draft_res["success"] is True
+        assert send_res["success"] is True
+        assert reply_res["success"] is True
+
+        draft_mime = _decode_sent(service.sent[0])
+        assert "<p>Hello <b>Bob</b></p>" in _find(draft_mime, "text/html").get_content()
+
+        send_mime = _decode_sent(service.sent[1])
+        assert "<p>Sent <b>HTML</b></p>" in _find(send_mime, "text/html").get_content()
+
+        reply_mime = _decode_sent(service.sent[2])
+        assert "<p>Reply <b>HTML</b></p>" in _find(reply_mime, "text/html").get_content()
+    finally:
+        current_user.reset(tok)
+
+
+def test_reply_and_forward_email_default_to_draft():
+    """MCP tools reply_email and forward_email must default to as_draft=True
+    so omitting as_draft safely creates a Gmail draft instead of sending live."""
+    from gwsa.mcp.tools.mail import forward_email, reply_email
+    from tests.unit.test_mail_forward import (
+        FakeGmailService,
+        _raw_of,
+        _rich_source,
+    )
+
+    tok = _set_user_with_account()
+    service = FakeGmailService(_raw_of(_rich_source()))
+
+    try:
+        with patch("gwsa.sdk.mail.service.build", return_value=service):
+            reply_res = asyncio.run(
+                reply_email(
+                    message_id="orig-id",
+                    body="Safe default reply draft.",
+                )
+            )
+            fwd_res = asyncio.run(
+                forward_email(
+                    message_id="orig-id",
+                    to="bob@example.com",
+                    note="Safe default forward draft.",
+                )
+            )
+
+        assert reply_res["success"] is True
+        assert reply_res["is_draft"] is True
+        assert reply_res["id"] == "draft-1"
+        assert fwd_res["success"] is True
+        assert fwd_res["is_draft"] is True
+        assert fwd_res["id"] == "draft-1"
+        assert len(service.drafts_obj.created_bodies) == 2
+    finally:
+        current_user.reset(tok)

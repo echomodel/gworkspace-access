@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 from gwsa.sdk import chat
 from gwsa.sdk.cache import get_cached_members, set_cached_members
-from gwsa.sdk.people import get_person_name
+from gwsa.sdk.people import get_person_name, get_person_email
 from gwsa.sdk.destinations import (
     Destination,
     DriveDestination,
@@ -51,17 +51,20 @@ async def list_chat_spaces(
             or "SPACE".
         verbose: If True, returns all available metadata for each space
             (e.g., ``lastActiveTime``, ``membershipCount``).
-        resolve_names: If True, resolves and includes participant first
-            names for DMs and group chats (slower, results are cached).
+        resolve_names: If True, resolves and includes participant full
+            display names for DMs and group chats (slower, results are cached).
         account: Optional account selector (name or email). Omit to
             use the user's default account.
 
     Returns:
         Dict with a ``spaces`` list. Default entries are
-        ``{name, displayName, type}``; ``resolve_names=True`` replaces
+        ``{name, displayName, type, url}``; ``resolve_names=True`` replaces
         ``displayName`` with a comma-separated list of participant
         names; ``verbose=True`` returns the full API space objects,
-        optionally enriched with ``participant_names``.
+        enriched with ``url`` and optionally ``participant_names``.
+        Always use the returned ``url`` field directly when providing a
+        clickable link to open the chat in the browser (do not construct URLs
+        manually with the ``spaces/`` prefix).
     """
     try:
         chat_service = chat.get_chat_service(account=account)
@@ -72,6 +75,9 @@ async def list_chat_spaces(
             pageSize=limit, filter=filter_query
         ).execute()
         spaces = result.get("spaces", [])
+
+        for space in spaces:
+            space["url"] = chat.format_space_url(space.get("name"))
 
         if resolve_names:
             for space in spaces:
@@ -87,7 +93,7 @@ async def list_chat_spaces(
                         participant_names = [
                             get_person_name(
                                 m.get("member", {}).get("name"), account=account
-                            ).split(" ")[0]
+                            )
                             for m in members
                         ]
                         space["participant_names"] = ", ".join(participant_names)
@@ -104,6 +110,7 @@ async def list_chat_spaces(
                     "name": space.get("name"),
                     "displayName": space.get("displayName", "Unknown"),
                     "type": space.get("spaceType"),
+                    "url": space.get("url"),
                 }
                 if "participant_names" in space:
                     s["displayName"] = space["participant_names"]
@@ -120,7 +127,7 @@ async def list_chat_members(
     limit: int = 100,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """List members of a Google Chat space (cached for name resolution).
+    """List members of a Google Chat space (cached for name and email resolution).
 
     Args:
         space_id: Resource name of the space (e.g., "spaces/AAA...").
@@ -130,7 +137,8 @@ async def list_chat_members(
 
     Returns:
         Dict with a ``members`` list, each member with ``name``,
-        ``displayName``, and ``type``. Cached for repeat calls.
+        ``displayName``, ``email`` (when available via People API), and
+        ``type``. Cached for repeat calls.
     """
     try:
         members = get_cached_members(space_id)
@@ -149,9 +157,11 @@ async def list_chat_members(
             display_name = member.get("displayName") or get_person_name(
                 user_id, account=account
             )
+            email = get_person_email(user_id, account=account)
             simplified.append({
                 "name": user_id,
                 "displayName": display_name,
+                "email": email,
                 "type": member.get("type"),
             })
         return {"members": simplified}
@@ -183,8 +193,9 @@ async def list_chat_messages(
             use the user's default account.
 
     Returns:
-        Dict with ``messages`` (each with ``name``, ``text``,
-        ``createTime``, ``author``) and ``nextPageToken``.
+        Dict with ``url`` (canonical web link for the space), ``messages``
+        (each with ``name``, ``url``, ``text``, ``createTime``, ``author``,
+        ``authorEmail``, ``attachment``), and ``nextPageToken``.
     """
     try:
         chat_service = chat.get_chat_service(account=account)
@@ -192,17 +203,22 @@ async def list_chat_messages(
             parent=space_id, filter=filter, pageSize=page_size, pageToken=page_token
         ).execute()
         messages = response.get("messages", [])
+        space_url = chat.format_space_url(space_id)
         simplified = []
         for message in messages:
             sender = message.get("sender", {})
+            sender_id = sender.get("name")
             simplified.append({
                 "name": message.get("name"),
+                "url": chat.format_space_url(message.get("name") or space_id),
                 "text": message.get("text"),
                 "createTime": message.get("createTime"),
-                "author": get_person_name(sender.get("name"), account=account),
+                "author": get_person_name(sender_id, account=account),
+                "authorEmail": get_person_email(sender_id, account=account),
                 "attachment": message.get("attachment"),
             })
         return {
+            "url": space_url,
             "messages": simplified,
             "nextPageToken": response.get("nextPageToken"),
         }
@@ -231,8 +247,9 @@ async def search_chat_messages(
             use the user's default account.
 
     Returns:
-        Dict with ``messages`` (matched), ``scanned_count``, and
-        ``matches_found``.
+        Dict with ``url`` (canonical web link for the space), ``messages``
+        (matched, each with ``url``, ``author``, and ``authorEmail``),
+        ``scanned_count``, and ``matches_found``.
     """
     try:
         chat_service = chat.get_chat_service(account=account)
@@ -241,18 +258,21 @@ async def search_chat_messages(
         ).execute()
         messages = results.get("messages", [])
         matches = [m for m in messages if query.lower() in m.get("text", "").lower()]
+        space_url = chat.format_space_url(space_id)
         simplified = []
         for msg in matches:
+            sender_id = msg.get("sender", {}).get("name")
             simplified.append({
                 "name": msg.get("name"),
+                "url": chat.format_space_url(msg.get("name") or space_id),
                 "text": msg.get("text"),
                 "createTime": msg.get("createTime"),
-                "author": get_person_name(
-                    msg.get("sender", {}).get("name"), account=account
-                ),
+                "author": get_person_name(sender_id, account=account),
+                "authorEmail": get_person_email(sender_id, account=account),
                 "attachment": msg.get("attachment"),
             })
         return {
+            "url": space_url,
             "messages": simplified,
             "scanned_count": len(messages),
             "matches_found": len(simplified),
@@ -274,7 +294,8 @@ async def get_recent_direct_messages(
             use the user's default account.
 
     Returns:
-        Dict with a ``direct_messages`` list of recent DM spaces.
+        Dict with a ``direct_messages`` list of recent DM spaces
+        (each with ``id``, ``displayName``, and ``url``).
     """
     try:
         return {"direct_messages": chat.get_recent_chats(
@@ -298,7 +319,8 @@ async def get_recent_group_chats(
             use the user's default account.
 
     Returns:
-        Dict with a ``group_chats`` list of recent group chat spaces.
+        Dict with a ``group_chats`` list of recent group chat spaces
+        (each with ``id``, ``displayName``, and ``url``).
     """
     try:
         return {"group_chats": chat.get_recent_chats(

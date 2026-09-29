@@ -181,21 +181,40 @@ async def list_email_labels(
 async def send_email(
     to: str,
     subject: str,
-    body: str,
+    body: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Send an email via Gmail.
+    """Send a new standalone email via Gmail (starts a new thread).
+
+    SAFETY / DRAFT-FIRST POLICY:
+    - By default, ALWAYS prefer creating a draft in Gmail (using
+      ``create_email_draft`` for new threads or ``reply_email(..., as_draft=True)``
+      for replies) rather than sending an email directly.
+    - NEVER call ``send_email`` to send to any recipient other than the active
+      Google account's own email address unless you have FIRST displayed the
+      full, verbatim message body and recipient list (`to`, `cc`, `bcc`,
+      `subject`) to the user and the user has explicitly verified and
+      authorized sending that exact message.
+
+    IMPORTANT: Do NOT use this tool to reply to or follow up on an existing
+    email thread — doing so creates an unthreaded standalone message without
+    thread history or ``In-Reply-To`` / ``References`` headers. To reply or
+    follow up on an existing message, ALWAYS use ``reply_email`` instead.
 
     Args:
         to: Recipient email (comma-separated for multiple).
         subject: Email subject line.
-        body: Plain text body.
+        body: Optional plain-text body (``text/plain``). NEVER pass raw HTML
+            tags (``<p>``, ``<b>``, ``<table>``, etc.) in ``body`` — they will
+            render as literal code tags to the recipient. For HTML emails,
+            pass the HTML markup in ``html_body`` (and you may omit ``body``).
         cc: Optional CC recipients (comma-separated).
         bcc: Optional BCC recipients (comma-separated).
-        html_body: Optional HTML body.
+        html_body: Optional HTML body (``text/html``). Use this whenever the
+            email contains HTML markup, bolding, lists, or tables.
         account: Optional account selector (name or email). Omit to
             send as the user's default account.
 
@@ -222,27 +241,69 @@ async def send_email(
 
 async def reply_email(
     message_id: str,
-    body: str,
+    body: Optional[str] = None,
     include_quote: bool = True,
-    as_draft: bool = False,
+    as_draft: bool = True,
     html_body: Optional[str] = None,
+    reply_all: bool = True,
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Reply to a Gmail message, properly threaded with quoted content.
+    """Reply to or follow up on an existing Gmail message (creates a draft by default).
+
+    SAFETY / DRAFT-FIRST POLICY:
+    - ``as_draft`` defaults to ``True`` so replies safely create a threaded
+      Gmail draft by default.
+    - NEVER set ``as_draft=False`` to send a live reply to any recipient other
+      than the active Google account's own email address unless you have FIRST
+      displayed the full, verbatim reply body and recipients to the user and
+      the user has explicitly verified and authorized sending it.
+
+    Always use this tool (with ``as_draft=True`` for drafts) instead of
+    ``create_email_draft`` or ``send_email`` whenever responding to or
+    following up on an existing email thread. It automatically:
+    - attaches the reply/draft to the existing ``threadId`` with proper
+      ``In-Reply-To`` and chained ``References`` headers,
+    - quotes the original message below your reply (with inline ``cid:``
+      images preserved) when ``include_quote=True``, and
+    - resolves recipients for ``reply_all=True`` (preserving other ``To``
+      and ``Cc`` addresses while excluding the active account's own email,
+      and targeting the original recipients when following up on a message
+      sent by the active account itself).
+
+    Tip: When replying to a multi-message thread, call ``get_email_thread``
+    first and pass the latest message's ID (``messages[-1]["id"]``) as
+    ``message_id`` so the full conversation history is quoted.
 
     Args:
-        message_id: Gmail message ID to reply to.
-        body: Plain text reply body.
+        message_id: Gmail message ID to reply to (typically the latest
+            message in the thread, ``messages[-1]["id"]``).
+        body: Optional plain-text reply body (``text/plain``). NEVER pass raw
+            HTML tags in ``body`` — pass HTML markup in ``html_body`` instead
+            (and you may omit ``body``). Do NOT manually duplicate the quoted
+            thread history when ``include_quote=True``.
         include_quote: Include quoted original message (default True).
-        as_draft: Create a draft instead of sending (default False).
-        html_body: Optional HTML body of the reply. If include_quote is True,
-            this HTML content is prepended above the quoted original.
+        as_draft: Create a threaded reply draft instead of sending
+            (default True). Only set False after showing the verbatim reply
+            to the user and receiving explicit authorization to send.
+        html_body: Optional HTML body (``text/html``) of the reply. Use this
+            whenever the reply contains HTML markup, bolding, lists, or
+            tables. If ``include_quote`` is True, this HTML content is
+            prepended above the quoted original.
+        reply_all: If True (default), include all other original ``To`` and
+            ``Cc`` recipients (excluding the active user's own address). If
+            False, reply only to the sender.
+        to: Optional explicit ``To`` override (comma-separated).
+        cc: Optional explicit ``Cc`` override (comma-separated).
+        bcc: Optional ``Bcc`` recipients (comma-separated).
         account: Optional account selector (name or email). Omit to
             reply as the user's default account.
 
     Returns:
-        Dict with ``success``, ``id``, ``thread_id``, ``is_draft``,
-        and ``message``.
+        Dict with ``success``, ``id``, ``thread_id``, ``to``, ``cc``,
+        ``subject``, ``is_draft``, and ``message``.
     """
     try:
         result = mail.reply_message(
@@ -251,12 +312,19 @@ async def reply_email(
             include_quote=include_quote,
             as_draft=as_draft,
             html_body=html_body,
+            reply_all=reply_all,
+            to=to,
+            cc=cc,
+            bcc=bcc,
             account=account,
         )
         return {
             "success": True,
             "id": result.get("id"),
             "thread_id": result.get("threadId"),
+            "to": result.get("to"),
+            "cc": result.get("cc"),
+            "subject": result.get("subject"),
             "is_draft": result.get("is_draft", False),
             "message": (
                 "Reply draft created"
@@ -276,10 +344,18 @@ async def forward_email(
     html_note: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
-    as_draft: bool = False,
+    as_draft: bool = True,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Forward a Gmail message with full MIME fidelity.
+    """Forward a Gmail message with full MIME fidelity (creates a draft by default).
+
+    SAFETY / DRAFT-FIRST POLICY:
+    - ``as_draft`` defaults to ``True`` so forwards safely create a Gmail
+      draft by default.
+    - NEVER set ``as_draft=False`` to send a live forward to any recipient
+      other than the active Google account's own email address unless you have
+      FIRST displayed the full, verbatim note and recipients to the user and
+      the user has explicitly verified and authorized sending it.
 
     Rebuilds the forward from the source's raw MIME, preserving every
     regular attachment byte-for-byte and every inline ``cid:`` image
@@ -296,7 +372,9 @@ async def forward_email(
             source has an html body.
         cc: Optional CC recipients (comma-separated).
         bcc: Optional BCC recipients (comma-separated).
-        as_draft: Create a draft instead of sending (default False).
+        as_draft: Create a draft instead of sending (default True). Only set
+            False after showing the verbatim message to the user and receiving
+            explicit authorization to send.
         account: Optional account selector (name or email). Omit to use
             the user's default account.
 
@@ -364,21 +442,35 @@ async def read_email_structure(
 async def create_email_draft(
     to: str,
     subject: str,
-    body: str,
+    body: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     html_body: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Create a Gmail draft.
+    """Create a new standalone Gmail draft (starts a new thread).
+
+    Preferred default over ``send_email`` whenever preparing a new standalone
+    email to another recipient so the user can inspect and send it from Gmail.
+
+    IMPORTANT: Do NOT use this tool to draft a reply or follow-up to an
+    existing email or thread — doing so creates an unthreaded standalone
+    draft that loses ``threadId``, ``In-Reply-To`` / ``References`` headers,
+    and the quoted conversation history. To draft a reply or follow-up to
+    an existing message (including your own sent message), ALWAYS use
+    ``reply_email(message_id=..., as_draft=True)`` instead.
 
     Args:
         to: Recipient email (comma-separated for multiple).
         subject: Email subject line.
-        body: Plain text body.
+        body: Optional plain-text body (``text/plain``). NEVER pass raw HTML
+            tags (``<p>``, ``<b>``, ``<table>``, etc.) in ``body`` — they will
+            render as literal code tags to the recipient. For HTML emails,
+            pass the HTML markup in ``html_body`` (and you may omit ``body``).
         cc: Optional CC recipients (comma-separated).
         bcc: Optional BCC recipients (comma-separated).
-        html_body: Optional HTML body.
+        html_body: Optional HTML body (``text/html``). Use this whenever the
+            draft contains HTML markup, bolding, lists, or tables.
         account: Optional account selector (name or email). Omit to
             create the draft in the user's default account.
 
@@ -500,7 +592,13 @@ async def get_email_thread(
     thread_id: str,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Retrieve a full Gmail thread, including all its messages.
+    """Retrieve a full Gmail thread, including all its messages in chronological order.
+
+    Messages in ``messages`` are ordered oldest-first (``messages[0]`` is the
+    initial message; ``messages[-1]`` is the most recent message). When
+    replying to a thread via ``reply_email``, pass ``messages[-1]["id"]`` as
+    ``message_id`` so the reply quotes and chains the latest message in the
+    conversation.
 
     Args:
         thread_id: Gmail thread ID.
@@ -508,7 +606,9 @@ async def get_email_thread(
             use the user's default account.
 
     Returns:
-        Dict with thread details and a list of simplified messages.
+        Dict with ``id``, ``messageCount``, and ``messages`` (each with
+        ``id``, ``messageId``, ``subject``, ``from``, ``to``, ``cc``,
+        ``date``, and ``snippet``).
     """
     try:
         return mail.get_thread(thread_id=thread_id, account=account)

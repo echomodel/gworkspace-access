@@ -11,6 +11,23 @@ from ..timing import time_api_call
 logger = logging.getLogger(__name__)
 
 
+def format_space_url(space_or_message_name: Optional[str]) -> Optional[str]:
+    """Return the canonical Google Chat web URL for a space or message resource name.
+
+    Strips the leading ``spaces/`` prefix (and any trailing ``/messages/...`` or
+    ``/threads/...`` path) so the returned URL is always a valid
+    ``https://chat.google.com/room/<space_short_id>`` link.
+    """
+    if not space_or_message_name:
+        return None
+    parts = space_or_message_name.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "spaces" and parts[1]:
+        return f"https://chat.google.com/room/{parts[1]}"
+    if parts and parts[0]:
+        return f"https://chat.google.com/room/{parts[0]}"
+    return None
+
+
 def get_chat_service(account: Optional[str] = None) -> Any:
     """Build an authenticated Google Chat API service for the current user.
 
@@ -106,16 +123,19 @@ def search_messages(
             text = msg.get('text', '')
             if query.lower() in text.lower():
                 # Resolve author name
-                from gwsa.sdk.people import get_person_name
+                from gwsa.sdk.people import get_person_name, get_person_email
                 sender = msg.get("sender", {})
                 user_id = sender.get("name")
                 author_name = get_person_name(user_id, account=account)
+                author_email = get_person_email(user_id, account=account)
                 
                 found_messages.append({
                     "name": msg.get("name"),
+                    "url": format_space_url(msg.get("name") or space_id),
                     "text": text,
                     "createTime": msg.get("createTime"),
                     "author": author_name,
+                    "authorEmail": author_email,
                     "thread": msg.get("thread", {}).get("name"),
                     "attachment": msg.get("attachment")
                 })
@@ -126,6 +146,7 @@ def search_messages(
             
     return {
         "query": query,
+        "url": format_space_url(space_id),
         "scanned_count": messages_scanned,
         "matches_found": len(found_messages),
         "messages": found_messages
@@ -147,7 +168,7 @@ def get_recent_chats(
             the user's default account.
 
     Returns:
-        List of {id, displayName} dicts.
+        List of {id, displayName, url} dicts.
     """
     from ..people import get_person_name
 
@@ -202,6 +223,7 @@ def get_recent_chats(
         recent_chats.append({
             "id": space["name"],
             "displayName": display_name,
+            "url": format_space_url(space.get("name")),
         })
 
     return recent_chats

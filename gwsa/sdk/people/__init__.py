@@ -1,1 +1,1 @@
-from .service import get_person_name, get_me
+from .service import get_person_name, get_person_email, get_me

@@ -5,3 +5,4 @@ from .service import list_messages
 from .service import search_messages
 from .service import get_recent_chats
 from .service import download_attachment
+from .service import format_space_url
