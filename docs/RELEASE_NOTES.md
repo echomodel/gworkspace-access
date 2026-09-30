@@ -1,5 +1,32 @@
 # Release Notes
 
+## v0.28.0 — Reply-All threading, draft-first email defaults, Chat URLs & emails
+
+- **Reply-All recipient resolution (`reply_email` / `mail.reply_message`):**
+  `reply_email` now defaults to `reply_all=True`, preserving original `To`
+  and `Cc` participants while automatically excluding the active account's
+  own email address. When replying to a message sent by the active account
+  itself (a follow-up), recipients resolve to the original `To` (and `Cc`
+  when `reply_all=True`) instead of addressing the user back to themselves.
+  Explicit `to`, `cc`, and `bcc` overrides are also supported, and
+  `References` headers are chained in full.
+- **Draft-first MCP defaults (`as_draft=True`):** `reply_email` and
+  `forward_email` now default to `as_draft=True` so outbound replies and
+  forwards stage a Gmail draft by default unless `as_draft=False` is
+  explicitly passed.
+- **HTML-only email bodies (`body=None`):** `send_email`,
+  `create_email_draft`, and `reply_email` (and SDK counterparts) now allow
+  omitting `body` when `html_body` is provided.
+- **Google Chat canonical URLs, full names, and emails:** Chat spaces now
+  include a canonical `url` (`https://chat.google.com/room/<id>`),
+  `list_chat_spaces(resolve_names=True)` preserves full display names
+  instead of truncating to first names, and member/message payloads resolve
+  `email` / `authorEmail` via the People API when available.
+- **Google Docs tool guidance:** Clarified `create_doc`, `append_to_doc`,
+  `insert_in_doc`, and `replace_in_doc` docstrings regarding `mime_type="text/html"`
+  vs. `batch_update_doc` so agents do not insert raw Markdown syntax into
+  plain-text fields.
+
 ## v0.27.0 — Sheets structure: tabs, rows, developer metadata
 
 Spreadsheets used as multi-tab data stores can now be restructured

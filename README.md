@@ -35,7 +35,7 @@ service (HTTP, JWT-authenticated).
 ## Install
 
 ```bash
-pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.20.0
+pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.28.0
 ```
 
 Installs three commands:
@@ -471,10 +471,10 @@ specific account per call when the user has more than one. Omit
 account when only one is configured. The `list_google_accounts`
 tool exposes the names and emails the agent should pass.
 
-#### Forwarding and message part fidelity
+#### Forwarding, replying, and message part fidelity
 
 `forward_email(message_id, to, note=None, html_note=None, cc=None,
-bcc=None, as_draft=False)` forwards a message rebuilt from its full
+bcc=None, as_draft=True)` forwards a message rebuilt from its full
 source MIME, preserving:
 
 - every regular **attachment**, byte-for-byte,
@@ -483,13 +483,20 @@ source MIME, preserving:
   render,
 - both the HTML and plain-text body alternatives,
 
-then prepends your `note` / `html_note`. A forward starts a new thread.
+then prepends your `note` / `html_note`. A forward starts a new thread
+and defaults to creating a draft (`as_draft=True`) so the user can
+review before sending.
 
-The same part-rebinding now applies to **reply** quoting: when the
-quoted tail contains inline `cid:` images, `reply_email` re-attaches
-the matching Content-ID parts so they still render (it does not
-re-carry the original's file attachments — only the inline images the
-quoted body points at).
+`reply_email(message_id, body=None, html_body=None, reply_all=True,
+to=None, cc=None, bcc=None, as_draft=True, include_quote=True)`
+reconstructs a threaded reply (`threadId`, `In-Reply-To`, chained
+`References`), defaults to Reply-All (`reply_all=True`, excluding the
+active account's own address, or targeting the original `To`/`Cc` when
+following up on a self-sent message), and defaults to creating a draft
+(`as_draft=True`). When the quoted tail contains inline `cid:` images,
+`reply_email` re-attaches the matching Content-ID parts so they still
+render (it does not re-carry the original's file attachments — only the
+inline images the quoted body points at).
 
 `read_email_structure(message_id)` exposes the full per-part MIME
 structure behind a message — each part's `mime_type`, `content_id`,
