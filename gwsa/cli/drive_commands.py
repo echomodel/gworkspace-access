@@ -157,6 +157,21 @@ def create_folder(name, parent_id):
         raise SystemExit(1)
 
 
+@drive_group.command('copy')
+@click.argument('file_id')
+@click.option('--name', default=None, help='Name for the copy.')
+@click.option('--folder-id', default=None, help='Destination folder ID.')
+@require_scopes('drive')
+def copy_file(file_id, name, folder_id):
+    """Copy a Drive file (Google Docs/Sheets/Slides keep full formatting)."""
+    try:
+        click.echo(json.dumps(
+            drive.copy_file(file_id, name=name, folder_id=folder_id), indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
 @drive_group.command('set-properties')
 @click.argument('file_id')
 @click.option('--prop', 'props', multiple=True, metavar='KEY=VALUE',

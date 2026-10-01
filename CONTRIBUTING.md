@@ -158,6 +158,48 @@ Rules to preserve if you touch this code:
 3. **Preserve Content-IDs verbatim** (with angle brackets). The HTML
    references `cid:XXX`; the part header must read `Content-ID: <XXX>`.
 
+### Docs editing: one guarded write path
+
+Docs content changes go through exactly one path —
+`gwsa.sdk.docs.batch_update` / the `batch_update_doc` tool — which passes
+Docs API requests to Google unchanged and adds checks around them. Rules
+to preserve:
+
+1. **One write path.** Do not add convenience write tools (insert,
+   append, replace) alongside `batch_update_doc`. Each would be a single
+   `batchUpdate` request that bypasses the checks; express them as recipes
+   in the tool description instead.
+2. **Positions come only from the document structure.** The position map
+   (`gwsa.sdk.docs.positions`) lays out Google's own `startIndex` /
+   `endIndex` values — one unit per index, UTF-16 code units, with markers
+   for non-text items. It never infers or invents positions. Exported
+   text (Markdown / plain) has no positions and must never be used to
+   compute one. Any element type the map doesn't recognise must show up as
+   a coverage gap (the coverage tests fail), never be skipped silently.
+3. **Expectations follow the API's sequential semantics.** Requests are
+   checked in order against the document as it will be when each runs.
+   Replay only effects that are exact by the API's definition: `insertText`
+   (adds its UTF-16 units), `deleteContentRange` (removes the range),
+   single-index element inserts (person, date, inline image), and
+   `createParagraphBullets` (removes covered paragraphs' leading tabs).
+   For any other content-changing request, stop checking at its position
+   — later requests there go in a separate call. Never approximate an
+   effect: an inexact replay could pass a check that the real document
+   would fail.
+4. **Failures state facts.** A refusal says which request, what it
+   expected, what is actually there, and that nothing was written. It
+   does not guess at corrections (e.g. "did you mean position 57") — a
+   guess can point at the wrong occurrence.
+5. **Every write is checked against one read and reported.** The batch is
+   sent with `writeControl.requiredRevisionId` from the read it was
+   checked against, and the response carries the before/after change
+   report.
+6. **The tool description is the manual.** Agents learn the model from
+   `batch_update_doc`'s docstring, not from errors. Changes to the rules
+   above must update it, and should be validated with isolated agent runs
+   (`claude -p` against a stdio server, no other context) as well as the
+   unit and integration tests.
+
 ### Drive revisions (version store for uploaded files)
 
 `gwsa/sdk/drive/revisions.py` wraps Drive's `revisions` resource so an

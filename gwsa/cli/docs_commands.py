@@ -57,81 +57,59 @@ def create_doc(title, body):
 
 @docs.command('read')
 @click.argument('doc_id')
-@click.option('--format', 'output_format', type=click.Choice(['text', 'json']),
-              default='text', help='Output format (default: text).')
+@click.option('--format', 'output_format',
+              type=click.Choice(['markdown', 'text', 'content', 'map', 'raw']),
+              default='markdown', show_default=True,
+              help="markdown/text: Google's export (all tabs, no positions). "
+                   "content: metadata + tabs + markdown (JSON). "
+                   "map: paragraphs with exact index ranges. raw: Docs API JSON.")
+@click.option('--tab', 'tab_id', default=None,
+              help='Only this tab (map and raw formats).')
 @require_scopes('docs-read')
-def read_doc(doc_id, output_format):
+def read_doc(doc_id, output_format, tab_id):
     """Read a Google Doc by ID."""
     try:
-        if output_format == 'json':
-            result = sdk_docs.get_document_content(doc_id)
-            click.echo(json.dumps(result, indent=2))
+        if tab_id and output_format not in ('map', 'raw'):
+            raise click.ClickException("--tab applies to --format map or raw.")
+        if output_format == 'markdown':
+            click.echo(sdk_docs.get_document_markdown(doc_id))
+        elif output_format == 'text':
+            click.echo(sdk_docs.get_document_text(doc_id))
+        elif output_format == 'content':
+            click.echo(json.dumps(sdk_docs.get_document_content(doc_id), indent=2))
+        elif output_format == 'map':
+            result = sdk_docs.get_document_map(doc_id, tab_id=tab_id)
+            click.echo(f"# revision {result['revision_id']}")
+            for seg in result['segments']:
+                click.echo(f"## tab {seg['tab_id']} ({seg['tab_title']}) "
+                           f"{seg['segment']} {seg['segment_id']}".rstrip())
+                for line in seg['lines']:
+                    click.echo(line)
         else:
-            text = sdk_docs.get_document_text(doc_id)
-            click.echo(text)
+            click.echo(json.dumps(sdk_docs.get_document(doc_id, tab_id=tab_id), indent=2))
 
-    except (LocalPathError, InvalidDocIdError) as e:
+    except click.ClickException:
+        raise
+    except (LocalPathError, InvalidDocIdError, ValueError) as e:
         raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
 
 
-@docs.command('append')
+@docs.command('find')
 @click.argument('doc_id')
 @click.argument('text')
-@require_scopes('docs')
-def append_to_doc(doc_id, text):
-    """Append text to a Google Doc."""
+@click.option('--tab', 'tab_id', default=None, help='Search only this tab.')
+@click.option('--ignore-case', is_flag=True, default=False,
+              help='Case-insensitive match.')
+@require_scopes('docs-read')
+def find_in_doc(doc_id, text, tab_id, ignore_case):
+    """Print every occurrence of TEXT with its exact index range."""
     try:
-        sdk_docs.append_text(doc_id, text)
-        click.echo("Text appended successfully!")
-
-    except (LocalPathError, InvalidDocIdError) as e:
-        raise click.ClickException(str(e))
-    except Exception as e:
-        raise click.ClickException(f"An error occurred: {e}")
-
-
-@docs.command('insert')
-@click.argument('doc_id')
-@click.argument('text')
-@click.option('--index', '-i', type=int, default=1,
-              help='Position to insert at (default: 1, beginning of document).')
-@require_scopes('docs')
-def insert_to_doc(doc_id, text, index):
-    """Insert text at a specific position in a Google Doc."""
-    try:
-        sdk_docs.insert_text(doc_id, text, index=index)
-        click.echo(f"Text inserted at index {index} successfully!")
-
-    except (LocalPathError, InvalidDocIdError) as e:
-        raise click.ClickException(str(e))
-    except Exception as e:
-        raise click.ClickException(f"An error occurred: {e}")
-
-
-@docs.command('replace')
-@click.argument('doc_id')
-@click.argument('find_text')
-@click.argument('replace_with')
-@click.option('--ignore-case', is_flag=True,
-              help='Ignore case when matching.')
-@require_scopes('docs')
-def replace_in_doc(doc_id, find_text, replace_with, ignore_case):
-    """Replace all occurrences of text in a Google Doc."""
-    try:
-        result = sdk_docs.replace_text(
-            doc_id, find_text, replace_with, match_case=not ignore_case
-        )
-        # Get count of replacements
-        replies = result.get("replies", [])
-        if replies:
-            count = replies[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
-            click.echo(f"Replaced {count} occurrence(s).")
-        else:
-            click.echo("Replace operation completed.")
-
-    except (LocalPathError, InvalidDocIdError) as e:
+        result = sdk_docs.find_in_document(
+            doc_id, text, tab_id=tab_id, match_case=not ignore_case)
+        click.echo(json.dumps(result, indent=2))
+    except (LocalPathError, InvalidDocIdError, ValueError) as e:
         raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")
@@ -141,39 +119,34 @@ def replace_in_doc(doc_id, find_text, replace_with, ignore_case):
 @click.argument('doc_id')
 @click.option('--requests-json', '-r', required=True,
               help='JSON array of Docs API batchUpdate request objects.')
+@click.option('--expectations-json', '-e', default=None,
+              help='JSON array aligned with the requests: null, '
+                   '{"text": ...}, {"before": ...}/{"after": ...}, or '
+                   '{"unchecked": true}. Required for index-based requests.')
 @click.option('--required-revision-id', default=None,
-              help='Optimistic-concurrency guard: reject the write if the '
-                   'document changed since this revision.')
+              help='Refuse unless the document is still at this revision.')
 @require_scopes('docs')
-def batch_update_doc(doc_id, requests_json, required_revision_id):
-    """Apply a raw Docs API batchUpdate to a document (the full editing primitive).
+def batch_update_doc(doc_id, requests_json, expectations_json, required_revision_id):
+    """Apply a Docs API batchUpdate, checked against the current document.
 
-    REQUESTS-JSON is a JSON array of Docs API request objects, e.g.
-    '[{"replaceAllText": {"containsText": {"text": "{{X}}", "matchCase": true}, "replaceText": "Y"}}]'.
-    The batch is atomic: if any request is invalid, none are applied.
+    Every index-based request needs an expectation stating what is at that
+    position; if any does not match, nothing is written. Prints the
+    revision ids, Google's replies, and the changed paragraphs.
     """
     try:
         requests = json.loads(requests_json)
-        if not isinstance(requests, list):
-            raise click.ClickException(
-                "--requests-json must be a JSON array of request objects."
-            )
+        expectations = json.loads(expectations_json) if expectations_json else None
+        # Positional: (doc_id, requests, expectations, required revision).
         result = sdk_docs.batch_update(
-            doc_id, requests, None, required_revision_id
-        )
-        write_control = result.get("writeControl", {})
-        revision = (
-            write_control.get("requiredRevisionId")
-            or write_control.get("targetRevisionId")
-        )
-        click.echo(f"batchUpdate applied ({len(requests)} request(s)).")
-        if revision:
-            click.echo(f"  New revision: {revision}")
-        replies = result.get("replies", [])
-        if replies:
-            click.echo(f"  Replies: {json.dumps(replies)}")
-
-    except (LocalPathError, InvalidDocIdError) as e:
+            doc_id, requests, expectations, required_revision_id)
+        click.echo(json.dumps(result, indent=2))
+    except json.JSONDecodeError as e:
+        raise click.ClickException(f"Invalid JSON: {e}")
+    except sdk_docs.ExpectationError as e:
+        raise click.ClickException(
+            "Expectation check failed. Nothing was written.\n- "
+            + "\n- ".join(e.failures))
+    except (LocalPathError, InvalidDocIdError, ValueError) as e:
         raise click.ClickException(str(e))
     except Exception as e:
         raise click.ClickException(f"An error occurred: {e}")

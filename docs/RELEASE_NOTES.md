@@ -1,5 +1,44 @@
 # Release Notes
 
+## v0.29.0 — Docs: guarded editing, position map, Google exports, drive_copy
+
+Google Docs can now be edited by agents with the same integrity as a
+local file: positions come from Google's own structure, every positioned
+edit is checked before anything is written, and every write reports
+exactly what changed.
+
+- **`batch_update_doc` is the one Docs write tool**, a pass-through to the
+  Docs API `batchUpdate` with checks:
+  - **Expectations (breaking).** Every request that addresses an index
+    needs an entry in the new `expectations` list stating what is there
+    (`{"text": ...}` for a range, `{"before": ...}` / `{"after": ...}` for a
+    point; `null` for requests without an index). Requests are checked in
+    order, as Google applies them. If any expectation does not match,
+    nothing is written and the response states what is actually there.
+  - **Revision guard** on every write, and a **change report** (each
+    changed paragraph before/after, with ranges) in every response.
+- **Removed (breaking): `append_to_doc`, `insert_in_doc`,
+  `replace_in_doc`** and the `gwsa docs append/insert/replace` commands.
+  Each was one `batchUpdate` request without checks; their equivalents are
+  recipes in `batch_update_doc`'s description (`endOfSegmentLocation`
+  insert, positioned `insertText` with an expectation, `replaceAllText`
+  with optional `tabsCriteria`).
+- **`read_doc` formats:** `content` and the new `markdown` / `text` use
+  Google's own export (all tabs; chips, lists, headings, tables rendered),
+  replacing gwsa's text extraction, which dropped chips and lost tab and
+  table structure. New `map` format: each paragraph's exact index range
+  per tab and segment, with markers for non-text items. `raw` gains
+  `tab_id` and `fields`. `content` now includes a `tabs` inventory.
+- **New `find_in_doc`:** exact index ranges of every occurrence of a text.
+- **New `drive_copy`** (`gwsa drive copy`): an exact Drive copy, for
+  "copy and change specific parts".
+- CLI: `gwsa docs read --format markdown|text|content|map|raw`,
+  `gwsa docs find`, `gwsa docs batch-update --expectations-json`.
+
+Server total: 62 tools over stdio, 59 over HTTP. Connectors that cache
+tool schemas (claude.ai / Cowork) need a reconnect.
+
+
 ## v0.28.0 — Reply-All threading, draft-first email defaults, Chat URLs & emails
 
 - **Reply-All recipient resolution (`reply_email` / `mail.reply_message`):**

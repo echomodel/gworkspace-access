@@ -1,148 +1,159 @@
-"""Google Docs reading operations."""
+"""Google Docs reading operations.
+
+Two families of reads, deliberately kept apart:
+
+- **Structure** (``get_document``, ``get_document_map``, ``find_in_document``)
+  comes from ``documents.get``. It carries Google's own indices — the only
+  valid source of positions for ``batch_update``.
+- **Text** (``get_document_markdown``, ``get_document_text``) comes from
+  Google's own export (Drive ``files.export``): what *File → Download*
+  produces. It includes every tab and renders chips, lists, headings, and
+  tables, but its character offsets do NOT correspond to document indices —
+  never compute positions from exported text.
+"""
+
+from typing import Optional
 
 from googleapiclient.errors import HttpError
-
-from typing import List, Dict, Any, Optional
 
 from .service import get_docs_service
 from .validators import validate_doc_id
 from ..drive.service import get_drive_service
+from . import positions
+
+_DOC_MIME = "application/vnd.google-apps.document"
+_EXPORT_MIME = {"markdown": "text/markdown", "text": "text/plain"}
 
 
-def get_document(doc_id: str, account: Optional[str] = None) -> dict:
-    """Get a document's full structure after verifying it is a Google Doc.
-
-    Args:
-        doc_id: The Google Doc ID
-        account: Optional account selector — name or email. Omit to use
-            the user's default account.
-
-    Returns:
-        The full document object from the API including documentId,
-        title, body (with content array), revisionId.
-
-    Raises:
-        ValueError: If the document ID is not for a Google Doc.
-        LocalPathError: If the ID looks like a local file path.
-        InvalidDocIdError: If the ID is malformed.
-    """
-    validate_doc_id(doc_id)
-
+def _assert_google_doc(doc_id: str, account: Optional[str]) -> None:
     drive_service = get_drive_service(account=account)
     try:
-        file_metadata = drive_service.files().get(fileId=doc_id, fields='mimeType').execute()
-        mime_type = file_metadata.get('mimeType')
-
-        if mime_type != 'application/vnd.google-apps.document':
-            raise ValueError(
-                f"File with ID '{doc_id}' is not a Google Doc (MIME type: {mime_type}). "
-                f"Use the 'drive_download' tool for non-native formats like PDFs or images."
-            )
+        meta = drive_service.files().get(
+            fileId=doc_id, fields="mimeType", supportsAllDrives=True
+        ).execute()
     except HttpError:
-        pass
+        return
+    mime_type = meta.get("mimeType")
+    if mime_type != _DOC_MIME:
+        raise ValueError(
+            f"File with ID '{doc_id}' is not a Google Doc (MIME type: {mime_type}). "
+            f"Use the 'drive_download' tool for non-native formats like PDFs or images."
+        )
 
+
+def _filter_tab(doc: dict, tab_id: str) -> dict:
+    for tab, _parent, _depth in positions.iter_tabs(doc):
+        if tab.get("tabProperties", {}).get("tabId") == tab_id:
+            out = {k: v for k, v in doc.items() if k != "tabs"}
+            out["tabs"] = [tab]
+            return out
+    raise ValueError(f"Document has no tab with id '{tab_id}'.")
+
+
+def get_document(
+    doc_id: str,
+    account: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    fields: Optional[str] = None,
+) -> dict:
+    """The document as returned by ``documents.get`` (all tabs' content).
+
+    Args:
+        doc_id: The Google Doc ID.
+        account: Optional account selector — name or email.
+        tab_id: Optional — return only this tab (with its child tabs).
+        fields: Optional Docs API partial-response mask (e.g.
+            ``"revisionId,tabs(tabProperties)"``), passed through verbatim.
+
+    Raises:
+        ValueError: The file is not a Google Doc, or ``tab_id`` is unknown.
+        LocalPathError / InvalidDocIdError: The ID is malformed.
+    """
+    validate_doc_id(doc_id)
+    _assert_google_doc(doc_id, account)
     service = get_docs_service(account=account)
-    return service.documents().get(documentId=doc_id, includeTabsContent=True).execute()
+    kwargs = {"documentId": doc_id, "includeTabsContent": True}
+    if fields:
+        kwargs["fields"] = fields
+    doc = service.documents().get(**kwargs).execute()
+    return _filter_tab(doc, tab_id) if tab_id else doc
+
+
+def export_document(doc_id: str, fmt: str, account: Optional[str] = None) -> str:
+    """Google's own export of the document: ``"markdown"`` or ``"text"``."""
+    if fmt not in _EXPORT_MIME:
+        raise ValueError(f"fmt must be one of {sorted(_EXPORT_MIME)}, got {fmt!r}")
+    validate_doc_id(doc_id)
+    _assert_google_doc(doc_id, account)
+    data = get_drive_service(account=account).files().export(
+        fileId=doc_id, mimeType=_EXPORT_MIME[fmt]
+    ).execute()
+    text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
+    return text.lstrip("﻿")
+
+
+def get_document_markdown(doc_id: str, account: Optional[str] = None) -> str:
+    """Google's Markdown export (all tabs; headings, lists, tables, chips)."""
+    return export_document(doc_id, "markdown", account=account)
 
 
 def get_document_text(doc_id: str, account: Optional[str] = None) -> str:
-    """Get the plain text content of a document.
-
-    Args:
-        doc_id: The Google Doc ID
-        account: Optional account selector — name or email. Omit to use
-            the user's default account.
-    """
-    doc = get_document(doc_id, account=account)
-    return extract_text_from_document(doc)
+    """Google's plain-text export (all tabs)."""
+    return export_document(doc_id, "text", account=account)
 
 
 def get_document_content(doc_id: str, account: Optional[str] = None) -> dict:
-    """Get document metadata and content.
-
-    Args:
-        doc_id: The Google Doc ID
-        account: Optional account selector — name or email. Omit to use
-            the user's default account.
+    """Summary read: metadata, tab inventory, and the Markdown export.
 
     Returns:
-        Dict with id, title, url, text, revision_id.
+        Dict with ``id``, ``title``, ``url``, ``revision_id``, ``tabs``
+        (``tab_id``, ``title``, ``parent_tab_id``, ``depth``), and ``text``
+        (Google's Markdown export of all tabs).
     """
-    doc = get_document(doc_id, account=account)
-
+    doc = get_document(
+        doc_id, account=account,
+        fields=(
+            "documentId,title,revisionId,"
+            "tabs(tabProperties,childTabs(tabProperties,"
+            "childTabs(tabProperties,childTabs(tabProperties))))"
+        ),
+    )
     return {
         "id": doc.get("documentId"),
         "title": doc.get("title"),
         "url": f"https://docs.google.com/document/d/{doc.get('documentId')}/edit",
-        "text": extract_text_from_document(doc),
         "revision_id": doc.get("revisionId"),
+        "tabs": positions.list_tabs(doc),
+        "text": get_document_markdown(doc_id, account=account),
     }
 
 
-def extract_text_from_document(doc: dict) -> str:
+def get_document_map(
+    doc_id: str, tab_id: Optional[str] = None, account: Optional[str] = None
+) -> dict:
+    """Position map: each paragraph's exact index range, per tab and segment.
+
+    See :mod:`gwsa.sdk.docs.positions`. The returned ``revision_id`` is the
+    revision the positions belong to.
     """
-    Extract plain text from a document structure, supporting both tabbed and non-tabbed documents.
+    doc = get_document(doc_id, account=account)
+    if tab_id and not any(t["tab_id"] == tab_id for t in positions.list_tabs(doc)):
+        raise ValueError(f"Document has no tab with id '{tab_id}'.")
+    return positions.render_map(doc, tab_id=tab_id)
 
-    Args:
-        doc: The document object from the API
 
-    Returns:
-        Plain text content
+def find_in_document(
+    doc_id: str,
+    text: str,
+    tab_id: Optional[str] = None,
+    match_case: bool = True,
+    account: Optional[str] = None,
+) -> dict:
+    """Every occurrence of ``text`` with its exact index range.
+
+    ``text`` may include markers such as ``⟦person⟧`` to match non-text
+    elements. Returns ``revision_id`` and ``matches`` (``tab_id``,
+    ``segment``, ``segment_id``, ``start``, ``end``).
     """
-    if "tabs" in doc:
-        return extract_text_from_tabs(doc["tabs"])
-    return extract_text_from_body(doc.get("body", {}))
-
-
-def extract_text_from_tabs(tabs: list) -> str:
-    """Recursively extract text from a list of tabs and their child tabs."""
-    text_parts = []
-    for tab in tabs:
-        if "documentTab" in tab:
-            doc_tab = tab["documentTab"]
-            if "body" in doc_tab:
-                text_parts.append(extract_text_from_body(doc_tab["body"]))
-        if "childTabs" in tab:
-            text_parts.append(extract_text_from_tabs(tab["childTabs"]))
-    return "".join(text_parts)
-
-
-def extract_text_from_body(body: dict) -> str:
-    """Extract text from a single document or tab body."""
-    content = body.get("content", [])
-    text_parts = []
-
-    for element in content:
-        if "paragraph" in element:
-            paragraph = element["paragraph"]
-            para_text = extract_paragraph_text(paragraph)
-            text_parts.append(para_text)
-        elif "table" in element:
-            # Extract text from table cells
-            table = element["table"]
-            for row in table.get("tableRows", []):
-                for cell in row.get("tableCells", []):
-                    for cell_content in cell.get("content", []):
-                        if "paragraph" in cell_content:
-                            para_text = extract_paragraph_text(cell_content["paragraph"])
-                            text_parts.append(para_text)
-
-    return "".join(text_parts)
-
-
-def extract_paragraph_text(paragraph: dict) -> str:
-    """
-    Extract text from a paragraph element.
-
-    Args:
-        paragraph: A paragraph element from the document
-
-    Returns:
-        Plain text content of the paragraph
-    """
-    text = ""
-    for element in paragraph.get("elements", []):
-        text_run = element.get("textRun")
-        if text_run:
-            text += text_run.get("content", "")
-    return text
+    doc = get_document(doc_id, account=account)
+    return positions.find_text(doc, text, tab_id=tab_id, match_case=match_case)

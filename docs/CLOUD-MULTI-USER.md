@@ -269,7 +269,7 @@ Three console scripts. Strict separation:
 
 | CLI | Purpose | Examples |
 |---|---|---|
-| `gwsa` | **Domain only.** Direct Google Workspace operations. | `gwsa mail search`, `gwsa drive list`, `gwsa docs append` |
+| `gwsa` | **Domain only.** Direct Google Workspace operations. | `gwsa mail search`, `gwsa drive list`, `gwsa docs read` |
 | `gwsa-mcp` | **MCP transport.** | `gwsa-mcp serve`, `gwsa-mcp stdio --user alice@example.com` |
 | `gwsa-admin` | **All user/profile/admin.** mcp-app-generated commands + gwsa-specific extensions. | `gwsa-admin users add`, `gwsa-admin accounts add`, `gwsa-admin connect` |
 

@@ -74,24 +74,34 @@ after `pipx install`.
 
 ## Tool inventory
 
-34 tools across five domains, one module per Google API plus an
-account-discovery module. mcp-app auto-discovers public async
-functions from each module:
+62 tools over stdio (59 over HTTP, which omits the stdio-only
+host-path tools), one module per Google API plus an account-discovery
+module. mcp-app auto-discovers public async functions from each module:
 
 - **`gwsa.mcp.tools.accounts`** (1): list_google_accounts
-- **`gwsa.mcp.tools.mail`** (10): search_emails, read_email,
-  modify_email_labels, list_email_labels,
-  send_email, reply_email, create_email_draft,
+- **`gwsa.mcp.tools.mail`** (11): search_emails, read_email,
+  modify_email_labels, list_email_labels, send_email, reply_email,
+  forward_email, read_email_structure, create_email_draft,
   download_email_attachment, get_email_thread
-- **`gwsa.mcp.tools.docs`** (6): list_docs, create_doc, read_doc,
-  append_to_doc, insert_in_doc, replace_in_doc
-- **`gwsa.mcp.tools.drive`** (11): drive_search, drive_get_metadata,
-  drive_list_folder, drive_create_folder, drive_upload, drive_update,
-  drive_download, drive_move, drive_delete, drive_find_folder,
-  drive_search_folders
-- **`gwsa.mcp.tools.chat`** (6): list_chat_spaces, list_chat_members,
-  list_chat_messages, search_chat_messages,
-  get_recent_direct_messages, get_recent_group_chats
+- **`gwsa.mcp.tools.docs`** (5): list_docs, create_doc, read_doc,
+  find_in_doc, batch_update_doc
+- **`gwsa.mcp.tools.drive`** (20): drive_list_folder,
+  drive_create_folder, drive_upload, drive_upload_local (stdio only),
+  drive_update, drive_update_local (stdio only), drive_download,
+  drive_download_to_path (stdio only), drive_move, drive_copy,
+  drive_set_properties, drive_delete, drive_search, drive_get_metadata,
+  drive_find_folder, drive_search_folders, drive_list_revisions,
+  drive_get_revision, drive_keep_revision, drive_unkeep_revision
+- **`gwsa.mcp.tools.chat`** (7): list_chat_spaces, list_chat_members,
+  list_chat_messages, search_chat_messages, get_recent_direct_messages,
+  get_recent_group_chats, download_chat_attachment
+- **`gwsa.mcp.tools.calendar`** (5): list_calendars, list_events,
+  create_event, update_event, delete_event
+- **`gwsa.mcp.tools.sheets`** (13): sheets_list, sheets_create,
+  sheets_get_metadata, sheets_read, sheets_read_tail, sheets_update,
+  sheets_append, sheets_batch_update, sheets_add_tab,
+  sheets_insert_rows, sheets_delete_rows, sheets_set_metadata,
+  sheets_find_by_metadata
 
 ### Drive: one API model, layered conveniences
 

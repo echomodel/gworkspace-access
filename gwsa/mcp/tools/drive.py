@@ -457,6 +457,39 @@ async def drive_move(
         return {"error": str(e)}
 
 
+async def drive_copy(
+    file_id: str,
+    name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Copy a Drive file (Drive ``files.copy``).
+
+    For a Google Doc, Sheet, or Slides file, Google makes the copy itself, so
+    it keeps the original's full content and formatting — styles, chips,
+    images, tables, tabs. To produce a document that differs from an
+    original in specific ways, copy it, then edit only those parts of the
+    copy with ``batch_update_doc``; never rebuild it from exported text.
+    Comments and revision history are not copied.
+
+    Args:
+        file_id: Drive file ID to copy.
+        name: Optional name for the copy (default: Google's "Copy of ...").
+        folder_id: Optional destination folder ID (default: the original's
+            folder). Use ``drive_find_folder`` to resolve a path.
+        account: Optional account selector (name or email).
+
+    Returns:
+        Dict with the copy's ``id``, ``name``, ``mime_type``, ``parents``,
+        and ``url``, or an ``error`` envelope.
+    """
+    try:
+        return drive.copy_file(file_id, name=name, folder_id=folder_id, account=account)
+    except Exception as e:
+        logger.error(f"Error copying file: {e}")
+        return {"error": str(e)}
+
+
 async def drive_set_properties(
     file_id: str,
     properties: Optional[dict] = None,

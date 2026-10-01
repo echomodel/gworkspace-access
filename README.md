@@ -455,10 +455,73 @@ MCP tools: `sheets_batch_update`, `sheets_add_tab`,
 `sheets_insert_rows`, `sheets_delete_rows`, `sheets_set_metadata`,
 `sheets_find_by_metadata`.
 
+### Docs: reading and editing without corruption
+
+Docs are read two ways and written one way.
+
+**Reading to understand** uses Google's own export — what *File →
+Download* produces — so every tab is included and headings, lists,
+tables, and people/date chips are rendered:
+
+```bash
+gwsa docs read DOC_ID                    # Markdown export (default)
+gwsa docs read DOC_ID --format text      # plain-text export
+```
+
+**Reading to edit** uses the document structure, where every position
+is Google's own index. The position map prints each paragraph with its
+exact range; non-text items (chips, images, table/row/cell starts, page
+and section breaks) each occupy one index and show as markers:
+
+```bash
+gwsa docs read DOC_ID --format map
+#   1-14 [HEADING_1] Plan heading⏎
+#   40-46 [list L0] Alpha⏎
+#   64-84 Meeting with ⟦person⟧ on ⟦date⟧⏎
+#   101-107 [cell 0,0] Fruit⏎
+gwsa docs find DOC_ID "Plan heading"     # exact ranges of every occurrence
+```
+
+**Writing** goes through one path, the Docs API's `batchUpdate`, with
+requests passed to Google unchanged — so anything the API can author
+(headings, nested lists, indentation, fonts, colors, links, tables,
+images, chips, named ranges, tabs) is available. gwsa adds checks
+around it:
+
+- **Expectations.** Every request that addresses a position states what
+  is there (`{"text": "Plan heading"}` for a range, `{"before": ...}` /
+  `{"after": ...}` for a point). Requests run in order, as in the API;
+  gwsa replays text inserts and deletes, chip and image inserts, and
+  bullet creation exactly, and checks each expectation against the
+  document as it will be when that request runs. If any expectation does
+  not match, nothing is written and the response states what is actually
+  there — a miscalculated position is refused instead of landing
+  mid-word.
+- **Revision guard.** The batch is checked and written against one read,
+  and Google rejects it if the document changed in between.
+- **Change report.** After writing, every changed paragraph is returned
+  before and after, with its new ranges.
+
+```bash
+gwsa docs batch-update DOC_ID \
+  -r '[{"deleteContentRange": {"range": {"startIndex": 58, "endIndex": 63}}},
+       {"insertText": {"location": {"index": 58}, "text": "Gamma ray"}}]' \
+  -e '[{"text": "Gamma"}, {"after": "\n"}]'
+```
+
+To produce a document that differs from an original in specific ways,
+copy it (`gwsa drive copy FILE_ID --name ...` / `drive_copy`) — Google
+copies it with full formatting — then edit only those parts of the copy.
+
+MCP tools: `read_doc` (formats `content`, `markdown`, `text`, `map`,
+`raw`; `tab_id` for `map`/`raw`), `find_in_doc`, `batch_update_doc`,
+`drive_copy`, plus `list_docs` and `create_doc`. The `batch_update_doc`
+description carries the full working model and recipes for agents.
+
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 63 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (60 over
+`gwsa-mcp` is a stdio MCP server exposing 62 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (59 over
 HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

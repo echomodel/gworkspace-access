@@ -221,3 +221,46 @@ def delete_file(
     ).execute()
 
     return {"file_id": file_id, "trashed": True}
+
+
+def copy_file(
+    file_id: str,
+    name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict:
+    """Copy a Drive file (``files.copy``).
+
+    For Google Docs, Sheets, and Slides the copy is made by Google from the
+    original and keeps its full content and formatting (styles, chips,
+    images, tabs). Comments and revision history are not copied.
+
+    Args:
+        file_id: Drive file ID to copy.
+        name: Optional name for the copy (default: Google's "Copy of ...").
+        folder_id: Optional destination folder ID (default: the original's
+            folder).
+        account: Optional account selector — name or email.
+
+    Returns:
+        Dict with ``id``, ``name``, ``mime_type``, ``parents``, ``url``.
+    """
+    service = get_drive_service(account=account)
+    body: dict = {}
+    if name:
+        body["name"] = name
+    if folder_id:
+        body["parents"] = [folder_id]
+    file = service.files().copy(
+        fileId=file_id,
+        body=body,
+        supportsAllDrives=True,
+        fields="id, name, mimeType, parents, webViewLink",
+    ).execute()
+    return {
+        "id": file.get("id"),
+        "name": file.get("name"),
+        "mime_type": file.get("mimeType"),
+        "parents": file.get("parents", []),
+        "url": file.get("webViewLink"),
+    }
