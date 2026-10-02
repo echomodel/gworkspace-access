@@ -584,10 +584,10 @@ claude mcp add --scope user gwsa -- gwsa-mcp stdio --user local
 claude mcp list                           # verify
 ```
 
-**Gemini CLI / Gemini Code Assist:**
+**Antigravity CLI (`agy`):**
 ```bash
-gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
-gemini mcp list                           # verify
+agy mcp add gwsa -- gwsa-mcp stdio --user local
+agy mcp list                              # verify
 ```
 
 **Claude.ai web (custom connector):** requires the cloud HTTP
@@ -604,7 +604,7 @@ connector**. Local stdio doesn't apply to this client.
 
 Client-specific quirks, troubleshooting, and detailed transport
 options live in [Claude Code Configuration](docs/CLAUDE-CODE.md) and
-[Gemini CLI Configuration](docs/GEMINI-CLI.md). The combined story
+[Antigravity CLI Setup](docs/ANTIGRAVITY-CLI.md). The combined story
 across all clients is in [MCP Server Setup](MCP-SERVER.md).
 
 ## Reference

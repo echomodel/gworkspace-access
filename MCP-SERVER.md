@@ -56,15 +56,16 @@ available in every Claude Code session on this machine, not just
 the current project. Detailed config options and troubleshooting
 are in [Claude Code Configuration](docs/CLAUDE-CODE.md).
 
-### Gemini CLI / Gemini Code Assist
+### Antigravity CLI (`agy`)
 
 ```bash
-gemini mcp add gwsa gwsa-mcp stdio --user local --scope user
-gemini mcp list                                          # verify
+agy mcp add gwsa -- gwsa-mcp stdio --user local
+agy mcp list                                             # verify
 ```
 
-A successful registration shows the server with a `Connected` status.
-Detailed config in [Gemini CLI Configuration](docs/GEMINI-CLI.md).
+A successful registration lists `gwsa` as `stdio` and `enabled`. Headless
+runs (`agy -p`) also need a tool-permission rule; see
+[Antigravity CLI Setup](docs/ANTIGRAVITY-CLI.md).
 
 ### Other MCP clients
 
@@ -222,8 +223,8 @@ there automatically.
 - [README](README.md) — install, account setup, daily usage.
 - [Claude Code Configuration](docs/CLAUDE-CODE.md) — Claude-specific
   setup details and troubleshooting.
-- [Gemini CLI Configuration](docs/GEMINI-CLI.md) — Gemini-specific
-  setup details.
+- [Antigravity CLI Setup](docs/ANTIGRAVITY-CLI.md) — Antigravity-specific
+  setup, tool permissions, and troubleshooting.
 - [Cloud Multi-User Architecture](docs/CLOUD-MULTI-USER.md) — the
   locked design that governs how identity, accounts, and tool
   surfaces fit together; the cloud HTTP architecture.
