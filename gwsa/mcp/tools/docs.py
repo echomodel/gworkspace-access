@@ -147,7 +147,9 @@ async def read_doc(
         ``⟦page-break⟧``, ``⟦section⟧``, ``⟦table⟧``, ``⟦row⟧``, ``⟦cell⟧``.
         Characters outside the Basic Multilingual Plane (most emoji) occupy
         two indices. Copy ranges from here (or from ``find_in_doc``); do not
-        count characters yourself.
+        count characters yourself. The result's ``revision_id`` is the
+        revision these positions belong to: pass it as
+        ``batch_update_doc``'s ``required_revision_id``.
       - ``"raw"``: the Docs API document verbatim (``documents.get`` with all
         tabs' content): every element's ``startIndex``/``endIndex``, styles,
         named ranges, list definitions, ``revisionId``.
@@ -214,8 +216,9 @@ async def find_in_doc(
         account: Optional account selector (name or email).
 
     Returns:
-        Dict with ``revision_id`` (the revision these positions belong to)
-        and ``matches``: each ``tab_id``, ``segment`` (body/header/footer/
+        Dict with ``revision_id`` (the revision these positions belong to —
+        pass it as ``batch_update_doc``'s ``required_revision_id``) and
+        ``matches``: each ``tab_id``, ``segment`` (body/header/footer/
         footnote), ``segment_id``, ``start``, ``end`` (end-exclusive).
         Zero matches is ``[]``; more than one means the text is not unique.
     """
@@ -235,8 +238,9 @@ async def find_in_doc(
 async def batch_update_doc(
     doc_id: str,
     requests: list[dict[str, Any]],
+    required_revision_id: str,
     expectations: Optional[list[Optional[dict[str, Any]]]] = None,
-    required_revision_id: Optional[str] = None,
+    dry_run: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
     r"""Edit a Google Doc: the Docs API ``documents.batchUpdate``, with checks.
@@ -246,6 +250,13 @@ async def batch_update_doc(
     available: text, headings, bullets and nested lists, indentation,
     fonts, colors, links, tables, images, people/date chips, named ranges,
     tabs. The batch is atomic: all requests apply, or none do.
+
+    PASS THE REVISION ID FROM YOUR READ (required)
+      ``required_revision_id`` is the ``revision_id`` returned by the read
+      your positions came from (``read_doc`` or ``find_in_doc``), or by your
+      previous ``batch_update_doc`` call. If the document changed since, the
+      call is refused with the current revision id and nothing is written:
+      read again and take positions from the new read.
 
     HOW POSITIONS WORK
       Index-based requests address a position in one segment (a tab's body,
@@ -270,10 +281,19 @@ async def batch_update_doc(
       and named-range management). For an index-based request, state what
       is at its position at the moment it runs (after earlier requests in
       the call), using the same units as the map (markers like
-      ``⟦person⟧``; ``"\n"`` for a paragraph break):
+      ``⟦person⟧``; a paragraph break is ``"\n"`` — the map's ``⏎`` is
+      also accepted and means the same):
         - a range (``deleteContentRange``, ``updateTextStyle``,
           ``updateParagraphStyle``, ``createParagraphBullets``, ...):
           ``{"text": "<exact content of startIndex..endIndex>"}``
+        - a range that is exactly ONE WHOLE paragraph (including its
+          ``"\n"``) or ONE WHOLE table (from its ``⟦table⟧`` through its
+          ``⟦table-end⟧``): ``{"element": "paragraph"}`` or
+          ``{"element": "table"}`` — use this instead of repeating a whole
+          paragraph's or table's text. Both ends
+          must sit on that element's boundaries (take them from the map
+          line), so a shifted range is refused. Part of a paragraph always
+          needs ``{"text": ...}``.
         - a point (``insertText``/``insertTable``/``insertPerson``/... at
           ``location.index``, or table ops via ``tableStartLocation``):
           ``{"before": "<text just before>", "after": "<text just after>"}``
@@ -292,21 +312,40 @@ async def batch_update_doc(
       No index-based request may follow ``replaceAllText`` /
       ``replaceNamedRangeContent`` in the same call (put them last).
 
+    LOOK BEFORE YOU WRITE: ``dry_run=true``
+      Runs every check and returns the predicted ``changes`` (each changed
+      paragraph before and after, with ranges) without writing. Text
+      inserts and deletes are drawn exactly; ``not_shown`` lists requests
+      whose result is not drawn (styles, bullets, tables,
+      ``replaceAllText``) — they are still checked.
+
     AFTER EVERY WRITE
       Read ``changes``: each changed paragraph before and after, with its
       ranges. Confirm it shows exactly the edit you intended, and use the new
-      ranges (not old ones) for any follow-up edit.
+      ranges (not old ones) for any follow-up edit — with the ``revision_id``
+      this call returned as the next call's ``required_revision_id``.
 
     BUILDING NEW CONTENT (new doc, new section, new list)
       Insert all the text in one request — paragraphs separated by
       ``"\n"``, nested list items prefixed with ``"\t"`` per level —
       e.g. at the end of a tab with ``endOfSegmentLocation`` (expectation
-      ``null``). Then style it, either later in the same call (ranges
-      computed from where you inserted; each with ``{"text": ...}`` of the
-      new text, which gwsa checks) or — avoiding any counting — in a second
-      call using the ranges shown in the first call's ``changes``. Note that
+      ``null``). Then style it in a second call, using the ranges shown in
+      the first call's ``changes`` (no counting). Note that
       ``createParagraphBullets`` removes the leading ``"\t"`` characters,
       so text after it moves back by the number of tabs removed.
+
+      Append a styled paragraph (e.g. a heading) — two calls:
+        1. ``{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"},
+           "text": "\nNew heading"}}`` -> ``null``. Start the text with
+           ``"\n"``: the insert lands before the body's final paragraph
+           break, so without it the new text joins the last paragraph.
+        2. From call 1's ``changes``, take the new paragraph's range (e.g.
+           ``"137-149 New heading⏎"``) and call again with
+           ``required_revision_id`` = call 1's returned ``revision_id``:
+           ``{"updateParagraphStyle": {"range": {"startIndex": 137,
+           "endIndex": 149}, "paragraphStyle": {"namedStyleType":
+           "HEADING_2"}, "fields": "namedStyleType"}}`` ->
+           ``{"element": "paragraph"}``.
 
     RECIPES (one entry in ``requests`` -> its expectation)
       - Append to the end of a tab's body (no index):
@@ -323,6 +362,13 @@ async def batch_update_doc(
         -> ``{"text": "Q3 Plan"}``, then
         ``{"insertText": {"location": {"index": 54}, "text": "Q4 Plan"}}``
         -> ``{"after": "\n"}``.
+      - Delete a whole table (map lines ``98-99 [table 2x2] ⟦table⟧`` …
+        ``124-125 [table end] ⟦table-end⟧``):
+        ``{"deleteContentRange": {"range": {"startIndex": 98,
+        "endIndex": 125}}}`` -> ``{"element": "table"}``
+      - Delete a whole paragraph (map line ``84-97 Before table⏎``):
+        ``{"deleteContentRange": {"range": {"startIndex": 84,
+        "endIndex": 97}}}`` -> ``{"element": "paragraph"}``
       - Replace every occurrence (no index):
         ``{"replaceAllText": {"containsText": {"text": "{{DATE}}",
         "matchCase": true}, "replaceText": "Oct 1",
@@ -350,27 +396,30 @@ async def batch_update_doc(
     Args:
         doc_id: Google Doc ID.
         requests: Docs API request objects.
+        required_revision_id: The ``revision_id`` from the read your
+            positions came from (or from your previous write). Required.
         expectations: One per request; see above.
-        required_revision_id: Optional — refuse unless the document is still
-            at this revision (the ``revision_id`` your positions came from).
-            The batch is always checked and written against one snapshot and
-            Google rejects it if the document changed in between.
+        dry_run: Check and return the predicted ``changes`` without writing.
         account: Optional account selector (name or email).
 
     Returns:
         On success: ``success``, ``document_id``, ``previous_revision_id``,
-        ``revision_id`` (after this write), ``replies`` (Google's, one per
-        request — e.g. ``replaceAllText.occurrencesChanged``), ``changes``
-        (``segment``, ``before`` lines, ``after`` lines), ``truncated``.
-        On a failed check: ``success: false``, ``error``, ``failures`` (one
-        statement per problem), ``revision_id`` (current). Nothing written.
+        ``revision_id`` (after this write — pass it to your next call),
+        ``replies`` (Google's, one per request — e.g.
+        ``replaceAllText.occurrencesChanged``), ``changes`` (``segment``,
+        ``before`` lines, ``after`` lines), ``truncated``.
+        With ``dry_run``: ``success``, ``dry_run: true``, ``revision_id``
+        (unchanged), predicted ``changes``, ``not_shown``. Nothing written.
+        On a failed check or a stale revision: ``success: false``,
+        ``error``, ``failures`` (one statement per problem, for checks),
+        ``revision_id`` (current). Nothing written.
         On a Google error: ``success: false``, ``error``, ``details``.
         Nothing written (the batch is atomic).
     """
     try:
-        # Positional: (doc_id, requests, expectations, required revision, account).
+        # Positional: (doc_id, requests, expectations, required revision, account, dry_run).
         result = docs.batch_update(
-            doc_id, requests, expectations, required_revision_id, account
+            doc_id, requests, expectations, required_revision_id, account, dry_run
         )
         return {"success": True, **result}
     except docs.ExpectationError as e:

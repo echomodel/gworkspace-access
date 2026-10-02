@@ -2,17 +2,21 @@
 
 ``batchUpdate`` is the Docs API's only content-write method, and this is
 gwsa's only Docs write path. Requests are passed to Google unchanged; gwsa
-adds three checks around them:
+adds checks around them:
 
-1. **Revision guard** — the batch is checked and written against one
-   snapshot, and sent with ``writeControl.requiredRevisionId`` so Google
-   rejects it if the document changed in between.
-2. **Expectations** — every request that addresses an index must state
-   what is at that index (``{"text": ...}`` for a range, ``{"before": ...}``
-   / ``{"after": ...}`` for a point). If any expectation does not match the
-   snapshot, nothing is written. See :mod:`gwsa.sdk.docs.positions`.
+1. **Revision lock** — the caller passes the revision id of the read its
+   positions came from. If the document has changed since, nothing is
+   written. The batch is then checked and written against one snapshot,
+   sent with ``writeControl.requiredRevisionId`` so Google rejects it if the
+   document changed in between.
+2. **Expectations** — every request that addresses an index states what is
+   there: ``{"text": ...}`` for a range, or ``{"element": "paragraph" |
+   "table"}`` when the range is exactly one whole element; ``{"before":
+   ...}`` / ``{"after": ...}`` for a point. If any expectation does not
+   match, nothing is written. See :mod:`gwsa.sdk.docs.positions`.
 3. **Change report** — after writing, the document is read back and every
-   changed line is returned with its before/after ranges.
+   changed line is returned with its before/after ranges. ``dry_run``
+   returns the same report, predicted, without writing.
 """
 
 from typing import Optional
@@ -40,8 +44,16 @@ class DocumentChangedError(ValueError):
         self.current = current
         super().__init__(
             f"Document is at revision {current}, not the required revision "
-            f"{required}. Nothing was written."
+            f"{required}: it changed after your read. Nothing was written. "
+            f"Read it again and take positions from the new read."
         )
+
+
+REVISION_REQUIRED = (
+    "required_revision_id is required: pass the revision_id returned by the "
+    "read your positions came from (read_doc or find_in_doc), or by your "
+    "previous batch_update_doc call."
+)
 
 
 def batch_update(
@@ -50,6 +62,7 @@ def batch_update(
     expectations: Optional[list] = None,
     required_revision_id: Optional[str] = None,
     account: Optional[str] = None,
+    dry_run: bool = False,
 ) -> dict:
     """Apply a Docs API ``batchUpdate`` with expectation and revision checks.
 
@@ -58,17 +71,23 @@ def batch_update(
         requests: Docs API request objects, sent to Google unchanged.
         expectations: One entry per request (``None`` for requests that
             address no index). See module docstring.
-        required_revision_id: Optional — refuse unless the document is
-            still at this revision (the one the caller read positions from).
+        required_revision_id: Required — the revision the caller's
+            positions came from. Refused if the document has changed since.
         account: Optional account selector — name or email.
+        dry_run: Check everything and return the predicted change report
+            without writing.
 
     Returns:
         Dict with ``document_id``, ``previous_revision_id``, ``revision_id``
         (after the write), ``replies`` (Google's, one per request), and
         ``changes`` (line-level before/after report; ``truncated`` if long).
+        With ``dry_run``: ``dry_run: True``, ``revision_id`` (unchanged),
+        predicted ``changes``, and ``not_shown`` (requests whose effect the
+        prediction does not render).
 
     Raises:
-        ValueError: ``requests`` is not a non-empty list of objects.
+        ValueError: ``requests`` is not a non-empty list of objects, or
+            ``required_revision_id`` is missing.
         DocumentChangedError: ``required_revision_id`` is stale.
         ExpectationError: An expectation failed or is missing.
     """
@@ -77,11 +96,26 @@ def batch_update(
         raise ValueError("requests must be a non-empty list of request objects.")
     if not all(isinstance(r, dict) and len(r) == 1 for r in requests):
         raise ValueError("Each request must be an object with exactly one request type.")
+    if not required_revision_id:
+        raise ValueError(REVISION_REQUIRED)
 
     before = get_document(doc_id, account=account)
     current = before.get("revisionId")
-    if required_revision_id and required_revision_id != current:
+    if required_revision_id != current:
         raise DocumentChangedError(required_revision_id, current)
+
+    if dry_run:
+        pv = positions.preview(before, requests, expectations)
+        if pv["failures"]:
+            raise ExpectationError(pv["failures"], current)
+        return {
+            "document_id": doc_id,
+            "dry_run": True,
+            "revision_id": current,
+            "changes": pv["changes"],
+            "truncated": pv["truncated"],
+            "not_shown": pv["not_shown"],
+        }
 
     failures = positions.check_expectations(before, requests, expectations)
     if failures:

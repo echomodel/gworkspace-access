@@ -32,6 +32,7 @@ FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures" / "docs_rich.json").read_text()
 )
 DOC_ID = "test-doc-1234567890"
+REV = "rev-1"  # the fixture's revisionId
 TAB1 = "t.0"
 TAB2 = FIXTURE["tabs"][1]["tabProperties"]["tabId"]
 HEADER_ID = next(iter(FIXTURE["tabs"][0]["documentTab"]["headers"]))
@@ -411,6 +412,109 @@ def test_range_with_emoji():
     assert check([delete(31, 33)], [{"text": "🙂"}]) == []
 
 
+# -- paragraph-break glyph -------------------------------------------------
+
+
+def test_map_glyph_is_read_as_paragraph_break():
+    # Text copied from the map (``⏎``) means the paragraph break itself.
+    assert check([delete(1, 14)], [{"text": "Plan heading⏎"}]) == []
+    assert check([insert(14)], [{"before": "heading⏎", "after": "Intro"}]) == []
+    assert positions.find_text(FIXTURE, "heading⏎Intro")["matches"]
+
+
+def test_mismatch_that_displays_identically_names_the_difference():
+    # A real "⏎" character in the document vs a paragraph break: both
+    # display as ⏎, so the error must say what actually differs.
+    doc = copy.deepcopy(FIXTURE)
+    set_run(doc, "Gamma\n", "Gamm⏎\n")
+    f = positions.check_expectations(doc, [delete(58, 63)], [{"text": "Gamm\n"}])
+    assert "display the same but differ at unit 4" in f[0]
+    assert "U+000A" in f[0] and "U+23CE" in f[0]
+
+
+# -- whole-element expectations --------------------------------------------
+
+
+def test_whole_paragraph_passes_and_shifted_range_is_refused():
+    assert check([delete(84, 97)], [{"element": "paragraph"}]) == []
+    for s, e in ((85, 98), (83, 96), (84, 96), (85, 97)):
+        f = check([delete(s, e)], [{"element": "paragraph"}])
+        assert f and "one whole paragraph" in f[0], (s, e)
+    f = check([delete(85, 98)], [{"element": "paragraph"}])
+    assert "the paragraph containing 85 is 84-97" in f[0]
+
+
+def test_whole_paragraph_inside_a_table_cell_and_empty_paragraph():
+    assert check([style(101, 107)], [{"element": "paragraph"}]) == []
+    assert check([delete(97, 98)], [{"element": "paragraph"}]) == []
+
+
+def test_range_spanning_two_paragraphs_is_not_one_element():
+    f = check([delete(40, 58)], [{"element": "paragraph"}])
+    assert "the paragraph containing 40 is 40-46" in f[0]
+
+
+def test_whole_table_passes_and_partial_or_shifted_table_is_refused():
+    assert check([delete(98, 125)], [{"element": "table"}]) == []
+    f = check([delete(98, 124)], [{"element": "table"}])
+    assert "the table at 98 spans 98-125" in f[0]
+    f = check([delete(97, 124)], [{"element": "table"}])
+    assert "no table starts at 97" in f[0]
+    f = check([delete(99, 126)], [{"element": "table"}])
+    assert "no table starts at 99" in f[0]
+
+
+def test_element_boundaries_follow_earlier_requests_in_the_batch():
+    # After deleting "Plan heading" (12 units) the table moves to 86-113.
+    reqs = [delete(1, 13), delete(86, 113)]
+    assert check(reqs, [{"text": "Plan heading"}, {"element": "table"}]) == []
+    f = check([delete(1, 13), delete(98, 125)],
+              [{"text": "Plan heading"}, {"element": "table"}])
+    assert f and "one whole table" in f[0]
+
+
+def test_element_and_text_together_must_both_hold():
+    assert check([delete(58, 64)], [{"element": "paragraph", "text": "Gamma\n"}]) == []
+    f = check([delete(58, 64)], [{"element": "paragraph", "text": "Delta\n"}])
+    assert "expected 'Delta⏎'" in f[0]
+
+
+def test_unknown_expectation_key_is_named():
+    f = check([insert(14)], [{"text_before": "Plan heading\n"}])
+    assert "unknown expectation key(s) ['text_before']" in f[0]
+
+
+def test_unknown_element_kind_is_refused():
+    f = check([delete(58, 64)], [{"element": "list"}])
+    assert "'element' must be one of ['paragraph', 'table']" in f[0]
+
+
+def test_partial_range_still_needs_text():
+    f = check([delete(58, 61)], [{"element": "paragraph"}])
+    assert "one whole paragraph" in f[0]
+    f = check([delete(58, 61)], [{}])
+    assert "has no expectation" in f[0]
+
+
+# -- preview (dry run) -----------------------------------------------------
+
+
+def test_preview_draws_text_changes_and_lists_what_it_does_not_draw():
+    reqs = [delete(58, 63), insert(58, "Delta"), style(1, 13)]
+    pv = positions.preview(FIXTURE, reqs, [{"text": "Gamma"}, {"after": "\n"},
+                                           {"text": "Plan heading"}])
+    assert pv["failures"] == []
+    assert pv["changes"] == [{"segment": "tab t.0 body",
+                              "before": ["58-64 Gamma⏎"],
+                              "after": ["58-64 Delta⏎"]}]
+    assert pv["not_shown"] == ["request 3 (updateTextStyle)"]
+
+
+def test_preview_of_failed_check_has_no_changes():
+    pv = positions.preview(FIXTURE, [delete(2, 14)], [{"text": "Plan heading"}])
+    assert pv["failures"] and pv["changes"] == []
+
+
 # ---------------------------------------------------------------------------
 # guarded batch_update (SDK)
 # ---------------------------------------------------------------------------
@@ -419,7 +523,7 @@ def test_range_with_emoji():
 def test_failed_expectation_writes_nothing(fakes):
     d, _ = fakes
     with pytest.raises(docs.ExpectationError) as ei:
-        docs.batch_update(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}])
+        docs.batch_update(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}], REV)
     assert d.batches == []
     assert ei.value.revision_id == "rev-1"
     assert "found 'lan heading⏎'" in ei.value.failures[0]
@@ -430,7 +534,7 @@ def test_success_sends_requests_unchanged_with_read_revision(fakes):
     d.states = [copy.deepcopy(FIXTURE),
                 edited(lambda doc: set_run(doc, "Gamma\n", "Delta\n"))]
     reqs = [delete(58, 63), insert(58, "Delta")]
-    out = docs.batch_update(DOC_ID, reqs, [{"text": "Gamma"}, {"after": "\n"}])
+    out = docs.batch_update(DOC_ID, reqs, [{"text": "Gamma"}, {"after": "\n"}], REV)
     assert d.batches == [{"requests": reqs,
                           "writeControl": {"requiredRevisionId": "rev-1"}}]
     assert out["previous_revision_id"] == "rev-1"
@@ -445,7 +549,7 @@ def test_success_sends_requests_unchanged_with_read_revision(fakes):
 def test_unchanged_document_reports_no_changes(fakes):
     d, _ = fakes
     out = docs.batch_update(DOC_ID, [{"replaceAllText": {
-        "containsText": {"text": "nomatch", "matchCase": True}, "replaceText": "y"}}])
+        "containsText": {"text": "nomatch", "matchCase": True}, "replaceText": "y"}}], None, REV)
     assert out["changes"] == []
     assert len(d.batches) == 1
 
@@ -458,11 +562,45 @@ def test_stale_required_revision_writes_nothing(fakes):
     assert d.batches == []
 
 
+@pytest.mark.parametrize("rev", [None, ""])
+def test_missing_required_revision_is_refused(fakes, rev):
+    d, _ = fakes
+    with pytest.raises(ValueError) as ei:
+        docs.batch_update(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}], rev)
+    assert "required_revision_id is required" in str(ei.value)
+    assert d.batches == [] and d.gets == []
+
+
+def test_stale_revision_error_carries_current_id(fakes):
+    with pytest.raises(docs.DocumentChangedError) as ei:
+        docs.batch_update(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}], "rev-0")
+    assert ei.value.current == "rev-1"
+    assert "Read it again" in str(ei.value)
+
+
+def test_dry_run_writes_nothing_and_returns_predicted_changes(fakes):
+    d, _ = fakes
+    out = docs.batch_update(DOC_ID, [delete(84, 97)], [{"element": "paragraph"}],
+                            REV, None, True)
+    assert d.batches == []
+    assert out["dry_run"] is True and out["revision_id"] == REV
+    assert out["changes"][0]["before"] == ["84-97 Before table⏎"]
+    assert out["not_shown"] == []
+
+
+def test_dry_run_with_failed_check_raises(fakes):
+    d, _ = fakes
+    with pytest.raises(docs.ExpectationError):
+        docs.batch_update(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}],
+                          REV, None, True)
+    assert d.batches == []
+
+
 @pytest.mark.parametrize("bad", [[], {}, [{}], [{"a": 1, "b": 2}], ["x"]])
 def test_malformed_requests_rejected(fakes, bad):
     d, _ = fakes
     with pytest.raises(ValueError):
-        docs.batch_update(DOC_ID, bad)
+        docs.batch_update(DOC_ID, bad, None, REV)
     assert d.batches == []
 
 
@@ -474,7 +612,7 @@ def test_malformed_requests_rejected(fakes, bad):
 @pytest.mark.asyncio
 async def test_tool_failed_check_envelope(fakes):
     d, _ = fakes
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [delete(2, 14)], REV, [{"text": "Plan heading"}])
     assert out["success"] is False
     assert out["error"] == "Expectation check failed. Nothing was written."
     assert out["failures"] and out["revision_id"] == "rev-1"
@@ -483,7 +621,7 @@ async def test_tool_failed_check_envelope(fakes):
 
 @pytest.mark.asyncio
 async def test_tool_success_envelope(fakes):
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], REV, [{"text": "Plan heading"}])
     assert out["success"] is True and out["document_id"] == DOC_ID
     assert "changes" in out and "replies" in out
 
@@ -492,7 +630,7 @@ async def test_tool_success_envelope(fakes):
 async def test_tool_google_rejection_envelope(fakes):
     d, _ = fakes
     d.fail_status = 400
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], REV, [{"text": "Plan heading"}])
     assert out["success"] is False
     assert out["error"] == "Google rejected the batch. Nothing was written."
 
@@ -500,8 +638,23 @@ async def test_tool_google_rejection_envelope(fakes):
 @pytest.mark.asyncio
 async def test_tool_stale_revision_envelope(fakes):
     out = await docs_tools.batch_update_doc(
-        DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}], required_revision_id="old")
+        DOC_ID, [delete(1, 13)], "old", [{"text": "Plan heading"}])
     assert out["success"] is False and "Nothing was written" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_tool_dry_run_envelope(fakes):
+    d, _ = fakes
+    out = await docs_tools.batch_update_doc(
+        DOC_ID, [delete(98, 125)], REV, [{"element": "table"}], dry_run=True)
+    assert out["success"] is True and out["dry_run"] is True
+    assert d.batches == []
+
+
+@pytest.mark.asyncio
+async def test_tool_requires_revision_id(fakes):
+    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], "", [{"text": "Plan heading"}])
+    assert out["success"] is False and "required_revision_id is required" in out["error"]
 
 
 @pytest.mark.asyncio
@@ -576,13 +729,13 @@ def test_cli_batch_update_refusal_and_success(fakes):
     d, _ = fakes
     r = CliRunner().invoke(docs_cli, [
         "batch-update", DOC_ID, "-r", json.dumps([delete(2, 14)]),
-        "-e", json.dumps([{"text": "Plan heading"}])])
+        "-e", json.dumps([{"text": "Plan heading"}]), "--required-revision-id", REV])
     assert r.exit_code != 0
     assert "Nothing was written" in r.output and "found 'lan heading⏎'" in r.output
     assert d.batches == []
     r = CliRunner().invoke(docs_cli, [
         "batch-update", DOC_ID, "-r", json.dumps([delete(1, 13)]),
-        "-e", json.dumps([{"text": "Plan heading"}])])
+        "-e", json.dumps([{"text": "Plan heading"}]), "--required-revision-id", REV])
     assert r.exit_code == 0, r.output
     assert len(d.batches) == 1
 

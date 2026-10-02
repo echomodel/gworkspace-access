@@ -88,6 +88,32 @@ def _display(units: list[str]) -> str:
     return units_to_text(units).replace("\n", "⏎")
 
 
+#: How the position map displays a paragraph break.
+PARAGRAPH_BREAK_GLYPH = "⏎"
+
+
+def expected_units(text: str) -> list[str]:
+    """Units for caller-supplied text (expectations, find).
+
+    The position map displays each paragraph break as ``⏎``; a caller who
+    copies text from the map means the break itself, so ``⏎`` is read as
+    ``\\n`` here.
+    """
+    return text_to_units(text.replace(PARAGRAPH_BREAK_GLYPH, "\n"))
+
+
+def _describe_mismatch(expected: list[str], found: list[str]) -> str:
+    """Name the difference when two unit lists display identically."""
+    if _display(expected) != _display(found):
+        return ""
+    for k, (a, b) in enumerate(zip(expected, found)):
+        if a != b:
+            return (f" They display the same but differ at unit {k}: expected "
+                    f"U+{ord(a[0]):04X}, found U+{ord(b[0]):04X}.")
+    return (f" They display the same but have different lengths: expected "
+            f"{len(expected)} units, found {len(found)}.")
+
+
 # ---------------------------------------------------------------------------
 # segment maps
 # ---------------------------------------------------------------------------
@@ -312,7 +338,7 @@ def render_map(doc: dict, tab_id: Optional[str] = None) -> dict:
 def find_text(doc: dict, text: str, tab_id: Optional[str] = None,
               match_case: bool = True) -> dict:
     """Every occurrence of ``text`` with its exact index range."""
-    needle = text_to_units(text)
+    needle = expected_units(text)
     if not needle:
         raise ValueError("text must not be empty")
     norm = (lambda u: u) if match_case else (lambda u: u.lower())
@@ -494,16 +520,90 @@ def check_expectations(doc: dict, requests: list, expectations: Optional[list]) 
     requests before it in the same batch. Each failure is a plain statement
     of fact. An empty list means the batch may be written.
     """
+    return _run_checks(doc, requests, expectations)[0]
+
+
+#: Requests whose effect on text the checker replays exactly.
+TEXT_REPLAYED = frozenset({"insertText", "deleteContentRange",
+                           *SINGLE_INDEX_INSERTS})
+
+
+def preview(doc: dict, requests: list, expectations: Optional[list],
+            max_lines: int = 60) -> dict:
+    """What a batch would change, without writing it.
+
+    Returns ``failures`` (as :func:`check_expectations`), ``changes`` — the
+    paragraphs whose text the batch changes, before and after, with ranges
+    (same shape as a write's change report, without style tags) — and
+    ``not_shown``: requests whose effect the preview does not render
+    (styles, bullets, tables, ``replaceAllText``, ...). Those are still
+    checked; only their result is not drawn.
+    """
+    import difflib
+
+    failures, sims, segments = _run_checks(doc, requests, expectations)
+    changes: list[dict] = []
+    truncated = False
+    emitted = 0
+    if not failures:
+        for seg in segments:
+            sim = sims.get((seg.tab_id, seg.segment_id))
+            if sim is None:
+                continue
+            old = _unit_lines(seg.unit_list(), seg.start)
+            new = _unit_lines(sim.units, sim.offset)
+            sm = difflib.SequenceMatcher(
+                a=[t for _, t in old], b=[t for _, t in new], autojunk=False)
+            for op, i1, i2, j1, j2 in sm.get_opcodes():
+                if op == "equal":
+                    continue
+                if emitted >= max_lines:
+                    truncated = True
+                    break
+                changes.append({
+                    "segment": seg.label,
+                    "before": [f"{r} {t}" for r, t in old[i1:i2]],
+                    "after": [f"{r} {t}" for r, t in new[j1:j2]],
+                })
+                emitted += (i2 - i1) + (j2 - j1)
+    not_shown = [
+        f"request {i + 1} ({next(iter(r))})"
+        for i, r in enumerate(requests)
+        if isinstance(r, dict) and r and next(iter(r)) not in TEXT_REPLAYED
+    ]
+    return {"failures": failures, "changes": changes,
+            "truncated": truncated, "not_shown": not_shown}
+
+
+def _unit_lines(units: list[str], offset: int) -> list[tuple[str, str]]:
+    """Split units into display lines: one per paragraph or structural marker."""
+    lines: list[tuple[str, str]] = []
+    start = 0
+    for k, u in enumerate(units):
+        if u in _STRUCTURAL:
+            if k > start:
+                lines.append((f"{offset + start}-{offset + k}", _display(units[start:k])))
+            lines.append((f"{offset + k}-{offset + k + 1}", u))
+            start = k + 1
+        elif u == "\n":
+            lines.append((f"{offset + start}-{offset + k + 1}", _display(units[start:k + 1])))
+            start = k + 1
+    if start < len(units):
+        lines.append((f"{offset + start}-{offset + len(units)}", _display(units[start:])))
+    return lines
+
+
+def _run_checks(doc: dict, requests: list, expectations: Optional[list]):
     failures: list[str] = []
+    segments = build_segments(doc)
+    sims: dict[tuple, _Sim] = {}
     if expectations is not None and len(expectations) != len(requests):
         return [
             f"expectations has {len(expectations)} entries but requests has "
             f"{len(requests)}; they must align one-to-one (use null for "
             f"requests that address no position)."
-        ]
-    segments = build_segments(doc)
+        ], sims, segments
     default_tab = first_tab_id(doc)
-    sims: dict[tuple, _Sim] = {}
     global_shift: Optional[tuple[int, str]] = None
 
     def sim_for(seg: Segment) -> _Sim:
@@ -582,33 +682,58 @@ def check_expectations(doc: dict, requests: list, expectations: Optional[list]) 
         if not ok:
             # Positions after a failed request are meaningless; stop here.
             break
-    return failures
+    return failures, sims, segments
 
 
 def _check_one(failures, n, name, target, where, seg, sim, exp) -> bool:
     if not isinstance(exp, dict) or not exp:
+        forms = (
+            '{"text": <the exact content of the range>}, or {"element": '
+            '"paragraph"} / {"element": "table"} when the range is exactly one '
+            'whole paragraph or table'
+            if target.kind == "range" else
+            '{"before": <text just before>} and/or {"after": <text just after>}'
+        )
         failures.append(
             f"Request {n} ({name}) addresses {where} in {seg.label} but has "
-            f"no expectation."
+            f"no expectation. A {target.kind} takes {forms}."
         )
         return False
     if exp.get("unchecked") is True:
         return True
+    unknown = sorted(set(exp) - EXPECTATION_KEYS)
+    if unknown:
+        failures.append(
+            f"Request {n} ({name}) has unknown expectation key(s) "
+            f"{unknown}; valid keys are {sorted(EXPECTATION_KEYS)}."
+        )
+        return False
     if target.kind == "range":
-        if "text" not in exp:
+        if "text" not in exp and "element" not in exp:
             failures.append(
                 f"Request {n} ({name}) addresses range {where}; its "
-                f"expectation needs a 'text' value."
+                f"expectation needs a 'text' value (or 'element' when the "
+                f"range is exactly one whole paragraph or table)."
             )
             return False
-        expected = text_to_units(exp["text"])
-        found = sim.slice(target.start, target.end)
-        if found != expected:
-            failures.append(
-                f"Request {n} ({name}) expected {_display(expected)!r} at "
-                f"{where} in {seg.label}; found {_display(found)!r}."
-            )
-            return False
+        if "element" in exp:
+            problem = _check_element(sim, target.start, target.end, exp["element"])
+            if problem:
+                failures.append(
+                    f"Request {n} ({name}) expects {where} in {seg.label} to be "
+                    f"one whole {exp['element']}; {problem}"
+                )
+                return False
+        if "text" in exp:
+            expected = expected_units(exp["text"])
+            found = sim.slice(target.start, target.end)
+            if found != expected:
+                failures.append(
+                    f"Request {n} ({name}) expected {_display(expected)!r} at "
+                    f"{where} in {seg.label}; found {_display(found)!r}."
+                    + _describe_mismatch(expected, found)
+                )
+                return False
         return True
     if "before" not in exp and "after" not in exp:
         failures.append(
@@ -618,26 +743,75 @@ def _check_one(failures, n, name, target, where, seg, sim, exp) -> bool:
         return False
     ok = True
     if "before" in exp:
-        expected = text_to_units(exp["before"])
+        expected = expected_units(exp["before"])
         found = sim.slice(target.start - len(expected), target.start)
         if found != expected:
             failures.append(
                 f"Request {n} ({name}) expected {_display(expected)!r} "
                 f"immediately before {where} in {seg.label}; found "
-                f"{_display(found)!r}."
+                f"{_display(found)!r}." + _describe_mismatch(expected, found)
             )
             ok = False
     if "after" in exp:
-        expected = text_to_units(exp["after"])
+        expected = expected_units(exp["after"])
         found = sim.slice(target.start, target.start + len(expected))
         if found != expected:
             failures.append(
                 f"Request {n} ({name}) expected {_display(expected)!r} "
                 f"immediately after {where} in {seg.label}; found "
-                f"{_display(found)!r}."
+                f"{_display(found)!r}." + _describe_mismatch(expected, found)
             )
             ok = False
     return ok
+
+
+#: Keys an expectation may use.
+EXPECTATION_KEYS = frozenset({"text", "element", "before", "after", "unchecked"})
+
+#: Values accepted by the ``element`` expectation.
+ELEMENT_KINDS = ("paragraph", "table")
+
+
+def _check_element(sim: "_Sim", start: int, end: int, kind: Any) -> str:
+    """Empty if ``[start, end)`` is exactly one whole element; else the facts.
+
+    Boundaries come from the units as they are when the request runs, so
+    earlier inserts and deletes in the same batch are accounted for.
+    """
+    if kind not in ELEMENT_KINDS:
+        return f"'element' must be one of {list(ELEMENT_KINDS)}, got {kind!r}."
+    u, off = sim.units, sim.offset
+    k0, k1 = start - off, end - off
+    if not (0 <= k0 < k1 <= len(u)):
+        return f"the range is outside the segment ({off}-{off + len(u)})."
+    if kind == "table":
+        if u[k0] != "⟦table⟧":
+            return f"no table starts at {start} (found {_display([u[k0]])!r})."
+        depth = 0
+        for k in range(k0, len(u)):
+            if u[k] == "⟦table⟧":
+                depth += 1
+            elif u[k] == "⟦table-end⟧":
+                depth -= 1
+                if depth == 0:
+                    table_end = off + k + 1
+                    if table_end != end:
+                        return f"the table at {start} spans {start}-{table_end}."
+                    return ""
+        return f"the table at {start} has no end marker."
+    # paragraph: [start, end) runs from a paragraph start to its own newline.
+    ps = k0
+    while ps > 0 and u[ps - 1] != "\n" and u[ps - 1] not in _STRUCTURAL:
+        ps -= 1
+    pe = k0
+    while pe < len(u) and u[pe] != "\n" and u[pe] not in _STRUCTURAL:
+        pe += 1
+    if pe >= len(u) or u[pe] != "\n" or u[k0] in _STRUCTURAL:
+        return f"{start} is not inside a paragraph (found {_display([u[k0]])!r})."
+    para = f"{off + ps}-{off + pe + 1}"
+    if ps != k0 or pe + 1 != k1:
+        return f"the paragraph containing {start} is {para}."
+    return ""
 
 
 # ---------------------------------------------------------------------------

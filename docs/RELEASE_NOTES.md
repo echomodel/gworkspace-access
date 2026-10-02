@@ -1,5 +1,36 @@
 # Release Notes
 
+## v0.30.0 — Docs: revision lock, whole-element expectations, dry run
+
+Safer and easier guarded Docs edits. Each check now targets one kind of
+mistake: the revision lock catches "the document changed since I read it",
+expectations catch "my position is wrong", and the dry run catches "right
+place, wrong edit".
+
+- **`required_revision_id` is required (breaking).** `batch_update_doc`
+  (and `gwsa docs batch-update --required-revision-id`) must pass the
+  `revision_id` of the read its positions came from — `read_doc`,
+  `find_in_doc`, or the previous write. A stale id is refused with the
+  current id; nothing is written. Callers that omitted it must now pass it.
+- **Whole-element expectations.** `{"element": "paragraph"}` or
+  `{"element": "table"}` states that a range is exactly one whole paragraph
+  or table; both ends are checked against the element's boundaries, so a
+  shifted range is refused. Deleting a table no longer means retyping its
+  contents. Part of a paragraph still needs `{"text": ...}`.
+- **`⏎` accepted.** Text copied from the position map can keep its `⏎`; it
+  is read as the paragraph break. When an expected and an actual value
+  display the same, the refusal names the code points that differ.
+- **`dry_run`.** `batch_update_doc(dry_run=true)` / `--dry-run` runs every
+  check and returns the predicted change report without writing, listing
+  any requests whose result it does not draw (styles, bullets, tables,
+  `replaceAllText`).
+- **Clearer refusals.** A missing expectation lists the forms that request
+  accepts; unknown expectation keys are named.
+- **Styled-append recipe.** The tool description documents appending a
+  styled paragraph as two native calls: append with a leading `"\n"`, then
+  style the new paragraph using the range and `revision_id` the first call
+  returned.
+
 ## v0.29.1 — mcp-app v0.11.0
 
 - **mcp-app v0.11.0.** `gwsa-admin register` now emits an Antigravity CLI

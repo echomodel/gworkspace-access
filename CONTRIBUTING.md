@@ -162,13 +162,29 @@ Rules to preserve if you touch this code:
 
 Docs content changes go through exactly one path —
 `gwsa.sdk.docs.batch_update` / the `batch_update_doc` tool — which passes
-Docs API requests to Google unchanged and adds checks around them. Rules
-to preserve:
+Docs API requests to Google unchanged and adds checks around them. The
+safety model has three layers, each for one kind of mistake:
 
-1. **One write path.** Do not add convenience write tools (insert,
-   append, replace) alongside `batch_update_doc`. Each would be a single
-   `batchUpdate` request that bypasses the checks; express them as recipes
-   in the tool description instead.
+- **Revision lock — "the document changed since I read it."** The caller
+  must pass `required_revision_id`, the revision its positions came from
+  (`read_doc` / `find_in_doc` return it, and so does every write). A stale
+  id is refused with the current id.
+- **Expectations — "my position is wrong."** Every index-based request
+  states what is there: the exact text of a range, or that the range is
+  exactly one whole paragraph or table (both ends checked against the
+  element's boundaries); the text just before/after a point.
+- **`dry_run` — "right place, wrong edit."** Runs every check and returns
+  the predicted change report without writing.
+
+Rules to preserve:
+
+1. **One write path, native requests only.** Do not add convenience write
+   tools (insert, append, replace) alongside `batch_update_doc`, and do not
+   add request types of gwsa's own to its `requests` list. Every request is
+   a Docs API request sent to Google unchanged. Express common edits as
+   recipes in the tool description (e.g. a styled append is two native
+   calls: append, then style the new paragraph using the range and
+   revision id the first call returned).
 2. **Positions come only from the document structure.** The position map
    (`gwsa.sdk.docs.positions`) lays out Google's own `startIndex` /
    `endIndex` values — one unit per index, UTF-16 code units, with markers
@@ -185,20 +201,30 @@ to preserve:
    For any other content-changing request, stop checking at its position
    — later requests there go in a separate call. Never approximate an
    effect: an inexact replay could pass a check that the real document
-   would fail.
-4. **Failures state facts.** A refusal says which request, what it
-   expected, what is actually there, and that nothing was written. It
-   does not guess at corrections (e.g. "did you mean position 57") — a
-   guess can point at the wrong occurrence.
-5. **Every write is checked against one read and reported.** The batch is
+   would fail. Whole-element boundaries are taken from the replayed state,
+   so they follow earlier requests in the same call.
+4. **An expectation must catch a shifted position.** The most common
+   positional mistake is a range moved by a few units with its length
+   intact, so an expectation must pin what is *at* the range: its text, or
+   both of its ends on one element's boundaries. Never accept a
+   length-only expectation. Text that callers copy from the map is valid
+   input: `⏎` is read as the paragraph break.
+5. **Failures state facts.** A refusal says which request, what it
+   expected, what is actually there, and that nothing was written. When
+   two values display the same, it names the code points that differ. It
+   may list the expectation forms the tool accepts for that request (a
+   fact about the tool), but it does not guess at corrections (e.g. "did
+   you mean position 57") — a guess can point at the wrong occurrence.
+6. **Every write is checked against one read and reported.** The batch is
    sent with `writeControl.requiredRevisionId` from the read it was
    checked against, and the response carries the before/after change
    report.
-6. **The tool description is the manual.** Agents learn the model from
-   `batch_update_doc`'s docstring, not from errors. Changes to the rules
-   above must update it, and should be validated with isolated agent runs
-   (`claude -p` against a stdio server, no other context) as well as the
-   unit and integration tests.
+7. **The tool description is the manual; refusals are the backstop.**
+   Agents learn the model from `batch_update_doc`'s docstring and correct
+   course from refusals, so both must be complete and accurate. Changes to
+   the rules above must update the docstring, and should be validated with
+   isolated agent runs (`claude -p` against a stdio server, no other
+   context) as well as the unit and integration tests.
 
 ### Drive revisions (version store for uploaded files)
 

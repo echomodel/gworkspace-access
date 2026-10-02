@@ -488,25 +488,34 @@ requests passed to Google unchanged — so anything the API can author
 images, chips, named ranges, tabs) is available. gwsa adds checks
 around it:
 
+- **Revision lock.** Every write passes the `revision_id` of the read its
+  positions came from (`docs read --format map` and `docs find` print it;
+  every write returns the next one). If the document changed since, nothing
+  is written.
 - **Expectations.** Every request that addresses a position states what
-  is there (`{"text": "Plan heading"}` for a range, `{"before": ...}` /
-  `{"after": ...}` for a point). Requests run in order, as in the API;
-  gwsa replays text inserts and deletes, chip and image inserts, and
-  bullet creation exactly, and checks each expectation against the
-  document as it will be when that request runs. If any expectation does
+  is there: `{"text": "Plan heading"}` for a range, or `{"element":
+  "paragraph"}` / `{"element": "table"}` when the range is exactly one
+  whole paragraph or table; `{"before": ...}` / `{"after": ...}` for a
+  point. Text copied from the map may keep its `⏎`. Requests run in order,
+  as in the API; gwsa replays text inserts and deletes, chip and image
+  inserts, and bullet creation exactly, and checks each expectation against
+  the document as it will be when that request runs. If any expectation does
   not match, nothing is written and the response states what is actually
-  there — a miscalculated position is refused instead of landing
-  mid-word.
-- **Revision guard.** The batch is checked and written against one read,
-  and Google rejects it if the document changed in between.
+  there — a miscalculated position is refused instead of landing mid-word.
+- **Dry run.** `--dry-run` (MCP: `dry_run=true`) runs every check and
+  returns the predicted change without writing.
 - **Change report.** After writing, every changed paragraph is returned
   before and after, with its new ranges.
 
 ```bash
-gwsa docs batch-update DOC_ID \
+gwsa docs read DOC_ID --format map             # prints "# revision REV" and the ranges
+gwsa docs batch-update DOC_ID --required-revision-id REV \
   -r '[{"deleteContentRange": {"range": {"startIndex": 58, "endIndex": 63}}},
        {"insertText": {"location": {"index": 58}, "text": "Gamma ray"}}]' \
   -e '[{"text": "Gamma"}, {"after": "\n"}]'
+gwsa docs batch-update DOC_ID --required-revision-id REV --dry-run \
+  -r '[{"deleteContentRange": {"range": {"startIndex": 98, "endIndex": 125}}}]' \
+  -e '[{"element": "table"}]'
 ```
 
 To produce a document that differs from an original in specific ways,

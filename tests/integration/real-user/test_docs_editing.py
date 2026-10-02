@@ -122,6 +122,12 @@ def _one(doc_id, text, **kw):
     return m[0]
 
 
+def _write(doc_id, requests, expectations=None, dry_run=False):
+    """batch_update with the revision id of a fresh read, as a caller would."""
+    rev = docs.get_document(doc_id)["revisionId"]
+    return docs.batch_update(doc_id, requests, expectations, rev, None, dry_run)
+
+
 def _lines(doc_id):
     """Map lines without index prefixes, per segment (for content equality)."""
     out = []
@@ -156,12 +162,12 @@ def test_wrong_position_is_refused_and_nothing_written(rich_doc):
     before = docs.get_document(did)["revisionId"]
     for off in (1, -1):
         with pytest.raises(docs.ExpectationError):
-            docs.batch_update(did, [{"deleteContentRange": {"range": {
+            _write(did, [{"deleteContentRange": {"range": {
                 "startIndex": m["start"] + off, "endIndex": m["end"] + off}}}],
                 [{"text": "Plan heading"}])
     with pytest.raises(docs.ExpectationError):
         chip = _one(did, "⟦person⟧")
-        docs.batch_update(did, [{"deleteContentRange": {"range": {
+        _write(did, [{"deleteContentRange": {"range": {
             "startIndex": chip["start"], "endIndex": chip["end"] + 3}}}],
             [{"text": "Meet"}])
     assert docs.get_document(did)["revisionId"] == before
@@ -172,7 +178,7 @@ def test_guarded_edit_changes_only_the_target(rich_doc):
     did = rich_doc["id"]
     m = _one(did, "Gamma")
     before = _lines(did)
-    out = docs.batch_update(did, [
+    out = _write(did, [
         {"deleteContentRange": {"range": {"startIndex": m["start"], "endIndex": m["end"]}}},
         {"insertText": {"location": {"index": m["start"]}, "text": "Gamma ray"}},
     ], [{"text": "Gamma"}, {"after": "\n"}])
@@ -192,7 +198,7 @@ def test_edits_around_emoji_in_table_header_and_second_tab(rich_doc):
     cell = _one(did, "Apples")
     head = _one(did, "Header text")
     t2 = _one(did, "Second tab", tab_id=tab2)
-    out = docs.batch_update(did, [
+    out = _write(did, [
         {"deleteContentRange": {"range": {"startIndex": cell["start"], "endIndex": cell["end"]}}},
         {"insertText": {"location": {"index": cell["start"]}, "text": "Pears"}},
         {"insertText": {"location": {"index": here["end"]}, "text": "!"}},
@@ -216,7 +222,7 @@ def test_edits_around_emoji_in_table_header_and_second_tab(rich_doc):
 @pytest.mark.integration
 def test_unpositioned_requests_append_and_scoped_replace(rich_doc):
     did, tab2 = rich_doc["id"], rich_doc["tab2"]
-    out = docs.batch_update(did, [
+    out = _write(did, [
         {"insertText": {"endOfSegmentLocation": {"tabId": tab2}, "text": "\nAppended line"}},
         {"replaceAllText": {"containsText": {"text": "Plan heading", "matchCase": True},
                             "replaceText": "Plan title", "tabsCriteria": {"tabIds": [tab2]}}},
@@ -230,10 +236,10 @@ def test_unpositioned_requests_append_and_scoped_replace(rich_doc):
 def test_style_new_text_in_follow_up_call(rich_doc):
     did = rich_doc["id"]
     after = _one(did, "After table")
-    docs.batch_update(did, [{"insertText": {"location": {"index": after["end"]}, "text": "\nNew section"}}],
+    _write(did, [{"insertText": {"location": {"index": after["end"]}, "text": "\nNew section"}}],
                       [{"before": "After table"}])
     new = _one(did, "New section")
-    docs.batch_update(did, [{"updateParagraphStyle": {
+    _write(did, [{"updateParagraphStyle": {
         "range": {"startIndex": new["start"], "endIndex": new["end"]},
         "paragraphStyle": {"namedStyleType": "HEADING_2"}, "fields": "namedStyleType"}}],
         [{"text": "New section"}])
@@ -246,7 +252,7 @@ def test_insert_and_style_in_one_call(rich_doc):
     did = rich_doc["id"]
     after = _one(did, "After table")
     start = after["end"] + 1  # after the inserted "\n"
-    docs.batch_update(did, [
+    _write(did, [
         {"insertText": {"location": {"index": after["end"]}, "text": "\nNext steps"}},
         {"updateParagraphStyle": {"range": {"startIndex": start, "endIndex": start + 10},
                                   "paragraphStyle": {"namedStyleType": "HEADING_2"},
@@ -268,7 +274,7 @@ def test_nested_outline_bullets_and_style_in_one_call(rich_doc):
     body = text[1:]
     tab_ix = body.index("\t")
     write_notes = p0 + tab_ix          # after the tab is removed
-    out = docs.batch_update(did, [
+    out = _write(did, [
         {"insertText": {"location": {"index": after["end"]}, "text": text}},
         {"createParagraphBullets": {"range": {"startIndex": p0, "endIndex": p0 + len(body)},
                                     "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"}},
@@ -290,12 +296,114 @@ def test_nested_outline_bullets_and_style_in_one_call(rich_doc):
 def test_stale_revision_is_refused(rich_doc):
     did = rich_doc["id"]
     old = docs.get_document(did)["revisionId"]
-    docs.batch_update(did, [{"insertText": {"endOfSegmentLocation": {}, "text": "\nx"}}])
+    _write(did, [{"insertText": {"endOfSegmentLocation": {}, "text": "\nx"}}])
     m = _one(did, "Plan heading", tab_id="t.0")
     with pytest.raises(docs.DocumentChangedError):
         docs.batch_update(did, [{"deleteContentRange": {"range": {
             "startIndex": m["start"], "endIndex": m["end"]}}}],
             [{"text": "Plan heading"}], required_revision_id=old)
+
+
+def _range_of(doc_id, predicate):
+    """(start, end) of the first body map line matching ``predicate``."""
+    for ln in docs.get_document_map(doc_id)["segments"][0]["lines"]:
+        if predicate(ln):
+            s, e = ln.split(" ", 1)[0].split("-")
+            return int(s), int(e)
+    raise AssertionError("no matching map line")
+
+
+@pytest.mark.integration
+def test_missing_revision_is_refused_and_nothing_written(rich_doc):
+    did = rich_doc["id"]
+    before = docs.get_document(did)["revisionId"]
+    with pytest.raises(ValueError, match="required_revision_id is required"):
+        docs.batch_update(did, [{"insertText": {"endOfSegmentLocation": {}, "text": "\nx"}}])
+    assert docs.get_document(did)["revisionId"] == before
+
+
+@pytest.mark.integration
+def test_delete_whole_table_by_element(rich_doc):
+    did = rich_doc["id"]
+    t0, _ = _range_of(did, lambda ln: "[table " in ln)
+    _, t1 = _range_of(did, lambda ln: "[table end]" in ln)
+    with pytest.raises(docs.ExpectationError, match="one whole table"):
+        _write(did, [{"deleteContentRange": {"range": {"startIndex": t0, "endIndex": t1 - 1}}}],
+               [{"element": "table"}])
+    _write(did, [{"deleteContentRange": {"range": {"startIndex": t0, "endIndex": t1}}}],
+           [{"element": "table"}])
+    lines = docs.get_document_map(did)["segments"][0]["lines"]
+    assert not any("⟦table⟧" in ln or "Apples" in ln for ln in lines)
+    assert any(ln.endswith("After table⏎") for ln in lines)
+
+
+@pytest.mark.integration
+def test_delete_whole_paragraph_by_element_and_shift_is_refused(rich_doc):
+    did = rich_doc["id"]
+    s, e = _range_of(did, lambda ln: ln.endswith("Before table⏎"))
+    before = docs.get_document(did)["revisionId"]
+    with pytest.raises(docs.ExpectationError, match=f"the paragraph containing {s + 1} is {s}-{e}"):
+        _write(did, [{"deleteContentRange": {"range": {"startIndex": s + 1, "endIndex": e + 1}}}],
+               [{"element": "paragraph"}])
+    assert docs.get_document(did)["revisionId"] == before
+    _write(did, [{"deleteContentRange": {"range": {"startIndex": s, "endIndex": e}}}],
+           [{"element": "paragraph"}])
+    assert not docs.find_in_document(did, "Before table")["matches"]
+
+
+@pytest.mark.integration
+def test_expectation_copied_from_the_map_with_glyph(rich_doc):
+    did = rich_doc["id"]
+    s, e = _range_of(did, lambda ln: ln.endswith("Before table⏎"))
+    out = _write(did, [{"updateTextStyle": {"range": {"startIndex": s, "endIndex": e},
+                                            "textStyle": {"italic": True}, "fields": "italic"}}],
+                 [{"text": "Before table⏎"}])
+    assert out["revision_id"] != out["previous_revision_id"]
+
+
+@pytest.mark.integration
+def test_dry_run_writes_nothing_and_predicts_the_change(rich_doc):
+    did = rich_doc["id"]
+    m = _one(did, "Gamma")
+    before = docs.get_document(did)["revisionId"]
+    reqs = [{"deleteContentRange": {"range": {"startIndex": m["start"], "endIndex": m["end"]}}},
+            {"insertText": {"location": {"index": m["start"]}, "text": "Delta"}}]
+    exps = [{"text": "Gamma"}, {"after": "\n"}]
+    pv = _write(did, reqs, exps, dry_run=True)
+    assert pv["dry_run"] is True and pv["revision_id"] == before
+    assert docs.get_document(did)["revisionId"] == before
+    assert pv["changes"][0]["after"][0].endswith("Delta⏎")
+    out = _write(did, reqs, exps)
+    assert out["changes"][0]["after"][0].endswith("[list L0] Delta⏎")
+
+
+@pytest.mark.integration
+def test_two_call_styled_append_recipe(rich_doc):
+    """The documented recipe: append with a leading newline, then style the
+    new paragraph using call 1's change-report range and revision id."""
+    did = rich_doc["id"]
+    rev0 = docs.get_document(did)["revisionId"]
+    out1 = docs.batch_update(did, [{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"},
+                                                   "text": "\nAppendix heading"}}], None, rev0)
+    new_line = next(ln for ch in out1["changes"] for ln in ch["after"]
+                    if ln.endswith("Appendix heading⏎"))
+    s, e = (int(x) for x in new_line.split(" ", 1)[0].split("-"))
+    docs.batch_update(did, [{"updateParagraphStyle": {
+        "range": {"startIndex": s, "endIndex": e},
+        "paragraphStyle": {"namedStyleType": "HEADING_2"}, "fields": "namedStyleType"}}],
+        [{"element": "paragraph"}], out1["revision_id"])
+    lines = docs.get_document_map(did)["segments"][0]["lines"]
+    assert any(ln.endswith("[HEADING_2] Appendix heading⏎") for ln in lines)
+    assert any(ln.endswith("After table⏎") and "HEADING" not in ln for ln in lines)
+
+
+@pytest.mark.integration
+def test_append_without_leading_newline_joins_last_paragraph(rich_doc):
+    """Why the recipe starts the appended text with a newline."""
+    did = rich_doc["id"]
+    _write(did, [{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"}, "text": " more"}}])
+    lines = docs.get_document_map(did)["segments"][0]["lines"]
+    assert lines[-1].endswith("After table more⏎")
 
 
 @pytest.mark.integration
@@ -306,7 +414,7 @@ def test_copy_is_exact_and_edits_leave_original_untouched(rich_doc):
         copy_id = drive.copy_file(did, name=f"gwsa-it-docs-copy-{int(time.time()*1000)}")["id"]
         assert _lines(copy_id) == _lines(did)
         m = _one(copy_id, "Beta nested")
-        docs.batch_update(copy_id, [
+        _write(copy_id, [
             {"deleteContentRange": {"range": {"startIndex": m["start"], "endIndex": m["end"]}}},
             {"insertText": {"location": {"index": m["start"]}, "text": "Beta changed"}},
         ], [{"text": "Beta nested"}, {"after": "\n"}])

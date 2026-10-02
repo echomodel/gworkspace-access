@@ -121,12 +121,18 @@ def find_in_doc(doc_id, text, tab_id, ignore_case):
               help='JSON array of Docs API batchUpdate request objects.')
 @click.option('--expectations-json', '-e', default=None,
               help='JSON array aligned with the requests: null, '
-                   '{"text": ...}, {"before": ...}/{"after": ...}, or '
-                   '{"unchecked": true}. Required for index-based requests.')
-@click.option('--required-revision-id', default=None,
-              help='Refuse unless the document is still at this revision.')
+                   '{"text": ...}, {"element": "paragraph"|"table"}, '
+                   '{"before": ...}/{"after": ...}, or {"unchecked": true}. '
+                   'Required for index-based requests.')
+@click.option('--required-revision-id', required=True,
+              help='Revision your positions came from (printed by '
+                   '"docs read --format map" and "docs find"). Refused if '
+                   'the document changed since.')
+@click.option('--dry-run', is_flag=True,
+              help='Check and print the predicted changes without writing.')
 @require_scopes('docs')
-def batch_update_doc(doc_id, requests_json, expectations_json, required_revision_id):
+def batch_update_doc(doc_id, requests_json, expectations_json,
+                     required_revision_id, dry_run):
     """Apply a Docs API batchUpdate, checked against the current document.
 
     Every index-based request needs an expectation stating what is at that
@@ -136,9 +142,9 @@ def batch_update_doc(doc_id, requests_json, expectations_json, required_revision
     try:
         requests = json.loads(requests_json)
         expectations = json.loads(expectations_json) if expectations_json else None
-        # Positional: (doc_id, requests, expectations, required revision).
+        # Positional: (doc_id, requests, expectations, required revision, account, dry_run).
         result = sdk_docs.batch_update(
-            doc_id, requests, expectations, required_revision_id)
+            doc_id, requests, expectations, required_revision_id, None, dry_run)
         click.echo(json.dumps(result, indent=2))
     except json.JSONDecodeError as e:
         raise click.ClickException(f"Invalid JSON: {e}")
