@@ -24,7 +24,7 @@ import click
 from mcp_app.models import UserAuthRecord
 
 from gwsa import GoogleAccount, Profile
-from gwsa.admin._helpers import get_store, run
+from gwsa.admin._helpers import store_call
 
 
 def _build_account(legacy_profile: dict) -> GoogleAccount:
@@ -142,8 +142,7 @@ def migrate(user_key: str, skip_broken: bool, dry_run: bool):
             click.echo(f"  - {a.name}{marker} — {a.email}")
         return
 
-    store = get_store()
-    existing = run(store.get(user_key))
+    existing = store_call(lambda s: s.get(user_key))
     if existing:
         raise click.ClickException(
             f"User '{user_key}' already exists on the mcp-app store. "
@@ -151,7 +150,7 @@ def migrate(user_key: str, skip_broken: bool, dry_run: bool):
             f"or pass a different --user-key."
         )
 
-    run(store.save(
+    store_call(lambda s: s.save(
         UserAuthRecord(email=user_key, created=datetime.now(timezone.utc)),
         profile=profile.model_dump(mode="json"),
     ))

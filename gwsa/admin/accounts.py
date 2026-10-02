@@ -21,19 +21,17 @@ from mcp_app.models import UserAuthRecord
 
 from gwsa import GoogleAccount, Profile
 from gwsa.admin._helpers import (
-    get_store,
+    store_call,
     is_gcloud_issued_token,
     load_token_spec,
     resolve_user_for_add,
     resolve_user_for_read,
-    run,
 )
 
 
 def _load_profile(user_email: str) -> Profile:
     """Load a user's profile as a typed ``Profile``. Empty profile on a new user."""
-    store = get_store()
-    user_record = run(store.get_full(user_email))
+    user_record = store_call(lambda s: s.get_full(user_email))
     if user_record is None:
         return Profile()
     raw = user_record.profile or {}
@@ -42,8 +40,7 @@ def _load_profile(user_email: str) -> Profile:
 
 def _save_profile(user_email: str, profile: Profile) -> None:
     """Write the full profile back via mcp-app's update_profile primitive."""
-    store = get_store()
-    run(store.update_profile(user_email, profile.model_dump(mode="json")))
+    store_call(lambda s: s.update_profile(user_email, profile.model_dump(mode="json")))
 
 
 @click.group("accounts")
@@ -106,9 +103,8 @@ def accounts_add(name, email, token_spec, quota_project, user_arg):
 
     user_email, is_new_user = resolve_user_for_add(user_arg, fallback_email=email)
 
-    store = get_store()
     if is_new_user:
-        run(store.save(
+        store_call(lambda s: s.save(
             UserAuthRecord(email=user_email, created=datetime.now(timezone.utc)),
             profile=None,
         ))

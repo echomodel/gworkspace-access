@@ -1,5 +1,16 @@
 # Release Notes
 
+## v0.29.1 — mcp-app v0.11.0
+
+- **mcp-app v0.11.0.** `gwsa-admin register` now emits an Antigravity CLI
+  (`agy mcp add`) line instead of Gemini CLI; `--client` takes `agy`.
+  `gwsa-admin connect local` keeps the saved hosted instance, and
+  `gwsa-admin connect remote` switches back to it.
+- **Fix: admin commands against a hosted instance** (`accounts add`,
+  `migrate`, …) open and close the remote store within each operation, so
+  commands that make several store calls no longer reuse an HTTP client
+  across event loops.
+
 ## v0.29.0 — Docs: guarded editing, position map, Google exports, drive_copy
 
 Google Docs can now be edited by agents with the same integrity as a

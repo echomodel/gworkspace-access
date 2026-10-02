@@ -1,10 +1,11 @@
 """Shared helpers for gwsa-admin subgroups.
 
-This module thinly wraps mcp-app's private CLI helpers (``_get_auth_store``,
-``_run``) so the gwsa-side commands match the framework's local/remote
-routing and async-to-sync bridging without duplicating either. If
-mcp-app renames these, the fix is a single import update here — not a
-re-architecture across every gwsa admin command.
+This module wraps mcp-app's public ``admin_store`` so gwsa-side commands
+read and write the same store (local or remote) as the built-in ``users``
+commands. ``store_call`` opens a store, runs one async operation on it, and
+closes it, all inside a single event loop — a remote store's HTTP client
+is bound to the loop it was opened in, so it must not be reused across
+``asyncio.run`` calls.
 
 It also owns the user-resolution rules from docs/CLOUD-MULTI-USER.md §6.6
 extended to the registration flow per the chunk (d) discussion:
@@ -13,6 +14,7 @@ account-add can auto-create the user record when the store is empty.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -20,8 +22,7 @@ from typing import Optional
 
 import click
 
-# Private mcp-app helpers — see module docstring above for rationale.
-from mcp_app.cli import _get_auth_store, _run  # noqa: PLC2701
+from mcp_app.cli import admin_store
 
 
 APP_NAME = "gwsa"
@@ -48,14 +49,23 @@ def is_gcloud_issued_token(token: dict) -> bool:
     return token.get("client_id") == GCLOUD_WELL_KNOWN_CLIENT_ID
 
 
-def get_store():
-    """Return the configured UserAuthStore (local or remote)."""
-    return _get_auth_store(APP_NAME)
+def store_call(work):
+    """Run ``await work(store)`` against the configured admin store.
 
+    The store (local or remote) is opened and closed inside one event loop
+    per call. ``work`` is an async callable taking the store, e.g.
+    ``store_call(lambda s: s.get(email))``.
+    """
+    async def _go():
+        store = admin_store(APP_NAME)
+        try:
+            return await work(store)
+        finally:
+            close = getattr(store, "aclose", None)
+            if close is not None:
+                await close()
 
-def run(coro):
-    """Run an async coroutine to completion from sync Click code."""
-    return _run(coro)
+    return asyncio.run(_go())
 
 
 def load_token_spec(spec: str) -> dict:
@@ -105,8 +115,7 @@ def resolve_user_for_read(user_arg: Optional[str]) -> str:
     - ``--user`` omitted, 1 user: use that user.
     - ``--user`` omitted, N users: actionable error (specify ``--user``).
     """
-    store = get_store()
-    users = run(store.list())
+    users = store_call(lambda s: s.list())
     emails = [u.email for u in users]
 
     if user_arg:
@@ -142,8 +151,7 @@ def resolve_user_for_add(user_arg: Optional[str], fallback_email: str) -> tuple[
     - ``--user`` omitted, 1 user: use that user.
     - ``--user`` omitted, N users: actionable error.
     """
-    store = get_store()
-    users = run(store.list())
+    users = store_call(lambda s: s.list())
     emails = [u.email for u in users]
 
     if user_arg:

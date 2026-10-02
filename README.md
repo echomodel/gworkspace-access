@@ -636,7 +636,8 @@ class Profile(BaseModel):
 
 ```
 gwsa-admin connect local
-gwsa-admin connect <url> --signing-key <key>     # for hosted instance (Phase 2)
+gwsa-admin connect <url> --signing-key <key>     # hosted instance
+gwsa-admin connect remote                        # switch back to the saved hosted instance
 gwsa-admin acquire-token --client-secrets PATH [--scopes ...] [--out FILE]
 gwsa-admin accounts add NAME --email EMAIL --token=<-|@FILE|JSON> [--quota-project ID] [--user KEY]
 gwsa-admin accounts list   [--user KEY]
@@ -848,8 +849,9 @@ gwsa-admin acquire-token \
 gwsa-admin register --user me@example.com
 ```
 
-`gwsa-admin register` emits Claude Code, Gemini CLI, and
-Claude.ai registration commands/URLs scoped to that user.
+`gwsa-admin register` emits Claude Code, Antigravity CLI
+(`agy`), and Claude.ai registration commands/URLs scoped to
+that user (`--client claude|agy|claude.ai` limits the output).
 For a multi-account human, add more accounts to the same
 user via `gwsa-admin accounts add ...` and pass `account=...`
 on per-tool-call MCP invocations to select between them.
