@@ -249,20 +249,43 @@ existing event.
 > [Rotating tokens](#rotating-tokens-when-refresh-fails)) so your
 > stored token carries the Calendar scopes.
 
-### Large file upload & download
+### Drive files: upload, convert, rename, move, download
 
-The Drive MCP tools move files of any size without base64 bloat. The
-**network-exposed** tools never touch the server's filesystem; reading or
-writing a local path lives in **stdio-only** companion tools.
+Drive tools follow the Drive API: `drive_upload` is `files.create`,
+`drive_update` is `files.update`.
+
+```bash
+gwsa drive upload notes.md                                    # store as-is
+gwsa drive upload Plan.md --mime-type application/vnd.google-apps.document     # → formatted Doc
+gwsa drive upload table.csv --mime-type application/vnd.google-apps.spreadsheet # → Sheet
+gwsa drive update FILE_ID --name "New name"                   # rename
+gwsa drive update FILE_ID --folder-id FOLDER_ID               # move
+gwsa drive update FILE_ID v2.pdf --name "v2.pdf" --folder-id FOLDER_ID         # all at once
+```
+
+- **Convert on upload** by giving the Drive file a Google type
+  (`--mime-type` / MCP `mime_type`): Markdown, HTML, DOCX and TXT become
+  Docs; CSV and XLSX become Sheets; PPTX becomes Slides. The content's own
+  type comes from the file name's extension.
+- **Rename, move, and replace content** are one operation (`files.update`):
+  pass any combination of a new name, a destination folder, and new content.
+
+**Moving bytes of any size.** The network-exposed tools never touch the
+server's filesystem; reading or writing a local path lives in
+**stdio-only** companion tools.
 
 - **Small files** travel inline in the tool call / response
-  (`drive_upload` / `drive_update` with `content_base64`).
-- **Hosted (HTTP) server**: a large **upload** — call `drive_upload`
-  (or `drive_update`) with just a name to get a direct-to-Google resumable
-  URL you PUT the bytes to (they never pass through the server); a large
-  **download** — `drive_download` returns the file's Drive download link
-  (open it in a browser signed in to that account). No size cap, no server
-  proxy, no extra credentials.
+  (`drive_upload` / `drive_update` with `content_base64`). Small text
+  files (`.md`, `.yaml`, `.csv`, `.json`, …) download as readable text;
+  binary files as base64.
+- **Hosted (HTTP) server**: a large **upload** — call `drive_upload` (or
+  `drive_update`) with `upload_url=true` to get a direct-to-Google upload
+  URL, then send the file to it from a shell (`curl -T`); the bytes never
+  pass through the server. This needs a shell with internet access (works
+  in Claude Code; not in shell-less chat apps or sandboxes that block
+  `googleapis.com`). A large **download** — `drive_download` returns the
+  file's Drive download link (open it in a browser signed in to that
+  account). No size cap, no server proxy, no extra credentials.
 - **Local stdio server** (shares your filesystem): use the stdio-only tools
   `drive_upload_local` / `drive_update_local` (pass `local_path=`) and
   `drive_download_to_path` (pass `save_to=`) — read/written straight to
@@ -414,7 +437,7 @@ The same operations are exposed as MCP tools: `sheets_create`,
 `sheets_list`, `sheets_get_metadata`, `sheets_read`,
 `sheets_read_tail`, `sheets_update`, `sheets_append`. Creating
 directly into a Drive folder is supported via `folder_id` (resolve
-a path with `drive_find_folder`); relocating later is `drive_move`.
+a path with `drive_find_folder`); relocating later is `drive_update` with `folder_id`.
 
 ### Sheets: tabs, rows, and developer metadata
 
@@ -529,8 +552,8 @@ description carries the full working model and recipes for agents.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 62 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (59 over
+`gwsa-mcp` is a stdio MCP server exposing 61 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (58 over
 HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

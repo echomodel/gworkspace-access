@@ -4,16 +4,14 @@ Self-contained: each test creates its own scratch file in Drive,
 exercises the lifecycle, and cleans up after itself. No reliance on
 pre-existing test data.
 
-Covers the new SDK helpers added for issue #31:
-- ``drive.upload_bytes`` — MediaIoBaseUpload from raw bytes
-- ``drive.download_bytes`` — in-memory fetch
-- ``drive.move_file`` — addParents + removeParents in one update
+Covers:
+- ``drive.upload_bytes`` / ``drive.download_bytes`` — bytes round trip
+- ``drive.update_metadata`` — rename and move (``files.update``)
 - ``drive.delete_file`` — Trash semantics
-
-And the MCP tools that wrap them:
-- ``drive_move``
-- ``drive_delete``
-- ``drive_download`` returning ``EmbeddedResource + TextContent``
+- ``drive_update`` — rename, move, and content in one call
+- ``drive_upload`` — conversion via ``mime_type``; the upload URL flow
+  (``upload_url=true`` + ``curl -T``), including conversion
+- ``drive_download`` — text as text, binary as base64, large → link
 """
 
 from __future__ import annotations
@@ -21,13 +19,19 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import shlex
+import subprocess
 import time
 
 import pytest
-from mcp.types import EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent, TextResourceContents
 
-from gwsa.mcp.tools.drive import drive_delete, drive_download, drive_move
-from gwsa.sdk import drive
+from gwsa.mcp.tools.drive import drive_delete, drive_download, drive_update, drive_upload
+from gwsa.sdk import docs, drive
+from gwsa.sdk.destinations import DEFAULT_INLINE_SIZE_CAP_BYTES
+
+GOOGLE_DOC = "application/vnd.google-apps.document"
+GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet"
 
 
 def _unique_name(prefix: str) -> str:
@@ -69,7 +73,7 @@ def test_upload_bytes_and_download_bytes_roundtrip():
 
 
 @pytest.mark.integration
-def test_move_file_changes_parents():
+def test_update_metadata_moves_file():
     """A file moved into a freshly-created folder lists that folder
     as its (only) parent afterward."""
     payload = b"move target"
@@ -82,10 +86,7 @@ def test_move_file_changes_parents():
     folder_id = folder["id"]
 
     try:
-        result = drive.move_file(
-            file_id=file_id,
-            destination_folder_id=folder_id,
-        )
+        result = drive.update_metadata(file_id, folder_id=folder_id)
         assert result["id"] == file_id
         assert folder_id in result["parents"], (
             f"After move, expected new folder in parents; got {result['parents']}"
@@ -125,26 +126,28 @@ def test_delete_file_trashes_not_hard_deletes():
 
 
 @pytest.mark.integration
-def test_drive_move_mcp_tool_roundtrip():
-    """The MCP tool wrapper for ``drive_move`` returns the expected
-    envelope (id, name, parents, url) on the happy path."""
+def test_drive_update_renames_moves_and_replaces_content():
+    """``drive_update`` = ``files.update``: rename alone, move alone, then
+    all three at once — each verified against Drive."""
     uploaded = drive.upload_bytes(
-        data=b"mcp move", name=_unique_name("mcp-move"), mime_type="text/plain"
+        data=b"v1", name=_unique_name("mcp-update"), mime_type="text/plain"
     )
     file_id = uploaded["id"]
-    folder = drive.create_folder(
-        name=_unique_name("mcp-move-folder").replace(".bin", ""),
-    )
-    folder_id = folder["id"]
-
+    folder_id = drive.create_folder(name=_unique_name("mcp-update-folder").replace(".bin", ""))["id"]
     try:
-        result = asyncio.run(
-            drive_move(file_id=file_id, destination_folder_id=folder_id)
-        )
-        assert "error" not in result, result
-        assert result["id"] == file_id
-        assert folder_id in result["parents"]
-        assert "url" in result and result["url"]
+        renamed = asyncio.run(drive_update(file_id=file_id, name="renamed.txt"))
+        assert "error" not in renamed, renamed
+        assert drive.get_metadata(file_id)["name"] == "renamed.txt"
+
+        moved = asyncio.run(drive_update(file_id=file_id, folder_id=folder_id))
+        assert moved["parents"] == [folder_id]
+
+        both = asyncio.run(drive_update(
+            file_id=file_id, name="v2.txt", folder_id="root",
+            content_base64=base64.b64encode(b"v2").decode()))
+        assert both["name"] == "v2.txt"
+        assert folder_id not in both["parents"]
+        assert drive.download_bytes(file_id=file_id)["data"] == b"v2"
     finally:
         _safe_trash(file_id)
         _safe_trash(folder_id)
@@ -171,53 +174,126 @@ def test_drive_delete_mcp_tool():
 
 
 @pytest.mark.integration
-def test_drive_download_mcp_returns_content_blocks():
-    """The MCP tool wrapper for ``drive_download`` returns a
-    ``[TextContent, EmbeddedResource]`` pair with the bytes
-    base64-encoded in the embedded resource."""
-    payload = b"mcp drive_download content-block test\n"
-    name = _unique_name("mcp-download")
+def test_drive_download_text_file_returns_text():
+    """A small YAML file comes back as readable text, not base64."""
+    payload = b"retries: 3\ntimeout: 30\n"
     uploaded = drive.upload_bytes(
-        data=payload, name=name, mime_type="text/plain"
+        data=payload, name=_unique_name("mcp-download") + ".yaml",
+        mime_type="application/octet-stream",
     )
     file_id = uploaded["id"]
-
     try:
         blocks = asyncio.run(drive_download(file_id=file_id))
-        assert isinstance(blocks, list), f"expected list of blocks, got {blocks!r}"
-        assert len(blocks) == 2
         summary, embedded = blocks
         assert isinstance(summary, TextContent)
-        summary_data = json.loads(summary.text)
-        assert summary_data["destination"] == "inline"
-        assert summary_data["name"] == name
-        assert summary_data["size_bytes"] == len(payload)
+        assert json.loads(summary.text)["encoding"] == "text"
         assert isinstance(embedded, EmbeddedResource)
-        decoded = base64.b64decode(embedded.resource.blob)
-        assert decoded == payload
+        assert isinstance(embedded.resource, TextResourceContents)
+        assert embedded.resource.text == payload.decode()
     finally:
         _safe_trash(file_id)
 
 
 @pytest.mark.integration
-def test_drive_download_mcp_too_large_returns_error_envelope():
-    """A file above the inline cap returns a structured error envelope
-    rather than blowing through client tool-response limits."""
-    payload = b"a" * 4096
-    name = _unique_name("mcp-too-large")
+def test_drive_download_binary_returns_base64():
+    payload = bytes(range(256))
     uploaded = drive.upload_bytes(
-        data=payload, name=name, mime_type="text/plain"
+        data=payload, name=_unique_name("mcp-download-bin"),
+        mime_type="application/octet-stream",
     )
     file_id = uploaded["id"]
-
     try:
-        # Force the cap below the file size.
-        result = asyncio.run(drive_download(file_id=file_id, max_size_bytes=64))
-        assert isinstance(result, dict), f"expected dict envelope, got {result!r}"
-        assert result.get("success") is False
+        _summary, embedded = asyncio.run(drive_download(file_id=file_id))
+        assert isinstance(embedded.resource, BlobResourceContents)
+        assert base64.b64decode(embedded.resource.blob) == payload
+    finally:
+        _safe_trash(file_id)
+
+
+@pytest.mark.integration
+def test_drive_download_large_file_returns_drive_link():
+    """Above the inline cap, the tool returns the file's Drive link."""
+    payload = b"a" * (DEFAULT_INLINE_SIZE_CAP_BYTES + 1024)
+    uploaded = drive.upload_bytes(
+        data=payload, name=_unique_name("mcp-large"), mime_type="text/plain"
+    )
+    file_id = uploaded["id"]
+    try:
+        result = asyncio.run(drive_download(file_id=file_id))
+        assert isinstance(result, dict) and result["mode"] == "link", result
+        assert result["url"] and file_id in result["url"]
         assert result["size_bytes"] == len(payload)
-        assert result["cap_bytes"] == 64
-        assert "hint" in result
+    finally:
+        _safe_trash(file_id)
+
+
+@pytest.mark.integration
+def test_drive_upload_converts_markdown_to_doc():
+    """``mime_type`` = Google Doc converts Markdown into a formatted Doc."""
+    md = "# Plan heading\n\nIntro paragraph.\n\n- first\n- second\n"
+    result = asyncio.run(drive_upload(
+        name=_unique_name("convert") + ".md",
+        content_base64=base64.b64encode(md.encode()).decode(),
+        mime_type=GOOGLE_DOC,
+    ))
+    file_id = result.get("id")
+    try:
+        assert result["mime_type"] == GOOGLE_DOC, result
+        lines = docs.get_document_map(file_id)["segments"][0]["lines"]
+        assert any("[HEADING_1] Plan heading" in ln for ln in lines), lines
+        assert any("[list L0] first" in ln for ln in lines), lines
+    finally:
+        _safe_trash(file_id)
+
+
+@pytest.mark.integration
+def test_drive_upload_converts_csv_to_sheet():
+    result = asyncio.run(drive_upload(
+        name=_unique_name("convert") + ".csv",
+        content_base64=base64.b64encode(b"a,b\n1,2\n").decode(),
+        mime_type=GOOGLE_SHEET,
+    ))
+    try:
+        assert result["mime_type"] == GOOGLE_SHEET, result
+    finally:
+        _safe_trash(result.get("id"))
+
+
+@pytest.mark.integration
+def test_upload_url_flow_with_curl_and_conversion(tmp_path):
+    """The upload URL works as documented: the agent sends the file with
+    ``curl -T`` and Drive creates (and converts) the file."""
+    src = tmp_path / "Notes.md"
+    src.write_text("# Notes\n\nBody text.\n")
+    session = asyncio.run(drive_upload(
+        name=_unique_name("url") + ".md", upload_url=True, mime_type=GOOGLE_DOC,
+    ))
+    assert session["mode"] == "out_of_band", session
+    cmd = session["run"].replace("<your-file>", shlex.quote(str(src)))
+    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    created = json.loads(out.stdout)
+    try:
+        assert created["mimeType"] == GOOGLE_DOC, created
+        lines = docs.get_document_map(created["id"])["segments"][0]["lines"]
+        assert any("[HEADING_1] Notes" in ln for ln in lines), lines
+    finally:
+        _safe_trash(created.get("id"))
+
+
+@pytest.mark.integration
+def test_update_upload_url_flow_with_curl_and_rename(tmp_path):
+    uploaded = drive.upload_bytes(data=b"v1", name=_unique_name("url-upd"), mime_type="text/plain")
+    file_id = uploaded["id"]
+    src = tmp_path / "v2.txt"
+    src.write_bytes(b"v2 via url")
+    try:
+        session = asyncio.run(drive_update(file_id=file_id, upload_url=True, name="v2.txt"))
+        cmd = session["run"].replace("<your-file>", shlex.quote(str(src)))
+        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr
+        assert drive.download_bytes(file_id=file_id)["data"] == b"v2 via url"
+        assert drive.get_metadata(file_id)["name"] == "v2.txt"
     finally:
         _safe_trash(file_id)
 
@@ -244,9 +320,7 @@ def test_full_drive_lifecycle_end_to_end():
         # Create folder + move into it
         folder = drive.create_folder(name=folder_name)
         folder_id = folder["id"]
-        move_result = drive.move_file(
-            file_id=file_id, destination_folder_id=folder_id
-        )
+        move_result = drive.update_metadata(file_id, folder_id=folder_id)
         assert folder_id in move_result["parents"]
 
         # List the folder; the file should appear by name
@@ -261,7 +335,7 @@ def test_full_drive_lifecycle_end_to_end():
         blocks = asyncio.run(drive_download(file_id=file_id))
         embedded = blocks[1]
         assert isinstance(embedded, EmbeddedResource)
-        assert base64.b64decode(embedded.resource.blob) == payload
+        assert embedded.resource.text == payload.decode()
 
         # Trash
         trashed = drive.delete_file(file_id=file_id)

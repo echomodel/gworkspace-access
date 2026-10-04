@@ -27,7 +27,6 @@ from gwsa.sdk.destinations import (
     materialize,
 )
 from gwsa.mcp.content import (
-    ContentBlock,
     drive_upload_to_dict,
     inline_payload_to_blocks,
 )
@@ -500,7 +499,7 @@ async def download_email_attachment(
     filename: Optional[str] = None,
     mime_type: Optional[str] = None,
     account: Optional[str] = None,
-) -> list[ContentBlock] | dict[str, Any]:
+) -> Any:
     """Download a Gmail attachment to a destination the agent can reach.
 
     The ``destination`` parameter is a discriminated union; pass one of:

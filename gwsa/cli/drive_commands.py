@@ -31,16 +31,20 @@ def list_folder(folder_id, max_results):
 @click.argument('local_path')
 @click.option('--folder-id', default=None, help='Destination folder ID.')
 @click.option('--name', default=None, help='Name for file in Drive.')
+@click.option('--mime-type', default=None,
+              help='The Drive file\'s type. A Google type converts the file, '
+                   'e.g. application/vnd.google-apps.document for .md/.html/'
+                   '.docx, application/vnd.google-apps.spreadsheet for .csv.')
 @click.option('--keep', is_flag=True,
               help='Pin the resulting revision (keepForever) so it is '
                    'never auto-pruned.')
 @require_scopes('drive')
-def upload_file(local_path, folder_id, name, keep):
-    """Upload a file to Google Drive."""
+def upload_file(local_path, folder_id, name, mime_type, keep):
+    """Upload a file to Google Drive (Drive files.create), optionally converting it."""
     try:
         result = drive.upload_file(
             local_path=local_path, folder_id=folder_id, name=name,
-            keep_revision_forever=keep,
+            file_mime_type=mime_type, keep_revision_forever=keep,
         )
         click.echo(json.dumps(result, indent=2))
     except Exception as e:
@@ -50,19 +54,28 @@ def upload_file(local_path, folder_id, name, keep):
 
 @drive_group.command('update')
 @click.argument('file_id')
-@click.argument('local_path')
-@click.option('--name', default=None, help='New name for file in Drive.')
+@click.argument('local_path', required=False)
+@click.option('--name', default=None, help='New name (renames the file).')
+@click.option('--folder-id', default=None,
+              help='Folder to move the file into ("root" = My Drive).')
 @click.option('--keep', is_flag=True,
               help='Pin the resulting revision (keepForever) so this '
                    'version is never auto-pruned — update + pin in one step.')
 @require_scopes('drive')
-def update_file(file_id, local_path, name, keep):
-    """Update an existing file in Google Drive."""
+def update_file(file_id, local_path, name, folder_id, keep):
+    """Rename, move, and/or replace the content of a Drive file (Drive files.update).
+
+    LOCAL_PATH replaces the content (a new revision); --name renames;
+    --folder-id moves. Any combination in one call.
+    """
     try:
-        result = drive.update_file(
-            file_id=file_id, local_path=local_path, new_name=name,
-            keep_revision_forever=keep,
-        )
+        if local_path:
+            result = drive.update_file(
+                file_id=file_id, local_path=local_path, new_name=name,
+                folder_id=folder_id, keep_revision_forever=keep,
+            )
+        else:
+            result = drive.update_metadata(file_id, name=name, folder_id=folder_id)
         click.echo(json.dumps(result, indent=2))
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

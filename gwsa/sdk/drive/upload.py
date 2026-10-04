@@ -5,11 +5,13 @@ import json
 import mimetypes
 import os
 from typing import Optional
+from urllib.parse import urlencode
 
 import httpx
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 from ..auth import get_credentials
+from .files import parent_change
 from .service import get_drive_service
 
 # Resumable-upload initiation endpoints. The session URI these return is
@@ -66,6 +68,7 @@ def begin_resumable_upload(
     mime_type: str = "application/octet-stream",
     folder_id: Optional[str] = None,
     size: Optional[int] = None,
+    file_mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> str:
     """Start a resumable session to create a NEW file; return the session URI.
@@ -83,6 +86,10 @@ def begin_resumable_upload(
         folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
         size: Total byte count, if known (sent as
             ``X-Upload-Content-Length`` to let Drive validate).
+        file_mime_type: The Drive file's type (``files.create`` metadata
+            ``mimeType``). A Google type (e.g.
+            ``application/vnd.google-apps.document``) converts the uploaded
+            content into a native Google file.
         account: Optional account selector — name or email.
 
     Returns:
@@ -91,6 +98,8 @@ def begin_resumable_upload(
     metadata: dict = {"name": name}
     if folder_id and folder_id != "root":
         metadata["parents"] = [folder_id]
+    if file_mime_type:
+        metadata["mimeType"] = file_mime_type
     return _initiate_resumable(
         _RESUMABLE_CREATE, "POST", metadata, mime_type, size, account
     )
@@ -101,6 +110,7 @@ def begin_resumable_update(
     mime_type: str = "application/octet-stream",
     new_name: Optional[str] = None,
     size: Optional[int] = None,
+    folder_id: Optional[str] = None,
     account: Optional[str] = None,
 ) -> str:
     """Start a resumable session to replace an EXISTING file's content.
@@ -114,6 +124,7 @@ def begin_resumable_update(
         mime_type: Content type the caller will upload.
         new_name: Optional new name for the file.
         size: Total byte count, if known.
+        folder_id: Optional folder to move the file into.
         account: Optional account selector — name or email.
 
     Returns:
@@ -122,10 +133,11 @@ def begin_resumable_update(
     metadata: dict = {}
     if new_name:
         metadata["name"] = new_name
-    return _initiate_resumable(
-        _RESUMABLE_UPDATE.format(file_id=file_id),
-        "PATCH", metadata, mime_type, size, account,
-    )
+    url = _RESUMABLE_UPDATE.format(file_id=file_id)
+    move = parent_change(get_drive_service(account=account), file_id, folder_id)
+    if move:
+        url += "&" + urlencode(move)
+    return _initiate_resumable(url, "PATCH", metadata, mime_type, size, account)
 
 
 def upload_file(
@@ -133,6 +145,7 @@ def upload_file(
     folder_id: Optional[str] = None,
     name: Optional[str] = None,
     keep_revision_forever: bool = False,
+    file_mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """Upload a file to Google Drive.
@@ -145,6 +158,10 @@ def upload_file(
             ``keepForever`` so it survives Drive's auto-pruning. Atomic —
             no separate ``keep_revision`` call needed. Only meaningful for
             binary (non-native) content.
+        file_mime_type: The Drive file's type (``files.create`` metadata
+            ``mimeType``). A Google type converts the content into a native
+            Google file — e.g. ``application/vnd.google-apps.document`` for
+            Markdown, HTML, or DOCX; ``...spreadsheet`` for CSV.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -165,6 +182,8 @@ def upload_file(
 
     if folder_id and folder_id != "root":
         file_metadata["parents"] = [folder_id]
+    if file_mime_type:
+        file_metadata["mimeType"] = file_mime_type
 
     media = MediaFileUpload(
         local_path,
@@ -175,7 +194,7 @@ def upload_file(
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink",
+        fields="id, name, mimeType, parents, webViewLink",
         supportsAllDrives=True,
         keepRevisionForever=keep_revision_forever,
     ).execute()
@@ -184,6 +203,8 @@ def upload_file(
         "id": file.get("id"),
         "name": file.get("name"),
         "url": file.get("webViewLink"),
+        "mime_type": file.get("mimeType"),
+        "parents": file.get("parents", []),
         "keep_revision_forever": keep_revision_forever,
     }
 
@@ -194,6 +215,7 @@ def upload_bytes(
     mime_type: str = "application/octet-stream",
     folder_id: Optional[str] = None,
     keep_revision_forever: bool = False,
+    file_mime_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """Upload raw bytes as a new file in Google Drive.
@@ -213,6 +235,10 @@ def upload_bytes(
             My Drive root.
         keep_revision_forever: Pin the resulting (initial) revision with
             ``keepForever`` so it survives Drive's auto-pruning. Atomic.
+        file_mime_type: The Drive file's type (``files.create`` metadata
+            ``mimeType``). A Google type converts the content into a native
+            Google file — e.g. ``application/vnd.google-apps.document`` for
+            Markdown, HTML, or DOCX; ``...spreadsheet`` for CSV.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -225,6 +251,8 @@ def upload_bytes(
     file_metadata: dict = {"name": name}
     if folder_id and folder_id != "root":
         file_metadata["parents"] = [folder_id]
+    if file_mime_type:
+        file_metadata["mimeType"] = file_mime_type
 
     media = MediaIoBaseUpload(
         io.BytesIO(data),
@@ -235,7 +263,7 @@ def upload_bytes(
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink",
+        fields="id, name, mimeType, parents, webViewLink",
         supportsAllDrives=True,
         keepRevisionForever=keep_revision_forever,
     ).execute()
@@ -244,6 +272,8 @@ def upload_bytes(
         "id": file.get("id"),
         "name": file.get("name"),
         "url": file.get("webViewLink"),
+        "mime_type": file.get("mimeType"),
+        "parents": file.get("parents", []),
         "keep_revision_forever": keep_revision_forever,
     }
 
@@ -254,6 +284,7 @@ def update_bytes(
     mime_type: str = "application/octet-stream",
     new_name: Optional[str] = None,
     keep_revision_forever: bool = False,
+    folder_id: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """Update an existing file's content from raw bytes.
@@ -273,6 +304,7 @@ def update_bytes(
             ``keepForever`` in the same call, so this version survives
             Drive's auto-pruning. Atomic — no separate ``keep_revision``
             call needed.
+        folder_id: Optional folder to move the file into.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -296,15 +328,18 @@ def update_bytes(
         fileId=file_id,
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink",
+        fields="id, name, mimeType, parents, webViewLink",
         supportsAllDrives=True,
         keepRevisionForever=keep_revision_forever,
+        **parent_change(service, file_id, folder_id),
     ).execute()
 
     return {
         "id": file.get("id"),
         "name": file.get("name"),
         "url": file.get("webViewLink"),
+        "mime_type": file.get("mimeType"),
+        "parents": file.get("parents", []),
         "keep_revision_forever": keep_revision_forever,
     }
 
@@ -314,9 +349,10 @@ def update_file(
     local_path: str,
     new_name: Optional[str] = None,
     keep_revision_forever: bool = False,
+    folder_id: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
-    """Update an existing file's content and optionally its name.
+    """Update an existing file's content and optionally its name and folder.
 
     Args:
         file_id: The ID of the file to update.
@@ -326,6 +362,7 @@ def update_file(
             ``keepForever`` in the same call, so this version survives
             Drive's auto-pruning. Atomic — no separate ``keep_revision``
             call needed.
+        folder_id: Optional folder to move the file into.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -353,14 +390,17 @@ def update_file(
         fileId=file_id,
         body=file_metadata,
         media_body=media,
-        fields="id, name, webViewLink",
+        fields="id, name, mimeType, parents, webViewLink",
         supportsAllDrives=True,
         keepRevisionForever=keep_revision_forever,
+        **parent_change(service, file_id, folder_id),
     ).execute()
 
     return {
         "id": file.get("id"),
         "name": file.get("name"),
         "url": file.get("webViewLink"),
+        "mime_type": file.get("mimeType"),
+        "parents": file.get("parents", []),
         "keep_revision_forever": keep_revision_forever,
     }

@@ -34,7 +34,7 @@ from gwsa.sdk.sources import (
     InvalidInlineSourceError,
     decode_inline_upload,
 )
-from gwsa.mcp.content import ContentBlock, inline_payload_to_blocks
+from gwsa.mcp.content import inline_payload_to_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -132,65 +132,89 @@ async def drive_upload(
     name: Optional[str] = None,
     content_base64: Optional[str] = None,
     folder_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    upload_url: bool = False,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Upload a new file to Google Drive (works on every transport).
+    """Create a new Drive file (Drive ``files.create``), optionally converting it.
 
-    Two ways to supply the bytes — neither reads a file off the server:
+    Two ways to supply the content — neither reads a file off the server:
 
     - **``content_base64``** → small inline upload (subject to the inline
       size cap).
-    - **omit content (pass just ``name``)** → returns a self-authorizing
-      resumable upload URL. PUT the bytes to it directly — any size,
-      straight to Google, no server proxy, no token.
+    - **``upload_url=True``** (with ``name``) → returns a self-authorizing
+      upload URL; send the file to it from a shell (``curl -T``) — any
+      size, straight to Google. Requires a shell with internet access
+      (works in Claude Code; not in shell-less chat apps or sandboxes that
+      block googleapis.com).
 
-    To upload a file by **local path**, use ``drive_upload_local`` — that
-    tool is stdio-only, because reading a caller-named path off the server
-    over HTTP would be an arbitrary server-file read.
+    **Convert to a Google Doc / Sheet / Slides** by setting ``mime_type`` to
+    the Google type you want; Drive converts the content on upload. The
+    content's own type comes from ``name``'s extension:
+
+    - Markdown, HTML, DOCX, TXT → ``application/vnd.google-apps.document``
+      (e.g. ``name="Plan.md"`` makes a formatted Doc: headings, lists,
+      tables, links)
+    - CSV, XLSX → ``application/vnd.google-apps.spreadsheet``
+    - PPTX → ``application/vnd.google-apps.presentation``
+
+    To upload a file by **local path**, use ``drive_upload_local`` (stdio
+    only — reading a caller-named path off the server over HTTP would be an
+    arbitrary server-file read).
 
     Args:
-        name: File name in Drive. Required for the resumable-URL path.
+        name: File name in Drive; its extension sets the content type.
+            Required with ``upload_url``.
         content_base64: Base64-encoded content for a small inline upload.
         folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
+        mime_type: The Drive file's type (``files.create`` ``mimeType``).
+            Omit to store the file as-is; a Google type converts it.
+        upload_url: Return an upload URL instead of uploading inline.
         keep_revision_forever: Pin the initial revision (``keepForever``).
         account: Optional account selector (name or email).
 
     Returns:
         Completed upload → dict with file ``id``, ``name``, ``url``,
-        ``keep_revision_forever``. Resumable path → dict with
+        ``mime_type`` (the resulting Drive type), ``parents``,
+        ``keep_revision_forever``. Upload URL → dict with
         ``mode="out_of_band"``, ``upload_url`` and a ``run`` command.
     """
     try:
-        if content_base64 is not None:
-            data, src_name, mime_type = decode_inline_upload(content_base64, name=name)
-            final_name = name or src_name
-            if not final_name:
-                return {"error": "Provide 'name' for an inline upload."}
-            return drive.upload_bytes(
-                data=data, name=final_name, mime_type=mime_type,
-                folder_id=folder_id,
-                keep_revision_forever=keep_revision_forever, account=account,
+        if upload_url:
+            if content_base64 is not None:
+                return {"error": "Pass content_base64 or upload_url=true, not both."}
+            if not name:
+                return {"error": "upload_url=true needs a name for the new file."}
+            session_uri = drive.begin_resumable_upload(
+                name=name, folder_id=folder_id, file_mime_type=mime_type,
+                mime_type=_content_type(name), account=account,
             )
+            return _upload_session_response(session_uri, name)
 
-        if not name:
+        if content_base64 is None:
             return {
-                "error": "Provide content_base64 (small) or a name to start a "
-                         "resumable upload session. To upload a local file by "
-                         "path, use drive_upload_local (stdio only)."
+                "error": "Provide content_base64 (small) or upload_url=true with "
+                         "a name (any size, sent from a shell). To upload a local "
+                         "file by path, use drive_upload_local (stdio only)."
             }
-        session_uri = drive.begin_resumable_upload(
-            name=name, folder_id=folder_id, account=account,
+        data, src_name, content_type = decode_inline_upload(content_base64, name=name)
+        final_name = name or src_name
+        if not final_name:
+            return {"error": "Provide 'name' for an inline upload."}
+        return drive.upload_bytes(
+            data=data, name=final_name, mime_type=content_type,
+            folder_id=folder_id, file_mime_type=mime_type,
+            keep_revision_forever=keep_revision_forever, account=account,
         )
-        return _upload_session_response(session_uri, name)
     except InlineSourceTooLargeError as e:
         return {
             "success": False, "error": str(e),
             "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
             "hint": (
-                "Too large to inline. Omit content and pass just 'name' for a "
-                "direct-to-Google resumable upload URL, or use "
-                "drive_upload_local on a stdio server."
+                "Too large to inline. Pass upload_url=true with a name for a "
+                "direct-to-Google upload URL, or use drive_upload_local on a "
+                "stdio server."
             ),
         }
     except InvalidInlineSourceError as e:
@@ -200,11 +224,20 @@ async def drive_upload(
         return {"error": str(e)}
 
 
+def _content_type(name: Optional[str]) -> str:
+    """Content type for an upload URL, from the file name's extension."""
+    import mimetypes
+
+    guessed, _ = mimetypes.guess_type(name or "")
+    return guessed or "application/octet-stream"
+
+
 @mcp_transport("stdio")
 async def drive_upload_local(
     local_path: str,
     name: Optional[str] = None,
     folder_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -215,12 +248,14 @@ async def drive_upload_local(
     it directly — any size, no base64. Over HTTP this capability is
     deliberately absent (a server-side read of a caller-named path would be
     an arbitrary-file read); use ``drive_upload`` with ``content_base64`` or
-    its resumable URL there instead.
+    ``upload_url=true`` there instead.
 
     Args:
         local_path: Path to the local file to upload.
         name: File name in Drive (default: the file's base name).
         folder_id: Destination folder ID. ``None``/``"root"`` = My Drive.
+        mime_type: The Drive file's type; a Google type converts the file
+            (see ``drive_upload``).
         keep_revision_forever: Pin the initial revision (``keepForever``).
         account: Optional account selector (name or email).
     """
@@ -229,6 +264,7 @@ async def drive_upload_local(
             return {"error": f"File not found: {local_path}"}
         return drive.upload_file(
             local_path=local_path, folder_id=folder_id, name=name,
+            file_mime_type=mime_type,
             keep_revision_forever=keep_revision_forever, account=account,
         )
     except Exception as e:
@@ -238,48 +274,76 @@ async def drive_upload_local(
 
 async def drive_update(
     file_id: str,
-    content_base64: Optional[str] = None,
     name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+    content_base64: Optional[str] = None,
+    upload_url: bool = False,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Replace an existing Drive file's content (works on every transport).
+    """Update a Drive file or folder: rename it, move it, and/or replace its content.
 
-    - **``content_base64``** → small inline update.
-    - **omit content** → returns a self-authorizing resumable *update* URL to
-      PUT the new bytes to (any size, straight to Google).
+    Drive ``files.update``: any combination in one call.
 
-    To update from a **local path**, use ``drive_update_local`` (stdio only).
-    Revisions stack on ``file_id`` either way.
+    - **Rename:** ``name="New name"``.
+    - **Move:** ``folder_id="<folder id>"`` (``"root"`` = My Drive).
+    - **Replace content** (new revision of the same file): ``content_base64``
+      for a small inline update, or ``upload_url=True`` to get a
+      self-authorizing upload URL and send the file to it from a shell
+      (``curl -T``) — any size, straight to Google. ``upload_url`` requires a
+      shell with internet access (works in Claude Code; not in shell-less
+      chat apps or sandboxes that block googleapis.com).
+
+    To replace content from a **local path**, use ``drive_update_local``
+    (stdio only).
 
     Args:
-        file_id: Drive file ID to update.
-        content_base64: Base64 content for a small inline update.
-        name: Optional new name for the file.
-        keep_revision_forever: Pin the resulting head revision.
+        file_id: Drive file or folder ID.
+        name: New name (renames).
+        folder_id: Folder to move into (moves).
+        content_base64: Base64 content for a small inline content update.
+        upload_url: Return an upload URL for new content instead.
+        keep_revision_forever: Pin the new head revision (content updates).
         account: Optional account selector (name or email).
 
     Returns:
-        Completed update → dict with file ``id``, ``name``, ``url``.
-        Resumable path → dict with ``mode="out_of_band"`` + ``run``.
+        Completed update → dict with ``id``, ``name``, ``parents``, ``url``
+        (plus ``mime_type`` and ``keep_revision_forever`` for content
+        updates). Upload URL → dict with ``mode="out_of_band"``,
+        ``upload_url`` and a ``run`` command; the rename/move is applied when
+        the upload completes.
     """
     try:
+        if upload_url:
+            if content_base64 is not None:
+                return {"error": "Pass content_base64 or upload_url=true, not both."}
+            session_uri = drive.begin_resumable_update(
+                file_id=file_id, new_name=name, folder_id=folder_id,
+                mime_type=_content_type(name), account=account,
+            )
+            return _upload_session_response(session_uri, name or file_id)
+
         if content_base64 is not None:
-            data, _n, mime_type = decode_inline_upload(content_base64, name=name)
+            data, _n, content_type = decode_inline_upload(content_base64, name=name)
             return drive.update_bytes(
-                file_id=file_id, data=data, mime_type=mime_type, new_name=name,
+                file_id=file_id, data=data, mime_type=content_type, new_name=name,
+                folder_id=folder_id,
                 keep_revision_forever=keep_revision_forever, account=account,
             )
 
-        session_uri = drive.begin_resumable_update(
-            file_id=file_id, new_name=name, account=account,
+        if name is None and folder_id is None:
+            return {
+                "error": "Nothing to update: pass name (rename), folder_id "
+                         "(move), content_base64, or upload_url=true."
+            }
+        return drive.update_metadata(
+            file_id, name=name, folder_id=folder_id, account=account,
         )
-        return _upload_session_response(session_uri, name or file_id)
     except InlineSourceTooLargeError as e:
         return {
             "success": False, "error": str(e),
             "size_bytes": e.size_bytes, "cap_bytes": e.cap_bytes,
-            "hint": ("Too large to inline. Omit content for a resumable update "
+            "hint": ("Too large to inline. Pass upload_url=true for an upload "
                      "URL, or use drive_update_local on a stdio server."),
         }
     except InvalidInlineSourceError as e:
@@ -294,6 +358,7 @@ async def drive_update_local(
     file_id: str,
     local_path: str,
     name: Optional[str] = None,
+    folder_id: Optional[str] = None,
     keep_revision_forever: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -302,12 +367,13 @@ async def drive_update_local(
     Stdio-only for the same reason as ``drive_upload_local``: a server-side
     read of a caller-named path over HTTP would be an arbitrary-file read.
     Reads + updates directly, any size. Over HTTP use ``drive_update`` with
-    ``content_base64`` or its resumable URL.
+    ``content_base64`` or ``upload_url=true``.
 
     Args:
         file_id: Drive file ID to update.
         local_path: Path to a local file with the new content.
         name: Optional new name for the file.
+        folder_id: Optional folder to move the file into.
         keep_revision_forever: Pin the resulting head revision.
         account: Optional account selector (name or email).
     """
@@ -316,6 +382,7 @@ async def drive_update_local(
             return {"error": f"File not found: {local_path}"}
         return drive.update_file(
             file_id=file_id, local_path=local_path, new_name=name,
+            folder_id=folder_id,
             keep_revision_forever=keep_revision_forever, account=account,
         )
     except Exception as e:
@@ -326,7 +393,7 @@ async def drive_update_local(
 async def drive_download(
     file_id: str,
     account: Optional[str] = None,
-) -> list[ContentBlock] | dict[str, Any]:
+) -> Any:
     """Download a Drive file's contents (works on every transport).
 
     - **Small files** (≤ ~60 KB) → returned **inline** as
@@ -424,36 +491,6 @@ async def drive_download_to_path(
         }
     except Exception as e:
         logger.error(f"Error downloading file to path: {e}")
-        return {"error": str(e)}
-
-
-async def drive_move(
-    file_id: str,
-    destination_folder_id: str,
-    account: Optional[str] = None,
-) -> dict[str, Any]:
-    """Move a Drive file to a different folder.
-
-    Drive's REST API does not have a literal "move" — a move is an
-    update that adds the new parent and removes the old. This tool
-    performs both in one API call.
-
-    Args:
-        file_id: Drive file ID to move.
-        destination_folder_id: Folder ID to move into. Use ``"root"``
-            for My Drive root.
-        account: Optional account selector (name or email). Omit to
-            use the user's default account.
-
-    Returns:
-        Dict with ``id``, ``name``, ``parents`` (new parent IDs), and
-        ``url`` (webViewLink). Returns an error envelope if the file
-        or destination folder cannot be reached.
-    """
-    try:
-        return drive.move_file(file_id, destination_folder_id, account=account)
-    except Exception as e:
-        logger.error(f"Error moving file: {e}")
         return {"error": str(e)}
 
 
@@ -673,7 +710,7 @@ async def drive_get_metadata(
     Useful for pre-flight checks before ``drive_download`` — inspect
     ``size`` and ``mime_type`` to decide whether to fetch inline (the
     100,000-byte default cap applies) or to leave the file in Drive
-    and operate on it via ``drive_move`` / ``drive_delete`` / sharing.
+    and operate on it via ``drive_update`` / ``drive_delete`` / sharing.
 
     Args:
         file_id: Drive file ID.
@@ -800,7 +837,7 @@ async def drive_get_revision(
     revision_id: str,
     max_size_bytes: Optional[int] = None,
     account: Optional[str] = None,
-) -> list[ContentBlock] | dict[str, Any]:
+) -> Any:
     """Fetch a specific revision's content inline as an MCP EmbeddedResource.
 
     Returns ``[TextContent summary, EmbeddedResource]`` with the bytes

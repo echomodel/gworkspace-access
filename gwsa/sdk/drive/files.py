@@ -63,46 +63,55 @@ def get_metadata(
     return result
 
 
-def move_file(
+def parent_change(service, file_id: str, folder_id: Optional[str]) -> dict:
+    """``files.update`` parameters that move ``file_id`` into ``folder_id``.
+
+    Drive has no separate "move": a file's folder is its ``parents``, and
+    ``files.update`` changes it with ``addParents`` / ``removeParents``.
+    Returns ``{}`` when ``folder_id`` is ``None`` (no move).
+    """
+    if folder_id is None:
+        return {}
+    current = service.files().get(
+        fileId=file_id, fields="parents", supportsAllDrives=True,
+    ).execute()
+    return {
+        "addParents": folder_id,
+        "removeParents": ",".join(current.get("parents", [])),
+    }
+
+
+def update_metadata(
     file_id: str,
-    destination_folder_id: str,
+    name: Optional[str] = None,
+    folder_id: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
-    """Move a file to a different folder.
-
-    Drive's REST API does not have a literal "move" — a move is an
-    update that adds the new parent and removes the old. This helper
-    performs both parent edits in one ``files.update`` call.
+    """Rename and/or move a file — Drive ``files.update`` without content.
 
     Args:
-        file_id: Drive file ID to move.
-        destination_folder_id: Folder ID to move into. Use ``'root'`` for
-            My Drive root.
-        account: Optional account selector — name or email. Omit to use
-            the user's default account.
+        file_id: Drive file or folder ID.
+        name: New name (renames the file).
+        folder_id: Folder to move the file into; ``'root'`` for My Drive.
+        account: Optional account selector — name or email.
 
     Returns:
-        Dict with updated file ``id``, ``name``, ``parents`` (list of
-        parent folder IDs), and ``url`` (webViewLink).
+        Dict with ``id``, ``name``, ``parents``, and ``url`` (webViewLink).
+
+    Raises:
+        ValueError: Neither ``name`` nor ``folder_id`` was given.
     """
+    if name is None and folder_id is None:
+        raise ValueError("Nothing to update: pass name and/or folder_id.")
     service = get_drive_service(account=account)
-
-    # Read current parents so we can remove them in the same update.
-    current = service.files().get(
-        fileId=file_id,
-        fields="parents",
-        supportsAllDrives=True,
-    ).execute()
-    previous_parents = ",".join(current.get("parents", []))
-
+    body = {"name": name} if name is not None else {}
     updated = service.files().update(
         fileId=file_id,
-        addParents=destination_folder_id,
-        removeParents=previous_parents,
+        body=body,
         fields="id, name, parents, webViewLink",
         supportsAllDrives=True,
+        **parent_change(service, file_id, folder_id),
     ).execute()
-
     return {
         "id": updated.get("id"),
         "name": updated.get("name"),

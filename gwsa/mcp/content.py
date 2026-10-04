@@ -18,7 +18,13 @@ import json
 from typing import Sequence
 from uuid import uuid4
 
-from mcp.types import BlobResourceContents, ContentBlock, EmbeddedResource, TextContent
+from mcp.types import (
+    BlobResourceContents,
+    ContentBlock,
+    EmbeddedResource,
+    TextContent,
+    TextResourceContents,
+)
 
 from gwsa.sdk.destinations import DriveUpload, InlinePayload
 
@@ -31,33 +37,40 @@ def inline_payload_to_blocks(payload: InlinePayload) -> list[ContentBlock]:
     - ``TextContent`` carries a JSON summary so clients that don't
       render ``EmbeddedResource`` (notably Claude Desktop's text-only
       surfaces) still receive usable metadata.
-    - ``EmbeddedResource`` carries the base64-encoded bytes in a
-      synthetic ``data:`` URI that clients can decode without resolving
-      a separate resource read.
+    - ``EmbeddedResource`` carries the content: as **text**
+      (``TextResourceContents``) when it is a text-like type that decodes
+      as UTF-8 (YAML, Markdown, CSV, JSON, …), so any client can read it
+      directly; otherwise as **base64** (``BlobResourceContents``).
 
     The synthetic URI uses a randomly-generated suffix so the resource
     is unique per tool call — clients that key off URI for caching
     won't conflate two different attachments with the same name.
     """
+    text = payload.as_text()
     summary = TextContent(
         type="text",
         text=json.dumps(
             {
                 "destination": "inline",
                 "name": payload.name,
-                "mime_type": payload.mime_type,
+                "mime_type": text[1] if text else payload.mime_type,
                 "size_bytes": payload.size_bytes,
+                "encoding": "text" if text else "base64",
             },
             indent=2,
         ),
     )
 
-    blob = BlobResourceContents(
-        uri=f"gwsa-inline://{uuid4()}/{payload.name}",
-        mimeType=payload.mime_type,
-        blob=base64.b64encode(payload.data).decode("ascii"),
-    )
-    embedded = EmbeddedResource(type="resource", resource=blob)
+    uri = f"gwsa-inline://{uuid4()}/{payload.name}"
+    if text:
+        contents = TextResourceContents(uri=uri, mimeType=text[1], text=text[0])
+    else:
+        contents = BlobResourceContents(
+            uri=uri,
+            mimeType=payload.mime_type,
+            blob=base64.b64encode(payload.data).decode("ascii"),
+        )
+    embedded = EmbeddedResource(type="resource", resource=contents)
 
     return [summary, embedded]
 

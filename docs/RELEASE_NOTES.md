@@ -1,5 +1,33 @@
 # Release Notes
 
+## v0.31.0 — Drive tools follow the Drive API; small downloads fixed
+
+- **Fix: small downloads through hosted connectors.** `drive_download`,
+  `drive_get_revision`, `download_email_attachment`, and
+  `download_chat_attachment` returned a result strict MCP clients (e.g.
+  claude.ai connectors) rejected (`"_meta": null` in an auto-generated
+  structured copy), so inline downloads failed. Fixed for all four.
+- **Small text files download as text.** YAML, Markdown, CSV, JSON, XML
+  and other text content comes back readable instead of base64 (also when
+  Drive labels the file `application/octet-stream`). Binary files stay
+  base64.
+- **`drive_update` is Drive `files.update` (breaking).** Rename
+  (`name`), move (`folder_id`), and/or replace content (`content_base64`
+  or `upload_url=true`) in one call; a rename or move alone is a
+  metadata-only update. CLI: `gwsa drive update FILE_ID [LOCAL_PATH]
+  [--name] [--folder-id]`.
+  - **`drive_move` is removed** — use `drive_update` with `folder_id`.
+  - **Upload URLs are explicit:** pass `upload_url=true` to `drive_upload`
+    / `drive_update`. Calling them without content no longer returns an
+    upload URL. The URL needs a client with a shell that can reach
+    `googleapis.com`.
+- **Convert on upload.** `drive_upload` / `drive_upload_local` /
+  `gwsa drive upload` take `mime_type` (`--mime-type`), the Drive file's
+  type (`files.create` `mimeType`). A Google type converts the upload:
+  Markdown, HTML, DOCX → Doc; CSV, XLSX → Sheet; PPTX → Slides. Upload
+  results include the resulting `mime_type` and `parents`.
+- `create_doc`'s description now points to `drive_upload` for Markdown.
+
 ## v0.30.0 — Docs: revision lock, whole-element expectations, dry run
 
 Safer and easier guarded Docs edits. Each check now targets one kind of

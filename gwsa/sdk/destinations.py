@@ -17,6 +17,7 @@ to honor the caller's choice.
 
 from __future__ import annotations
 
+import mimetypes
 from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -77,7 +78,7 @@ class DriveDestination(BaseModel):
     the user already has tools to retrieve, share, or organize them.
 
     Default folder is My Drive root, so the simplest caller pattern is
-    ``DriveDestination()`` with no folder_id. Use :func:`drive_move`
+    ``DriveDestination()`` with no folder_id. Use ``drive_update`` with ``folder_id``
     afterwards to organize the file into a project folder.
     """
 
@@ -116,6 +117,43 @@ class InlinePayload(BaseModel):
     mime_type: str
     size_bytes: int
     data: bytes
+
+    def as_text(self) -> Optional[tuple[str, str]]:
+        """``(text, mime_type)`` if the content is text, else ``None``.
+
+        Text means a text-like type — by the declared MIME type, or by the
+        file name when the source only says ``application/octet-stream``
+        (Drive reports that for many ``.yaml`` / ``.md`` uploads) — whose
+        bytes decode as UTF-8. The returned MIME type is the more specific
+        of the two.
+        """
+        mime = self.mime_type
+        if mime in ("", "application/octet-stream"):
+            guessed, _ = mimetypes.guess_type(self.name or "")
+            mime = guessed or mime
+        if not _is_text_mime(mime):
+            return None
+        try:
+            return self.data.decode("utf-8"), mime
+        except UnicodeDecodeError:
+            return None
+
+
+#: Non-``text/*`` MIME types whose content is text.
+_TEXT_APPLICATION_TYPES = frozenset({
+    "application/json", "application/xml", "application/yaml",
+    "application/x-yaml", "application/javascript", "application/x-sh",
+    "application/sql", "application/toml", "application/x-ndjson",
+})
+
+
+def _is_text_mime(mime: str) -> bool:
+    base = mime.split(";", 1)[0].strip().lower()
+    return (
+        base.startswith("text/")
+        or base in _TEXT_APPLICATION_TYPES
+        or base.endswith(("+json", "+xml", "+yaml"))
+    )
 
 
 class DriveUpload(BaseModel):

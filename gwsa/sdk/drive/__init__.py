@@ -22,7 +22,7 @@ from .download import (
     get_download_metadata,
     iter_download_chunks,
 )
-from .files import move_file, copy_file, delete_file, get_metadata, set_properties
+from .files import update_metadata, copy_file, delete_file, get_metadata, set_properties
 from .search import search_drive
 from .revisions import (
     list_revisions,
@@ -53,7 +53,7 @@ __all__ = [
     "download_bytes",
     "get_download_metadata",
     "iter_download_chunks",
-    "move_file",
+    "update_metadata",
     "copy_file",
     "delete_file",
     "get_metadata",

@@ -46,39 +46,51 @@ functions, no decorators — name becomes tool name, docstring becomes
 schema description, type hints drive parameter schemas. mcp-app
 discovers them automatically.
 
+### Drive tools follow the Drive API
+
+`drive_upload` is `files.create` and `drive_update` is `files.update`, with
+the API's own parameters: a new file's type (`mime_type`, the API's
+`mimeType` — a Google type converts the upload), and for updates any
+combination of name, folder (the API's `addParents` / `removeParents`, read
+and swapped by `gwsa.sdk.drive.files.parent_change`), and content. Don't add
+tools that split one API operation (e.g. a separate rename or move tool) —
+put the words agents search for ("rename", "move", "convert") in the
+existing tool's description instead.
+
 ### Drive transfers: transport-aware, no gwsa HTTP routes
 
 Large file transfer has to work under both transports: **stdio** (server
 runs on the agent's machine, shared filesystem) and **HTTP** (hosted;
 agent and server share nothing). The design uses **no gwsa HTTP routes
-and no custom auth** — each direction picks the right mechanism from
-context, and the one transport signal is *whether the server can see the
-path the caller named*.
+and no custom auth**.
 
-**Transport detection.** A local path the server can `os.path.isfile`
-(upload) or whose parent dir it can `os.path.isdir` (download `save_to`)
-means it shares the agent's filesystem → stdio. A path it can't see
-means a remote (HTTP) caller. No request object, no base-URL capture, no
-middleware — just filesystem visibility.
+**Host-path tools are stdio-only.** `drive_upload_local`,
+`drive_update_local`, and `drive_download_to_path` read or write a
+caller-named local path, so they are registered only over stdio
+(`@mcp_transport("stdio")`), where the server runs as the local user. Over
+HTTP they don't exist: a server-side read or write of a caller-named path
+would be an arbitrary server-file read/write.
 
 **Upload / update** (`drive_upload`, `drive_update`):
 
 - `content_base64` → small inline upload, any transport (decoded by
   `gwsa.sdk.sources.decode_inline_upload`, raw-byte cap ~700KB).
-- `local_path` the server can read → upload directly, any size, no
-  base64 (stdio).
-- `local_path` the server can't read → a **direct-to-Google resumable
-  upload session URL** (`begin_resumable_upload` / `begin_resumable_update`).
-  The caller PUTs the bytes straight to Google with no auth header (the
-  session URI is self-authorizing — verified live), so the bytes never
-  pass through this server and there is no size cap.
+- `upload_url=True` → a **direct-to-Google resumable upload session URL**
+  (`begin_resumable_upload` / `begin_resumable_update`). The caller PUTs
+  the bytes straight to Google with no auth header (the session URI is
+  self-authorizing — verified live), so the bytes never pass through this
+  server and there is no size cap. It needs a client with a shell that can
+  reach `googleapis.com`; it is an explicit flag, never inferred from
+  missing content.
+- stdio: the `*_local` tools upload from a path, any size.
 
 **Download** (`drive_download`):
 
 - small (≤ inline cap) → returned **inline** as an `EmbeddedResource`
-  (works on every client, including browser/mobile connectors).
-- `save_to` into a directory the server can see → streamed straight to
-  disk, any size (stdio), via `iter_download_chunks` / `download_file`.
+  (works on every client, including browser/mobile connectors): text-like
+  content as `TextResourceContents` (readable text), anything else as
+  base64 `BlobResourceContents`. `InlinePayload.as_text` decides.
+- stdio: `drive_download_to_path` streams straight to disk, any size.
 - large + remote → the file's **Drive download link**
   (`webContentLink`). The file is already in the user's Drive and their
   browser is signed in, so opening the link downloads it — no server
@@ -94,12 +106,20 @@ middleware — just filesystem visibility.
    genuinely requires proxying bytes through the server to a
    credential-less client, that's a deliberate, separately-justified
    addition — not the default.
-2. **Detect transport by filesystem visibility, not by config or a
-   request object.** Keeps the tools dependency-free and correct under
-   both transports.
-3. **The SDK stays transport-agnostic.** `*_bytes` (in-memory) and
+2. **The SDK stays transport-agnostic.** `*_bytes` (in-memory) and
    `*_file` (disk) variants plus `begin_resumable_*` (session URI) live
    in `gwsa.sdk.drive`; the MCP tool layer chooses among them.
+3. **Tools that return content blocks are annotated `-> Any`.** An
+   annotation that names `ContentBlock` makes the MCP library generate an
+   output schema and a `structuredContent` copy of the result, serialized
+   with `"_meta": null` — which strict clients reject, failing the call.
+   `tests/unit/test_tool_wire_format.py` enforces this for every tool.
+4. **The upload URL is the tool-level form of a protocol feature MCP is
+   standardizing** (SEP-2631, `files/authorizeUpload` /
+   `files/authorizeDownload`): the server authorizes a transfer and the
+   bytes stay out of the JSON-RPC messages. Once that lands and clients
+   support it, move uploads (and large downloads) to it — that also
+   reaches clients without a shell.
 
 ### Email attachments: the `destination` parameter
 

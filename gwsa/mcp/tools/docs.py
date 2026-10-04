@@ -64,11 +64,13 @@ async def create_doc(
     """Create a new Google Doc.
 
     NOTE: Works only with remote Google Docs in the cloud.
-    IMPORTANT: For rich-text formatting (headings, bold, lists, links, tables,
-    or code blocks), pass an HTML string in ``body_text`` and set
-    ``mime_type="text/html"``. Do NOT pass raw Markdown syntax (e.g. ``##`` or
-    ``**``) in ``body_text``, as Google Docs does not parse Markdown on import
-    and will display the literal syntax characters.
+    For rich-text formatting (headings, bold, lists, links, tables, or code
+    blocks), pass an HTML string in ``body_text`` and set
+    ``mime_type="text/html"``. ``body_text`` here is plain text or HTML only:
+    Markdown passed here shows its literal ``##`` / ``**`` characters.
+    **To turn Markdown into a formatted Doc,** use ``drive_upload`` with
+    ``name="<title>.md"``, the Markdown as ``content_base64``, and
+    ``mime_type="application/vnd.google-apps.document"`` — Drive converts it.
 
     Args:
         title: Title for the new document.

@@ -93,15 +93,20 @@ class FakeFiles:
             "webViewLink": "https://drive.google.com/file/d/new-file-id",
         })
 
-    def update(self, fileId, body, media_body, fields, **kwargs):
+    def update(self, fileId, body, fields, media_body=None, **kwargs):
         self._store["update"] = {
             "fileId": fileId, "body": body, "media": media_body, "kwargs": kwargs,
         }
+        parents = [kwargs["addParents"]] if "addParents" in kwargs else ["old-folder"]
         return FakeExecute({
             "id": fileId,
             "name": body.get("name", "existing"),
+            "parents": parents,
             "webViewLink": f"https://drive.google.com/file/d/{fileId}",
         })
+
+    def get(self, fileId, fields, **kwargs):
+        return FakeExecute({"parents": ["old-folder"]})
 
 
 class FakeDriveService:
@@ -115,10 +120,11 @@ class FakeDriveService:
 @pytest.fixture
 def patch_drive_service(monkeypatch):
     store: dict = {}
-    monkeypatch.setattr(
-        "gwsa.sdk.drive.upload.get_drive_service",
-        lambda account=None: FakeDriveService(store),
-    )
+    for mod in ("gwsa.sdk.drive.upload", "gwsa.sdk.drive.files"):
+        monkeypatch.setattr(
+            f"{mod}.get_drive_service",
+            lambda account=None: FakeDriveService(store),
+        )
     return store
 
 
@@ -154,17 +160,64 @@ async def test_drive_upload_oversize_inline_returns_error_envelope(patch_drive_s
 
 
 @pytest.mark.asyncio
-async def test_drive_upload_name_only_returns_session_url(monkeypatch):
-    monkeypatch.setattr(
-        "gwsa.sdk.drive.begin_resumable_upload",
-        lambda **kw: "https://www.googleapis.com/upload/...&upload_id=ABC",
-    )
-    # No content + a name → direct-to-Google resumable URL (works over HTTP,
-    # no server-side file read).
-    result = await drive_tools.drive_upload(name="big.bin")
+async def test_drive_upload_upload_url_returns_session_url(monkeypatch):
+    calls = {}
+    def fake(**kw):
+        calls.update(kw)
+        return "https://www.googleapis.com/upload/...&upload_id=ABC"
+    monkeypatch.setattr("gwsa.sdk.drive.begin_resumable_upload", fake)
+    # upload_url=True + a name → direct-to-Google upload URL (works over
+    # HTTP, no server-side file read).
+    result = await drive_tools.drive_upload(name="big.bin", upload_url=True)
     assert result["mode"] == "out_of_band"
     assert result["upload_url"].endswith("upload_id=ABC")
     assert "curl -fL -T" in result["run"]
+    assert calls["name"] == "big.bin" and calls["file_mime_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_drive_upload_name_only_is_not_an_upload_url_request():
+    result = await drive_tools.drive_upload(name="big.bin")
+    assert "error" in result and "upload_url" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_drive_upload_upload_url_needs_name_and_no_content():
+    assert "name" in (await drive_tools.drive_upload(upload_url=True))["error"]
+    r = await drive_tools.drive_upload(name="a.txt", content_base64=_b64(b"x"), upload_url=True)
+    assert "not both" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_drive_upload_converts_with_target_mime_type(patch_drive_service):
+    store = patch_drive_service
+    await drive_tools.drive_upload(
+        content_base64=_b64(b"# Plan\n\n- one\n"), name="Plan.md",
+        mime_type="application/vnd.google-apps.document",
+    )
+    body = store["create"]["body"]
+    assert body["mimeType"] == "application/vnd.google-apps.document"
+    assert store["create"]["media"].mimetype() == "text/markdown"
+
+
+@pytest.mark.asyncio
+async def test_drive_upload_without_mime_type_stores_as_is(patch_drive_service):
+    store = patch_drive_service
+    await drive_tools.drive_upload(content_base64=_b64(b"a,b\n"), name="t.csv")
+    assert "mimeType" not in store["create"]["body"]
+
+
+@pytest.mark.asyncio
+async def test_drive_upload_url_with_conversion_passes_content_type(monkeypatch):
+    calls = {}
+    monkeypatch.setattr("gwsa.sdk.drive.begin_resumable_upload",
+                        lambda **kw: calls.update(kw) or "https://x/?upload_id=Z")
+    await drive_tools.drive_upload(
+        name="Sheet.csv", upload_url=True,
+        mime_type="application/vnd.google-apps.spreadsheet",
+    )
+    assert calls["mime_type"] == "text/csv"
+    assert calls["file_mime_type"] == "application/vnd.google-apps.spreadsheet"
 
 
 @pytest.mark.asyncio
@@ -208,15 +261,58 @@ async def test_drive_update_inline_round_trips(patch_drive_service):
 
 
 @pytest.mark.asyncio
-async def test_drive_update_no_content_returns_session_url(monkeypatch):
-    monkeypatch.setattr(
-        "gwsa.sdk.drive.begin_resumable_update",
-        lambda **kw: "https://www.googleapis.com/upload/...&upload_id=UPD",
-    )
-    result = await drive_tools.drive_update(file_id="f1")
+async def test_drive_update_upload_url_returns_session_url(monkeypatch):
+    calls = {}
+    monkeypatch.setattr("gwsa.sdk.drive.begin_resumable_update",
+                        lambda **kw: calls.update(kw) or "https://x/...&upload_id=UPD")
+    result = await drive_tools.drive_update(
+        file_id="f1", upload_url=True, name="v2.pdf", folder_id="fold-9")
     assert result["mode"] == "out_of_band"
     assert result["upload_url"].endswith("upload_id=UPD")
     assert "curl -fL -T" in result["run"]
+    assert calls["new_name"] == "v2.pdf" and calls["folder_id"] == "fold-9"
+
+
+@pytest.mark.asyncio
+async def test_drive_update_rename_only_is_a_metadata_update(patch_drive_service):
+    store = patch_drive_service
+    result = await drive_tools.drive_update(file_id="f1", name="New name")
+    assert store["update"]["body"] == {"name": "New name"}
+    assert store["update"]["media"] is None
+    assert "addParents" not in store["update"]["kwargs"]
+    assert result["name"] == "New name"
+
+
+@pytest.mark.asyncio
+async def test_drive_update_move_only_swaps_parents(patch_drive_service):
+    store = patch_drive_service
+    result = await drive_tools.drive_update(file_id="f1", folder_id="dest")
+    kw = store["update"]["kwargs"]
+    assert kw["addParents"] == "dest" and kw["removeParents"] == "old-folder"
+    assert store["update"]["body"] == {} and store["update"]["media"] is None
+    assert result["parents"] == ["dest"]
+
+
+@pytest.mark.asyncio
+async def test_drive_update_rename_move_and_content_in_one_call(patch_drive_service):
+    store = patch_drive_service
+    await drive_tools.drive_update(
+        file_id="f1", name="v3.txt", folder_id="dest", content_base64=_b64(b"v3"))
+    up = store["update"]
+    assert up["body"] == {"name": "v3.txt"} and up["media"] is not None
+    assert up["kwargs"]["addParents"] == "dest"
+
+
+@pytest.mark.asyncio
+async def test_drive_update_nothing_to_do_errors():
+    result = await drive_tools.drive_update(file_id="f1")
+    assert "Nothing to update" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_drive_update_content_and_upload_url_conflict():
+    r = await drive_tools.drive_update(file_id="f1", content_base64=_b64(b"x"), upload_url=True)
+    assert "not both" in r["error"]
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 Covers:
 - ``download_email_attachment`` with inline and drive destinations
 - ``drive_download`` (inline-only)
-- ``drive_move`` and ``drive_delete`` (new primitives)
+- ``drive_delete``
 
 The Gmail / Drive HTTP calls are mocked at the SDK boundary; the
 MCP tool layer and the destination materialize() helper run unaltered.
@@ -16,7 +16,7 @@ import base64
 import json
 from unittest.mock import patch
 
-from mcp.types import EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent, TextResourceContents
 from mcp_app.context import current_user
 from mcp_app.models import UserRecord
 
@@ -25,7 +25,6 @@ from gwsa.mcp.tools.drive import (
     drive_delete,
     drive_download,
     drive_download_to_path,
-    drive_move,
 )
 from gwsa.mcp.tools.mail import download_email_attachment
 from gwsa.sdk.destinations import (
@@ -349,54 +348,65 @@ def test_drive_download_to_path_writes_locally(tmp_path):
         current_user.reset(tok)
 
 
-# --- drive_move / drive_delete ---------------------------------------
+def _download(meta, data):
+    sdk_response = {"data": data, "name": meta["name"],
+                    "mime_type": meta["mime_type"], "size_bytes": len(data)}
+    with patch("gwsa.sdk.drive.get_download_metadata", return_value=meta), \
+            patch("gwsa.sdk.drive.download_bytes", return_value=sdk_response):
+        return asyncio.run(drive_download(file_id="drive-file-1"))
 
 
-def test_drive_move_happy_path():
+def test_drive_download_text_file_comes_back_as_text():
+    """A YAML file Drive labels octet-stream is returned as readable text."""
     tok = _set_user_with_account()
     try:
-        sdk_response = {
-            "id": "drive-file-1",
-            "name": "memo.pdf",
-            "parents": ["new-folder-id"],
-            "url": "https://drive.google.com/file/d/drive-file-1/view",
-        }
-        with patch(
-            "gwsa.sdk.drive.move_file", return_value=sdk_response
-        ) as move_patch:
-            result = asyncio.run(
-                drive_move(
-                    file_id="drive-file-1",
-                    destination_folder_id="new-folder-id",
-                )
-            )
-        move_patch.assert_called_once_with(
-            "drive-file-1",
-            "new-folder-id",
-            account=None,
+        blocks = _download(
+            {"name": "settings.yaml", "mime_type": "application/octet-stream", "size": "20"},
+            b"retries: 3\ntimeout: 30\n",
         )
-        assert result == sdk_response
+        summary, embedded = blocks
+        assert isinstance(embedded.resource, TextResourceContents)
+        assert embedded.resource.text.startswith("retries: 3")
+        assert embedded.resource.mimeType == "application/yaml"
+        info = json.loads(summary.text)
+        assert info["encoding"] == "text" and info["mime_type"] == "application/yaml"
     finally:
         current_user.reset(tok)
 
 
-def test_drive_move_returns_error_envelope_on_failure():
+def test_drive_download_markdown_csv_json_are_text():
     tok = _set_user_with_account()
     try:
-        with patch(
-            "gwsa.sdk.drive.move_file",
-            side_effect=RuntimeError("File not found"),
-        ):
-            result = asyncio.run(
-                drive_move(
-                    file_id="missing",
-                    destination_folder_id="folder-x",
-                )
-            )
-        assert "error" in result
-        assert "File not found" in result["error"]
+        for name, mime in (("n.md", "text/markdown"), ("t.csv", "text/csv"),
+                           ("c.json", "application/json")):
+            _, embedded = _download({"name": name, "mime_type": mime, "size": "3"}, b"abc")
+            assert isinstance(embedded.resource, TextResourceContents), name
     finally:
         current_user.reset(tok)
+
+
+def test_drive_download_binary_stays_base64():
+    tok = _set_user_with_account()
+    try:
+        summary, embedded = _download(
+            {"name": "memo.pdf", "mime_type": "application/pdf", "size": "4"}, b"%PDF")
+        assert isinstance(embedded.resource, BlobResourceContents)
+        assert json.loads(summary.text)["encoding"] == "base64"
+    finally:
+        current_user.reset(tok)
+
+
+def test_drive_download_text_type_that_is_not_utf8_stays_base64():
+    tok = _set_user_with_account()
+    try:
+        _, embedded = _download(
+            {"name": "x.txt", "mime_type": "text/plain", "size": "2"}, b"\xff\xfe")
+        assert isinstance(embedded.resource, BlobResourceContents)
+    finally:
+        current_user.reset(tok)
+
+
+# --- drive_delete ----------------------------------------------------
 
 
 def test_drive_delete_happy_path():
