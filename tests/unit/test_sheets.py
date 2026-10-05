@@ -127,7 +127,7 @@ class FakeDriveFiles:
 
     def update(self, fileId, addParents=None, removeParents=None,
                supportsAllDrives=None, fields=None):
-        self._store["drive_update"] = {
+        self._store["drive_update_file"] = {
             "fileId": fileId,
             "addParents": addParents,
             "removeParents": removeParents,
@@ -190,7 +190,7 @@ async def test_create_returns_id_title_url(patch_sheets_service):
     assert result["url"].endswith("/d/ss-new/edit")
     assert result["sheets"] == ["Sheet1"]
     # No folder given → no Drive move.
-    assert "drive_update" not in store
+    assert "drive_update_file" not in store
 
 
 @pytest.mark.asyncio
@@ -199,9 +199,9 @@ async def test_create_in_folder_moves_via_drive(patch_sheets_service):
     await sheets_tools.sheets_create(
         title="Daily Energy Log", folder_id="folder-123"
     )
-    assert store["drive_update"]["fileId"] == "ss-new"
-    assert store["drive_update"]["addParents"] == "folder-123"
-    assert store["drive_update"]["removeParents"] == "root-folder"
+    assert store["drive_update_file"]["fileId"] == "ss-new"
+    assert store["drive_update_file"]["addParents"] == "folder-123"
+    assert store["drive_update_file"]["removeParents"] == "root-folder"
 
 
 @pytest.mark.asyncio

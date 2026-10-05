@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-import mimetypes
+from .content_types import guess_content_type
 from typing import Optional
 
 # Inline base64 is ~4/3 the size of the raw bytes it encodes, and the
@@ -84,6 +84,6 @@ def decode_inline_upload(
             size_bytes=len(data), cap_bytes=cap, name=name or "inline-upload"
         )
     if not mime_type:
-        guessed, _ = mimetypes.guess_type(name) if name else (None, None)
+        guessed = guess_content_type(name)
         mime_type = guessed or "application/octet-stream"
     return data, name, mime_type

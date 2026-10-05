@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.32.0 — Drive tool names match the API calls; content types on every host
+
+- **Renamed (breaking):** `drive_upload` → `drive_create_file`,
+  `drive_update` → `drive_update_file`, `drive_upload_local` →
+  `drive_create_file_local`, `drive_update_local` →
+  `drive_update_file_local`. Each name now says which Drive call runs
+  (`files.create` / `files.update`), alongside `drive_create_folder`. The
+  CLI keeps `gwsa drive upload` / `gwsa drive update`.
+- **`content_type`** (`--content-type`): set the upload's `Content-Type`
+  explicitly; it defaults to the file name's extension.
+- **Downloads report Drive's own `mimeType`.** The file name is used only
+  to decide whether small content comes back as text or base64.
+- **Fix: common file types on hosted servers.** Types were guessed with the
+  host's Python table, which on some servers doesn't know `.yaml` or
+  `.md`: uploads were stored as `application/octet-stream` and small text
+  downloads came back as base64. gwsa now resolves common types (text
+  formats, and formats Drive converts) from its own table on every host.
+
 ## v0.31.0 — Drive tools follow the Drive API; small downloads fixed
 
 - **Fix: small downloads through hosted connectors.** `drive_download`,

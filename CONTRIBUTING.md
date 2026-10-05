@@ -48,9 +48,13 @@ discovers them automatically.
 
 ### Drive tools follow the Drive API
 
-`drive_upload` is `files.create` and `drive_update` is `files.update`, with
-the API's own parameters: a new file's type (`mime_type`, the API's
-`mimeType` — a Google type converts the upload), and for updates any
+Tool names say which API call runs: `drive_create_file` / `drive_create_folder`
+are `files.create`, `drive_update_file` is `files.update`, `drive_copy` is
+`files.copy`. Parameters keep the API's meaning: the file's `mimeType`
+(`mime_type` — a Google type converts the upload, otherwise the file is
+stored as uploaded), the upload's `Content-Type` (`content_type`, default
+from the file name via `gwsa.sdk.content_types`, which resolves common types
+the same on every host), and for updates any
 combination of name, folder (the API's `addParents` / `removeParents`, read
 and swapped by `gwsa.sdk.drive.files.parent_change`), and content. Don't add
 tools that split one API operation (e.g. a separate rename or move tool) —
@@ -64,14 +68,14 @@ runs on the agent's machine, shared filesystem) and **HTTP** (hosted;
 agent and server share nothing). The design uses **no gwsa HTTP routes
 and no custom auth**.
 
-**Host-path tools are stdio-only.** `drive_upload_local`,
-`drive_update_local`, and `drive_download_to_path` read or write a
+**Host-path tools are stdio-only.** `drive_create_file_local`,
+`drive_update_file_local`, and `drive_download_to_path` read or write a
 caller-named local path, so they are registered only over stdio
 (`@mcp_transport("stdio")`), where the server runs as the local user. Over
 HTTP they don't exist: a server-side read or write of a caller-named path
 would be an arbitrary server-file read/write.
 
-**Upload / update** (`drive_upload`, `drive_update`):
+**Upload / update** (`drive_create_file`, `drive_update_file`):
 
 - `content_base64` → small inline upload, any transport (decoded by
   `gwsa.sdk.sources.decode_inline_upload`, raw-byte cap ~700KB).

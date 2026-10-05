@@ -40,7 +40,9 @@ def inline_payload_to_blocks(payload: InlinePayload) -> list[ContentBlock]:
     - ``EmbeddedResource`` carries the content: as **text**
       (``TextResourceContents``) when it is a text-like type that decodes
       as UTF-8 (YAML, Markdown, CSV, JSON, …), so any client can read it
-      directly; otherwise as **base64** (``BlobResourceContents``).
+      directly; otherwise as **base64** (``BlobResourceContents``). The
+      MIME type reported is the source's own (Drive's ``mimeType``); the
+      file name is only consulted to decide text vs base64.
 
     The synthetic URI uses a randomly-generated suffix so the resource
     is unique per tool call — clients that key off URI for caching
@@ -53,7 +55,7 @@ def inline_payload_to_blocks(payload: InlinePayload) -> list[ContentBlock]:
             {
                 "destination": "inline",
                 "name": payload.name,
-                "mime_type": text[1] if text else payload.mime_type,
+                "mime_type": payload.mime_type,
                 "size_bytes": payload.size_bytes,
                 "encoding": "text" if text else "base64",
             },
@@ -63,7 +65,7 @@ def inline_payload_to_blocks(payload: InlinePayload) -> list[ContentBlock]:
 
     uri = f"gwsa-inline://{uuid4()}/{payload.name}"
     if text:
-        contents = TextResourceContents(uri=uri, mimeType=text[1], text=text[0])
+        contents = TextResourceContents(uri=uri, mimeType=payload.mime_type, text=text[0])
     else:
         contents = BlobResourceContents(
             uri=uri,

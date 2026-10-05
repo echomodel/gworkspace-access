@@ -88,7 +88,7 @@ result.update(_get_profile_metadata())
 Implemented in v0.4.0:
 - ✅ `drive_list_folder` - List contents of a folder
 - ✅ `drive_create_folder` - Create a new folder
-- ✅ `drive_upload` - Upload a file
+- ✅ `drive_create_file` - Create (upload) a file
 - ✅ `drive_find_folder` - Find folder by path
 
 **Remaining (future):**

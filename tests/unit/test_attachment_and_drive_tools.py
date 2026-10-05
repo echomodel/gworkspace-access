@@ -367,9 +367,10 @@ def test_drive_download_text_file_comes_back_as_text():
         summary, embedded = blocks
         assert isinstance(embedded.resource, TextResourceContents)
         assert embedded.resource.text.startswith("retries: 3")
-        assert embedded.resource.mimeType == "application/yaml"
+        # Drive's own mimeType is reported as-is; the name only decided "text".
+        assert embedded.resource.mimeType == "application/octet-stream"
         info = json.loads(summary.text)
-        assert info["encoding"] == "text" and info["mime_type"] == "application/yaml"
+        assert info["encoding"] == "text" and info["mime_type"] == "application/octet-stream"
     finally:
         current_user.reset(tok)
 

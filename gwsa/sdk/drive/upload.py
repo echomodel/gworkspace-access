@@ -2,7 +2,6 @@
 
 import io
 import json
-import mimetypes
 import os
 from typing import Optional
 from urllib.parse import urlencode
@@ -11,6 +10,7 @@ import httpx
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 from ..auth import get_credentials
+from ..content_types import guess_content_type
 from .files import parent_change
 from .service import get_drive_service
 
@@ -146,6 +146,7 @@ def upload_file(
     name: Optional[str] = None,
     keep_revision_forever: bool = False,
     file_mime_type: Optional[str] = None,
+    content_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """Upload a file to Google Drive.
@@ -162,6 +163,8 @@ def upload_file(
             ``mimeType``). A Google type converts the content into a native
             Google file — e.g. ``application/vnd.google-apps.document`` for
             Markdown, HTML, or DOCX; ``...spreadsheet`` for CSV.
+        content_type: The upload's ``Content-Type``. Default: from the
+            file's extension.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -173,10 +176,8 @@ def upload_file(
     # Determine filename
     filename = name or os.path.basename(local_path)
 
-    # Detect mime type
-    mime_type, _ = mimetypes.guess_type(local_path)
-    if not mime_type:
-        mime_type = "application/octet-stream"
+    # The upload's Content-Type: explicit, else from the file name.
+    mime_type = content_type or guess_content_type(local_path) or "application/octet-stream"
 
     file_metadata = {"name": filename}
 
@@ -350,6 +351,7 @@ def update_file(
     new_name: Optional[str] = None,
     keep_revision_forever: bool = False,
     folder_id: Optional[str] = None,
+    content_type: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
     """Update an existing file's content and optionally its name and folder.
@@ -363,6 +365,8 @@ def update_file(
             Drive's auto-pruning. Atomic — no separate ``keep_revision``
             call needed.
         folder_id: Optional folder to move the file into.
+        content_type: The upload's ``Content-Type``. Default: from the
+            file's extension.
         account: Optional account selector — name or email. Omit to use
             the user's default account.
 
@@ -371,10 +375,8 @@ def update_file(
     """
     service = get_drive_service(account=account)
 
-    # Detect mime type
-    mime_type, _ = mimetypes.guess_type(local_path)
-    if not mime_type:
-        mime_type = "application/octet-stream"
+    # The upload's Content-Type: explicit, else from the file name.
+    mime_type = content_type or guess_content_type(local_path) or "application/octet-stream"
 
     file_metadata = {}
     if new_name:

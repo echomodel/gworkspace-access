@@ -87,8 +87,8 @@ module. mcp-app auto-discovers public async functions from each module:
 - **`gwsa.mcp.tools.docs`** (5): list_docs, create_doc, read_doc,
   find_in_doc, batch_update_doc
 - **`gwsa.mcp.tools.drive`** (19): drive_list_folder,
-  drive_create_folder, drive_upload, drive_upload_local (stdio only),
-  drive_update, drive_update_local (stdio only), drive_download,
+  drive_create_folder, drive_create_file, drive_create_file_local (stdio only),
+  drive_update_file, drive_update_file_local (stdio only), drive_download,
   drive_download_to_path (stdio only), drive_copy,
   drive_set_properties, drive_delete, drive_search, drive_get_metadata,
   drive_find_folder, drive_search_folders, drive_list_revisions,
@@ -140,7 +140,7 @@ agent running on a different machine. Pass one of:
   to the user's Google Drive. `folder_id` defaults to My Drive root;
   `name` defaults to the source filename. Returns
   `{destination: "drive", drive_file_id, drive_url, name, mime_type,
-  size_bytes, folder_id}`. Use `drive_update` with `folder_id` afterwards to organize
+  size_bytes, folder_id}`. Use `drive_update_file` with `folder_id` afterwards to organize
   into a project folder.
 - `{"kind": "inline", "max_size_bytes": <int>}` — return the bytes as
   an `EmbeddedResource` paired with a JSON summary `TextContent`.
@@ -155,10 +155,10 @@ TextContent` pair.
 
 ### Drive default location and trash semantics
 
-- **Default upload location** for `drive_upload` and the `drive`
+- **Default upload location** for `drive_create_file` and the `drive`
   destination on `download_email_attachment` is **My Drive root**. The
   agent doesn't need to look up or create a folder in advance — land
-  the file first, organize later via `drive_update` (`folder_id`).
+  the file first, organize later via `drive_update_file` (`folder_id`).
 - **`drive_delete` moves to Trash**, not hard-delete. The user can
   restore from Drive's Trash UI for ~30 days. This avoids irrecoverable
   destruction from agent error and matches Drive UI expectations.

@@ -17,7 +17,7 @@ to honor the caller's choice.
 
 from __future__ import annotations
 
-import mimetypes
+from .content_types import guess_content_type
 from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -78,7 +78,7 @@ class DriveDestination(BaseModel):
     the user already has tools to retrieve, share, or organize them.
 
     Default folder is My Drive root, so the simplest caller pattern is
-    ``DriveDestination()`` with no folder_id. Use ``drive_update`` with ``folder_id``
+    ``DriveDestination()`` with no folder_id. Use ``drive_update_file`` with ``folder_id``
     afterwards to organize the file into a project folder.
     """
 
@@ -129,7 +129,7 @@ class InlinePayload(BaseModel):
         """
         mime = self.mime_type
         if mime in ("", "application/octet-stream"):
-            guessed, _ = mimetypes.guess_type(self.name or "")
+            guessed = guess_content_type(self.name)
             mime = guessed or mime
         if not _is_text_mime(mime):
             return None

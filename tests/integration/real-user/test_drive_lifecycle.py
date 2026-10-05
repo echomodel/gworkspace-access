@@ -8,8 +8,8 @@ Covers:
 - ``drive.upload_bytes`` / ``drive.download_bytes`` — bytes round trip
 - ``drive.update_metadata`` — rename and move (``files.update``)
 - ``drive.delete_file`` — Trash semantics
-- ``drive_update`` — rename, move, and content in one call
-- ``drive_upload`` — conversion via ``mime_type``; the upload URL flow
+- ``drive_update_file`` — rename, move, and content in one call
+- ``drive_create_file`` — conversion via ``mime_type``; the upload URL flow
   (``upload_url=true`` + ``curl -T``), including conversion
 - ``drive_download`` — text as text, binary as base64, large → link
 """
@@ -26,7 +26,7 @@ import time
 import pytest
 from mcp.types import BlobResourceContents, EmbeddedResource, TextContent, TextResourceContents
 
-from gwsa.mcp.tools.drive import drive_delete, drive_download, drive_update, drive_upload
+from gwsa.mcp.tools.drive import drive_delete, drive_download, drive_update_file, drive_create_file
 from gwsa.sdk import docs, drive
 from gwsa.sdk.destinations import DEFAULT_INLINE_SIZE_CAP_BYTES
 
@@ -127,7 +127,7 @@ def test_delete_file_trashes_not_hard_deletes():
 
 @pytest.mark.integration
 def test_drive_update_renames_moves_and_replaces_content():
-    """``drive_update`` = ``files.update``: rename alone, move alone, then
+    """``drive_update_file`` = ``files.update``: rename alone, move alone, then
     all three at once — each verified against Drive."""
     uploaded = drive.upload_bytes(
         data=b"v1", name=_unique_name("mcp-update"), mime_type="text/plain"
@@ -135,14 +135,14 @@ def test_drive_update_renames_moves_and_replaces_content():
     file_id = uploaded["id"]
     folder_id = drive.create_folder(name=_unique_name("mcp-update-folder").replace(".bin", ""))["id"]
     try:
-        renamed = asyncio.run(drive_update(file_id=file_id, name="renamed.txt"))
+        renamed = asyncio.run(drive_update_file(file_id=file_id, name="renamed.txt"))
         assert "error" not in renamed, renamed
         assert drive.get_metadata(file_id)["name"] == "renamed.txt"
 
-        moved = asyncio.run(drive_update(file_id=file_id, folder_id=folder_id))
+        moved = asyncio.run(drive_update_file(file_id=file_id, folder_id=folder_id))
         assert moved["parents"] == [folder_id]
 
-        both = asyncio.run(drive_update(
+        both = asyncio.run(drive_update_file(
             file_id=file_id, name="v2.txt", folder_id="root",
             content_base64=base64.b64encode(b"v2").decode()))
         assert both["name"] == "v2.txt"
@@ -231,7 +231,7 @@ def test_drive_download_large_file_returns_drive_link():
 def test_drive_upload_converts_markdown_to_doc():
     """``mime_type`` = Google Doc converts Markdown into a formatted Doc."""
     md = "# Plan heading\n\nIntro paragraph.\n\n- first\n- second\n"
-    result = asyncio.run(drive_upload(
+    result = asyncio.run(drive_create_file(
         name=_unique_name("convert") + ".md",
         content_base64=base64.b64encode(md.encode()).decode(),
         mime_type=GOOGLE_DOC,
@@ -248,7 +248,7 @@ def test_drive_upload_converts_markdown_to_doc():
 
 @pytest.mark.integration
 def test_drive_upload_converts_csv_to_sheet():
-    result = asyncio.run(drive_upload(
+    result = asyncio.run(drive_create_file(
         name=_unique_name("convert") + ".csv",
         content_base64=base64.b64encode(b"a,b\n1,2\n").decode(),
         mime_type=GOOGLE_SHEET,
@@ -265,7 +265,7 @@ def test_upload_url_flow_with_curl_and_conversion(tmp_path):
     ``curl -T`` and Drive creates (and converts) the file."""
     src = tmp_path / "Notes.md"
     src.write_text("# Notes\n\nBody text.\n")
-    session = asyncio.run(drive_upload(
+    session = asyncio.run(drive_create_file(
         name=_unique_name("url") + ".md", upload_url=True, mime_type=GOOGLE_DOC,
     ))
     assert session["mode"] == "out_of_band", session
@@ -288,7 +288,7 @@ def test_update_upload_url_flow_with_curl_and_rename(tmp_path):
     src = tmp_path / "v2.txt"
     src.write_bytes(b"v2 via url")
     try:
-        session = asyncio.run(drive_update(file_id=file_id, upload_url=True, name="v2.txt"))
+        session = asyncio.run(drive_update_file(file_id=file_id, upload_url=True, name="v2.txt"))
         cmd = session["run"].replace("<your-file>", shlex.quote(str(src)))
         out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
         assert out.returncode == 0, out.stderr

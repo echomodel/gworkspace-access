@@ -68,7 +68,7 @@ async def create_doc(
     blocks), pass an HTML string in ``body_text`` and set
     ``mime_type="text/html"``. ``body_text`` here is plain text or HTML only:
     Markdown passed here shows its literal ``##`` / ``**`` characters.
-    **To turn Markdown into a formatted Doc,** use ``drive_upload`` with
+    **To turn Markdown into a formatted Doc,** use ``drive_create_file`` with
     ``name="<title>.md"``, the Markdown as ``content_base64``, and
     ``mime_type="application/vnd.google-apps.document"`` — Drive converts it.
 
