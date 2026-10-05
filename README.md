@@ -35,7 +35,7 @@ service (HTTP, JWT-authenticated).
 ## Install
 
 ```bash
-pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.30.0
+pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.32.0
 ```
 
 Installs three commands:
