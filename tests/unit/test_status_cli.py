@@ -7,7 +7,13 @@ from click.testing import CliRunner
 
 from mcp_app.context import current_user
 from gwsa.cli.__main__ import gwsa
-from gwsa.sdk.auth import get_auth_status, get_adc_status, get_gcp_status, run_service_smoke_tests
+from gwsa.sdk.auth import (
+    get_auth_status,
+    get_adc_status,
+    get_gcp_status,
+    get_mtls_status,
+    run_service_smoke_tests,
+)
 from gwsa import Profile, GoogleAccount
 
 
@@ -116,6 +122,7 @@ def test_gwsa_status_cli_text_output(mock_user_record):
         assert "Default Account: work (alice@example.com)" in result.output
         assert "Quota Project: my-quota-project" in result.output
         assert "Live OAuth Token Status: VALID" in result.output
+        assert "Client Certificate (mTLS): UNKNOWN" in result.output
         assert "OAuth Scopes (" in result.output
         assert "  ✓  openid" in result.output
         assert "  ✓  https://www.googleapis.com/auth/drive" in result.output
@@ -371,5 +378,51 @@ def test_gwsa_status_cli_with_all_flag():
         assert "=== ☁️ GCP Quota Project & API Status ===" in result.output
         assert "=== 🧪 Service Smoke Tests ===" in result.output
         mock_get_status.assert_called_once_with(account=None, run_smoke_tests=True, compare_adc=True, check_gcp=True)
+
+
+def test_get_mtls_status_enabled_via_gcloud():
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("gwsa.sdk.auth._run_with_timeout", return_value="true"):
+        mtls = get_mtls_status()
+        assert mtls["use_client_certificate"] is True
+        assert mtls["status"] == "ENABLED"
+        assert mtls["config_value"] == "true"
+
+
+def test_get_mtls_status_disabled_via_gcloud():
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("gwsa.sdk.auth._run_with_timeout", return_value="false"):
+        mtls = get_mtls_status()
+        assert mtls["use_client_certificate"] is False
+        assert mtls["status"] == "DISABLED"
+        assert mtls["config_value"] == "false"
+
+
+def test_get_mtls_status_env_override_true():
+    with patch.dict("os.environ", {"CLOUDSDK_CONTEXT_AWARE_USE_CLIENT_CERTIFICATE": "true"}), \
+         patch("gwsa.sdk.auth._run_with_timeout", return_value="false"):
+        mtls = get_mtls_status()
+        assert mtls["use_client_certificate"] is True
+        assert mtls["status"] == "ENABLED"
+        assert mtls["env_override"] == "true"
+
+
+def test_get_mtls_status_env_override_false():
+    with patch.dict("os.environ", {"CLOUDSDK_CONTEXT_AWARE_USE_CLIENT_CERTIFICATE": "false"}), \
+         patch("gwsa.sdk.auth._run_with_timeout", return_value="true"):
+        mtls = get_mtls_status()
+        assert mtls["use_client_certificate"] is False
+        assert mtls["status"] == "DISABLED"
+        assert mtls["env_override"] == "false"
+
+
+def test_get_mtls_status_timeout_or_error():
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("gwsa.sdk.auth._run_with_timeout", side_effect=Exception("Subprocess timeout")):
+        mtls = get_mtls_status()
+        assert mtls["use_client_certificate"] is False
+        assert mtls["config_value"] == "unknown"
+        assert mtls["status"] == "DISABLED"
+
 
 

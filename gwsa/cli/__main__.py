@@ -164,6 +164,8 @@ def status_cmd(run_test, compare_adc, check_gcp, all_flags, as_json, user_email,
     users_str = ", ".join(st.get("all_users", [])) or "(none)"
     accounts_str = ", ".join(st.get("all_accounts", [])) or "(none)"
 
+    mtls_status = st.get("mtls", {}).get("status", "UNKNOWN")
+
     output_blocks = [
         f"""=== 🔐 GWSA Workstation Auth Status ===
 
@@ -176,6 +178,7 @@ Store Profiles: {users_str}
 Profile Accounts: {accounts_str}
 
 Live OAuth Token Status: {st['token_status']}
+Client Certificate (mTLS): {mtls_status}
 {scopes_header}
 {scope_block}"""
     ]

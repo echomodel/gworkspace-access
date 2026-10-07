@@ -391,6 +391,7 @@ def get_auth_status(
             "all_accounts": [],
             "token_status": "NO USER",
             "granted_scopes": [],
+            "mtls": get_mtls_status(),
         }
         if run_smoke_tests:
             res["smoke_tests"] = {}
@@ -458,6 +459,7 @@ def get_auth_status(
         "all_accounts": all_accounts,
         "token_status": token_status,
         "granted_scopes": granted_scopes,
+        "mtls": get_mtls_status(),
     }
 
     if run_smoke_tests:
@@ -549,6 +551,39 @@ def get_gcp_status(account: Optional[str] = None) -> dict:
         "quota_project_status": quota_status,
         "api_statuses": api_statuses,
         "errors": errors,
+    }
+
+
+def get_mtls_status() -> dict:
+    """Inspect Context-Aware Access (mTLS) client certificate configuration safely."""
+    import subprocess
+    env_cert = os.environ.get("CLOUDSDK_CONTEXT_AWARE_USE_CLIENT_CERTIFICATE")
+
+    def _query_gcloud():
+        res = subprocess.run(
+            ["gcloud", "config", "get", "context_aware/use_client_certificate"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        return res.stdout.strip().lower()
+
+    try:
+        config_val = _run_with_timeout(_query_gcloud, timeout_seconds=2.0)
+    except Exception:
+        config_val = "unknown"
+
+    if env_cert is not None and env_cert.strip() != "":
+        is_enabled = env_cert.strip().lower() == "true"
+    else:
+        is_enabled = (config_val == "true")
+
+    return {
+        "use_client_certificate": is_enabled,
+        "status": "ENABLED" if is_enabled else "DISABLED",
+        "config_value": config_val,
+        "env_override": env_cert,
     }
 
 
