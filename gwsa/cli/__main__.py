@@ -63,12 +63,15 @@ def _bootstrap_user(user_email: str | None) -> None:
                 "No users in the local store. Register one with: "
                 "gwsa-admin accounts add <name> --email <you@example.com> --token=..."
             )
-        if len(users) > 1:
+        if len(users) == 1:
+            user_email = users[0]
+        elif "local" in users:
+            user_email = "local"
+        else:
             raise click.ClickException(
                 f"Multiple users in store ({', '.join(users)}). "
                 f"Disambiguate with: gwsa --user <email> ..."
             )
-        user_email = users[0]
 
     user_record = asyncio.run(adapter.get_full(user_email))
     if user_record is None:
@@ -97,6 +100,157 @@ def gwsa(user_email, account):
     _bootstrap_user(user_email)
     from gwsa.sdk.auth import set_cli_account
     set_cli_account(account)
+
+
+@gwsa.command("status")
+@click.option("--test", "--smoke-test", "run_test", is_flag=True,
+              help="Run non-mutating smoke tests across Google Workspace services.")
+@click.option("--adc", "--compare-adc", "compare_adc", is_flag=True,
+              help="Inspect and compare local Application Default Credentials (ADC).")
+@click.option("--gcp", "--check-gcp", "check_gcp", is_flag=True,
+              help="Inspect GCP Quota Project configuration and enabled APIs.")
+@click.option("--all", "all_flags", is_flag=True,
+              help="Run all status diagnostic checks (--test --adc --gcp).")
+@click.option("--json", "as_json", is_flag=True, help="Output status as JSON.")
+@click.option("--user", "user_email", default=None, metavar="EMAIL",
+              help="Operate as this user.")
+@click.option("--account", "account", default=None, metavar="NAME_OR_EMAIL",
+              help="Google account to inspect.")
+def status_cmd(run_test, compare_adc, check_gcp, all_flags, as_json, user_email, account):
+    """Display active workstation auth state, profile configuration, and OAuth scopes."""
+    if all_flags:
+        run_test = True
+        compare_adc = True
+        check_gcp = True
+
+    if user_email:
+        _bootstrap_user(user_email)
+    if account:
+        from gwsa.sdk.auth import set_cli_account
+        set_cli_account(account)
+
+    from gwsa.sdk.auth import get_auth_status, get_all_scopes
+
+    st = get_auth_status(account=account, run_smoke_tests=run_test, compare_adc=compare_adc, check_gcp=check_gcp)
+
+    if as_json:
+        click.echo(json.dumps(st, indent=2))
+        return
+
+    granted_scopes_set = set(st.get("granted_scopes", []))
+    expected_scopes = get_all_scopes(workspace=True)
+    expected_scopes_set = set(expected_scopes)
+
+    all_scopes = sorted(list(expected_scopes_set.union(granted_scopes_set)))
+
+    scope_lines = []
+    granted_count = 0
+    extra_count = 0
+
+    for s in all_scopes:
+        if s in granted_scopes_set and s in expected_scopes_set:
+            scope_lines.append(f"  ✓  {s}")
+            granted_count += 1
+        elif s in expected_scopes_set and s not in granted_scopes_set:
+            scope_lines.append(f"  ❌ {s} (missing)")
+        else:
+            scope_lines.append(f"  ➕ {s} (extra)")
+            extra_count += 1
+
+    extra_summary = f", {extra_count} extra" if extra_count else ""
+    scopes_header = f"OAuth Scopes ({granted_count}/{len(expected_scopes)} granted{extra_summary}):"
+    scope_block = "\n".join(scope_lines) if scope_lines else "  (none)"
+
+    users_str = ", ".join(st.get("all_users", [])) or "(none)"
+    accounts_str = ", ".join(st.get("all_accounts", [])) or "(none)"
+
+    output_blocks = [
+        f"""=== 🔐 GWSA Workstation Auth Status ===
+
+Store Mode: {st['store_mode']}
+Active User: {st['active_user']}
+Default Account: {st['default_account']}
+Quota Project: {st['quota_project']}
+
+Store Profiles: {users_str}
+Profile Accounts: {accounts_str}
+
+Live OAuth Token Status: {st['token_status']}
+{scopes_header}
+{scope_block}"""
+    ]
+
+    if compare_adc and "adc" in st:
+        adc = st["adc"]
+        gwsa_email = st.get("default_account", "").split("(")[-1].rstrip(")") if "(" in st.get("default_account", "") else ""
+        gwsa_quota = st.get("quota_project", "")
+
+        email_match = (adc.get("email") == gwsa_email) if gwsa_email and adc.get("email") != "(none)" else False
+        quota_match = (adc.get("quota_project") == gwsa_quota) if gwsa_quota and adc.get("quota_project") != "(none)" else False
+
+        if email_match and quota_match:
+            match_status = f"✅ MATCH (Account: {adc['email']}, Quota: {adc['quota_project']})"
+        elif email_match:
+            match_status = f"🔸 MISMATCH QUOTA (GWSA Quota: {gwsa_quota} vs ADC Quota: {adc['quota_project']})"
+        else:
+            match_status = f"⚠️ DIFFERENT (GWSA Account: {gwsa_email or '(none)'} vs ADC Account: {adc['email']})"
+
+        adc_scopes = adc.get("granted_scopes", [])
+        adc_scope_lines = "\n".join(f"    ✓  {s}" for s in adc_scopes) if adc_scopes else "    (none)"
+
+        output_blocks.append(f"""=== 🅰️ Application Default Credentials (ADC) Comparison ===
+
+  ADC Credentials File: {adc['adc_file']}
+  ADC Account Email:    {adc['email']}
+  ADC Quota Project:    {adc['quota_project']}
+  ADC Token Status:     {adc['status']}
+  ADC Client ID:        {adc['client_id']}
+  GWSA vs ADC Match:    {match_status}
+
+  ADC Granted Scopes ({len(adc_scopes)}):
+{adc_scope_lines}""")
+
+    if check_gcp and "gcp" in st:
+        gcp = st["gcp"]
+        q_proj = gcp.get("quota_project", "(none)")
+        q_status = gcp.get("quota_project_status", "(none)")
+        api_map = gcp.get("api_statuses", {})
+        api_lines = "\n".join(f"    • {name:<17} {status}" for name, status in api_map.items()) if api_map else "    (none)"
+
+        output_blocks.append(f"""=== ☁️ GCP Quota Project & API Status ===
+
+  Quota Project ID:     {q_proj}
+  Quota Project Access: {q_status}
+
+  Required Workspace APIs:
+{api_lines}""")
+
+    if run_test and "smoke_tests" in st:
+        header_row = f"  {'Service':<15} {'Status':<14} {'Latency':<10} {'CLI Command Probe'}"
+        divider_row = f"  {'-'*14:<15} {'-'*13:<14} {'-'*9:<10} {'-'*45}"
+        
+        table_lines = [header_row, divider_row]
+        for svc, test_info in st["smoke_tests"].items():
+            status_str = test_info["status"]
+            lat = test_info.get("latency_ms")
+            lat_str = f"{lat}ms" if lat is not None else "-"
+            probe_str = test_info["probe"]
+            table_lines.append(f"  {svc:<15} {status_str:<14} {lat_str:<10} {probe_str}")
+
+        smoke_table = "\n".join(table_lines)
+        output_blocks.append(f"""=== 🧪 Service Smoke Tests ===
+{smoke_table}""")
+
+        errors = st.get("smoke_test_errors", [])
+        if errors:
+            err_lines = "\n\n".join(
+                f"  • [{err['service']}] {err['step']} (after {err.get('latency_ms', 0)}ms)\n    Error: {err['error']}"
+                for err in errors
+            )
+            output_blocks.append(f"""=== ⚠️ Smoke Test Error Details ===
+{err_lines}""")
+
+    click.echo("\n\n".join(output_blocks))
 
 
 @click.group()

@@ -42,7 +42,7 @@ Installs three commands:
 
 | Command       | What it does |
 |---------------|--------------|
-| `gwsa`        | Google Workspace domain operations (mail, drive, docs, sheets, chat). |
+| `gwsa`        | Google Workspace domain operations (mail, drive, docs, sheets, chat, calendar, status). |
 | `gwsa-mcp`    | MCP server for AI assistant integration. |
 | `gwsa-admin`  | Setup, credentials, user/account management. |
 
@@ -91,16 +91,7 @@ gcloud's well-known OAuth client. Skip step 3 below and jump to the
 `acquire-token`, you hand the existing blob directly to
 `accounts add`.
 
-### 2. Tell `gwsa-admin` where to look on local disk
-
-```bash
-gwsa-admin connect local
-```
-
-This writes a one-line setup file so subsequent admin commands know to
-read and write the local user store (not a remote URL).
-
-### 3. Acquire a token and register an account
+### 2. Acquire a token and register an account
 
 ```bash
 gwsa-admin acquire-token --client-secrets /path/to/client_secrets.json |
@@ -109,15 +100,26 @@ gwsa-admin acquire-token --client-secrets /path/to/client_secrets.json |
 
 `acquire-token` opens a browser, runs the OAuth consent flow, and writes
 the resulting token JSON to stdout. `accounts add` reads it from stdin
-and stores it. On a fresh install the user record is auto-created from
-`--email` and the new account becomes the default — no separate "users
-add" ceremony.
+and stores it on the local filesystem user store under user key `local`
+(matching `gwsa-mcp stdio --user local`) as the default account. Re-running
+`accounts add <name>` updates the existing account in place without disturbing
+your default account or other registered accounts.
 
-### 4. Confirm it worked
+### 3. Confirm it worked
 
 ```bash
-gwsa-admin accounts list
-gwsa mail search "newer_than:1d"
+gwsa status
+```
+
+This displays your active workstation auth state, default profile account, quota project, live OAuth token validity, and granted OAuth scopes.
+
+To run diagnostic checks (read-only service smoke tests, ADC comparison, or GCP project enablement):
+
+```bash
+gwsa status --test   # Timed read-only smoke tests across Gmail, Drive, Docs, Sheets, Calendar, Chat
+gwsa status --adc    # Compare local Application Default Credentials (ADC) against GWSA profile
+gwsa status --gcp    # Verify GCP Quota Project enablement & Service Usage API access
+gwsa status --all    # Run all diagnostic checks at once
 ```
 
 That's it. Everything below is optional — adding more accounts,
@@ -166,6 +168,7 @@ gwsa-admin accounts use work    # now 'work' is implicit
 Inspect, remove, or override:
 
 ```bash
+gwsa status                     # inspect active auth state & live OAuth token status
 gwsa-admin accounts list        # see all accounts, marked with (default)
 gwsa-admin accounts get work    # detail one
 gwsa-admin accounts remove personal

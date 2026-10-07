@@ -75,18 +75,25 @@ def accounts_group():
     "user_arg",
     default=None,
     help=(
-        "Target user email. If omitted and the store is empty, the user record "
-        "is auto-created using --email. If omitted and exactly one user exists, "
-        "that user is used. Required when multiple users exist."
+        "Target user key. On local stores, defaults to 'local' (auto-created "
+        "when missing). Required on multi-user remote stores when multiple "
+        "users exist."
     ),
 )
-def accounts_add(name, email, token_spec, quota_project, user_arg):
-    """Add a Google account to a user's profile.
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help="Accepted for compatibility (accounts add updates existing entries in place by default).",
+)
+def accounts_add(name, email, token_spec, quota_project, user_arg, overwrite):
+    """Add or update a Google account on a user's profile (idempotent upsert).
 
-    When the store has no users yet, this command auto-creates the user
-    record with the account's --email. This keeps the single-user local
-    install one step: there is no separate 'create the user first'
-    ceremony for the common case.
+    On a fresh local workstation install, this command automatically defaults
+    to the local user store, auto-creates the 'local' user record, registers
+    the account, and sets it as the default account in a single step. Re-running
+    with the same account name updates its token, email, and quota project in
+    place without disturbing default_account or other configured accounts.
     """
     token = load_token_spec(token_spec)
 
@@ -110,18 +117,21 @@ def accounts_add(name, email, token_spec, quota_project, user_arg):
         ))
 
     profile = _load_profile(user_email)
-    if any(a.name == name for a in profile.accounts):
-        raise click.ClickException(
-            f"Account '{name}' already exists for {user_email}. "
-            f"Remove it first with 'gwsa-admin accounts remove {name}' or use a different name."
-        )
-
-    profile.accounts.append(GoogleAccount(
+    new_account = GoogleAccount(
         name=name,
         email=email,
         quota_project=effective_quota,
         token=token,
-    ))
+    )
+
+    updated_in_place = False
+    for idx, existing in enumerate(profile.accounts):
+        if existing.name == name:
+            profile.accounts[idx] = new_account
+            updated_in_place = True
+            break
+    if not updated_in_place:
+        profile.accounts.append(new_account)
 
     if profile.default_account is None:
         profile.default_account = name
@@ -131,7 +141,9 @@ def accounts_add(name, email, token_spec, quota_project, user_arg):
 
     _save_profile(user_email, profile)
 
-    click.echo(f"Added account '{name}' ({email}) to user {user_email}")
+    verb = "Updated" if updated_in_place else "Added"
+    prep = "for" if updated_in_place else "to"
+    click.echo(f"{verb} account '{name}' ({email}) {prep} user {user_email}")
     if is_new_user:
         click.echo(f"  (auto-created user record for {user_email})")
     if default_changed:

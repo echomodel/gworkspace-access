@@ -46,6 +46,20 @@ functions, no decorators — name becomes tool name, docstring becomes
 schema description, type hints drive parameter schemas. mcp-app
 discovers them automatically.
 
+### Workstation status & diagnostic probes (`gwsa status`)
+
+`gwsa status` provides a single top-level command for verifying workstation authentication state, profile configurations, and live Google Workspace service connectivity.
+
+Design principles:
+
+1. **Superset Scope Auditing:** The OAuth scope display compares the expected GWSA scope list against granted scopes returned by Google's `tokeninfo` endpoint, using distinct status indicators:
+   - `✓` Granted expected scope
+   - `❌` Missing expected scope
+   - `➕` Extra granted scope (e.g. `cloud-platform`)
+2. **Legitimate CLI Command Probes:** Service smoke tests (`gwsa status --test`) run non-mutating read-only probes (e.g., `gwsa mail search "label:INBOX" --max-results 1`, `gwsa drive search "trashed = false"`, `gwsa chat spaces list --limit 1`). Probes must be 1:1 legitimate equivalents of user-facing `gwsa` CLI commands.
+3. **Graceful Fault Tolerance:** Probes run inside isolated `try...except` blocks per service. If a service probe fails, `gwsa status` continues execution, renders the full status tables, and appends a `=== ⚠️ Smoke Test Error Details ===` section detailing the exact command probe and error output.
+4. **ADC Side-by-Side Comparison (`--adc`):** Compares Application Default Credentials (`~/.config/gcloud/application_default_credentials.json`) against the active GWSA account identity and quota project.
+
 ### Drive tools follow the Drive API
 
 Tool names say which API call runs: `drive_create_file` / `drive_create_folder`

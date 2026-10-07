@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
 import click
 
-from mcp_app.cli import admin_store
+from mcp_app.cli import _load_setup, admin_store
 
 
 APP_NAME = "gwsa"
+DEFAULT_LOCAL_USER = "local"
 
 # The OAuth client baked into `gcloud auth application-default login`.
 # A token carrying this client_id was issued by gcloud's well-known client
@@ -49,6 +51,28 @@ def is_gcloud_issued_token(token: dict) -> bool:
     return token.get("client_id") == GCLOUD_WELL_KNOWN_CLIENT_ID
 
 
+def is_local_store() -> bool:
+    """True when admin operations target the local filesystem user store.
+
+    Defaults to ``True`` on fresh workstation installs where no remote server
+    URL or ``setup.json`` has been configured yet, avoiding a separate
+    ``gwsa-admin connect local`` ceremony for single-user stdio setups.
+    """
+    cfg = _load_setup(APP_NAME)
+    if not cfg:
+        return not bool(os.environ.get("MCP_APP_URL"))
+    return cfg.get("mode") == "local"
+
+
+def resolve_store():
+    """Open the configured user store, defaulting to local filesystem when unconfigured."""
+    if is_local_store():
+        from mcp_app.bridge import DataStoreAuthAdapter
+        from mcp_app.data_store import FileSystemUserDataStore
+        return DataStoreAuthAdapter(FileSystemUserDataStore(app_name=APP_NAME))
+    return admin_store(APP_NAME)
+
+
 def store_call(work):
     """Run ``await work(store)`` against the configured admin store.
 
@@ -57,7 +81,7 @@ def store_call(work):
     ``store_call(lambda s: s.get(email))``.
     """
     async def _go():
-        store = admin_store(APP_NAME)
+        store = resolve_store()
         try:
             return await work(store)
         finally:
@@ -105,18 +129,23 @@ def load_token_spec(spec: str) -> dict:
     return data
 
 
+def _active_user_emails() -> list[str]:
+    users = store_call(lambda s: s.list())
+    return [u.email for u in users if not getattr(u, "revoke_after", None)]
+
+
 def resolve_user_for_read(user_arg: Optional[str]) -> str:
     """Resolve which user to operate on for read/mutate commands.
 
-    Rules from CLOUD-MULTI-USER.md §6.6:
+    Rules from CLOUD-MULTI-USER.md §6.6 with local single-operator ergonomics:
 
     - ``--user`` given: must exist on the store.
-    - ``--user`` omitted, 0 users: actionable error.
-    - ``--user`` omitted, 1 user: use that user.
-    - ``--user`` omitted, N users: actionable error (specify ``--user``).
+    - ``--user`` omitted, 0 active users: actionable error.
+    - ``--user`` omitted, 1 active user: use that user.
+    - ``--user`` omitted, N active users on local store with ``local`` present: use ``local``.
+    - ``--user`` omitted, N active users otherwise: actionable error (specify ``--user``).
     """
-    users = store_call(lambda s: s.list())
-    emails = [u.email for u in users]
+    emails = _active_user_emails()
 
     if user_arg:
         if user_arg in emails:
@@ -133,6 +162,8 @@ def resolve_user_for_read(user_arg: Optional[str]) -> str:
         )
     if len(emails) == 1:
         return emails[0]
+    if is_local_store() and DEFAULT_LOCAL_USER in emails:
+        return DEFAULT_LOCAL_USER
     raise click.ClickException(
         f"Multiple users registered ({', '.join(emails)}); "
         f"specify --user."
@@ -144,29 +175,38 @@ def resolve_user_for_add(user_arg: Optional[str], fallback_email: str) -> tuple[
 
     Returns ``(email, is_new_user)``.
 
-    - ``--user`` given: that user must already exist (operator opted into
-      an explicit identity; if it's missing, they likely typoed — fail
-      loudly rather than silently create a different user).
-    - ``--user`` omitted, 0 users: auto-create with ``email=fallback_email``.
-    - ``--user`` omitted, 1 user: use that user.
-    - ``--user`` omitted, N users: actionable error.
+    - ``--user`` given: on local stores, ``--user local`` auto-creates ``local``
+      when missing; other explicit user names must already exist.
+    - ``--user`` omitted, 0 active users: auto-create ``local`` on local stores
+      (matching ``gwsa-mcp stdio --user local`` and ``migrate``), or
+      ``fallback_email`` on remote stores.
+    - ``--user`` omitted, 1 active user: use that user.
+    - ``--user`` omitted, N active users on local store with ``local`` present:
+      use ``local``.
+    - ``--user`` omitted, N active users otherwise: actionable error.
     """
-    users = store_call(lambda s: s.list())
-    emails = [u.email for u in users]
+    emails = _active_user_emails()
+    local_target = is_local_store()
 
     if user_arg:
         if user_arg in emails:
             return user_arg, False
+        if local_target and user_arg == DEFAULT_LOCAL_USER:
+            return DEFAULT_LOCAL_USER, True
         raise click.ClickException(
             f"User not found: {user_arg}. "
             f"Register it first with 'gwsa-admin users add {user_arg}', "
-            f"or omit --user to auto-create a user from this account's email."
+            f"or omit --user to auto-create a user record."
         )
     if not emails:
-        return fallback_email, True
+        default_user = DEFAULT_LOCAL_USER if local_target else fallback_email
+        return default_user, True
     if len(emails) == 1:
         return emails[0], False
+    if local_target and DEFAULT_LOCAL_USER in emails:
+        return DEFAULT_LOCAL_USER, False
     raise click.ClickException(
         f"Multiple users registered ({', '.join(emails)}); "
         f"specify --user."
     )
+

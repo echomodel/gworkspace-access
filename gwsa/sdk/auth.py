@@ -5,6 +5,7 @@ the active profile configuration.
 """
 
 import os
+import time
 import logging
 from contextvars import ContextVar
 from typing import Tuple, Optional, Any
@@ -229,7 +230,9 @@ def get_google_account_creds(account: Optional[str] = None):
 
     from gwsa import Profile
 
-    user = current_user.get()  # LookupError if not set
+    user = current_user.get()  # LookupError if not set or None
+    if user is None:
+        raise LookupError("No active mcp-app user in request context.")
     profile = user.profile
 
     if isinstance(profile, dict):
@@ -344,14 +347,386 @@ def get_token_info(creds) -> dict:
     with urllib.request.urlopen(url) as response:
         if response.status == 200:
             data = json.loads(response.read().decode())
+            raw_scope = data.get("scope", "")
+            scopes = [s for s in raw_scope.split(" ") if s]
             return {
-                "scopes": data.get("scope", "").split(" "),
+                "scopes": scopes,
                 "email": data.get("email"),
             }
         else:
             raise ConnectionError(
                 f"Tokeninfo endpoint failed with status {response.status}"
             )
+
+
+def get_auth_status(
+    account: Optional[str] = None,
+    run_smoke_tests: bool = False,
+    compare_adc: bool = False,
+    check_gcp: bool = False,
+) -> dict:
+    """Collect workstation authentication state, profile configuration, and OAuth token status.
+
+    Args:
+        account: Optional account handle or email selector.
+        run_smoke_tests: If True, execute non-mutating read-only smoke tests across services.
+        compare_adc: If True, inspect local Application Default Credentials (ADC).
+        check_gcp: If True, inspect GCP quota project and Service Usage API status.
+
+    Returns:
+        Dict containing auth status metadata, all profiles/accounts, and optionally
+        smoke_tests, adc, & gcp info.
+    """
+    from mcp_app.context import current_user
+    from gwsa.admin._helpers import is_local_store, store_call
+
+    user = current_user.get()
+    if user is None:
+        res = {
+            "store_mode": "local (~/.local/share/gwsa/users/)" if is_local_store() else "remote",
+            "active_user": "(none)",
+            "default_account": "(none)",
+            "quota_project": "(none)",
+            "all_users": [],
+            "all_accounts": [],
+            "token_status": "NO USER",
+            "granted_scopes": [],
+        }
+        if run_smoke_tests:
+            res["smoke_tests"] = {}
+            res["smoke_test_errors"] = []
+        if compare_adc:
+            res["adc"] = get_adc_status()
+        if check_gcp:
+            res["gcp"] = get_gcp_status(account=account)
+        return res
+
+    store_mode = "local (~/.local/share/gwsa/users/)" if is_local_store() else "remote"
+    active_user = user.email
+
+    try:
+        users = store_call(lambda s: s.list())
+        all_users = [
+            f"{u.email}{' [active]' if u.email == active_user else ''}"
+            for u in users
+            if not getattr(u, "revoke_after", None)
+        ]
+    except Exception:
+        all_users = [f"{active_user} [active]"] if active_user != "(none)" else []
+
+    all_accounts = []
+    if user and getattr(user, "profile", None) and getattr(user.profile, "accounts", None):
+        for a in user.profile.accounts:
+            is_def = (a.name == user.profile.default_account)
+            all_accounts.append(f"{a.name} ({a.email}){' [default]' if is_def else ''}")
+
+    try:
+        creds, chosen_account = get_google_account_creds(account=account)
+        account_name = chosen_account.name
+        account_email = chosen_account.email
+        quota_project = chosen_account.quota_project or "(none)"
+        default_account_str = f"{account_name} ({account_email})"
+
+        try:
+            if not creds.valid and hasattr(creds, 'refresh_token') and creds.refresh_token:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+
+            token_info = get_token_info(creds)
+            token_status = "VALID"
+            granted_scopes = token_info.get("scopes", [])
+        except Exception as exc:
+            token_status = f"INVALID ({exc})"
+            granted_scopes = []
+    except NoAccountsConfiguredError:
+        default_account_str = "(none)"
+        quota_project = "(none)"
+        token_status = "NO TOKEN"
+        granted_scopes = []
+    except Exception as exc:
+        default_account_str = "(none)"
+        quota_project = "(none)"
+        token_status = f"INVALID ({exc})"
+        granted_scopes = []
+
+    res = {
+        "store_mode": store_mode,
+        "active_user": active_user,
+        "default_account": default_account_str,
+        "quota_project": quota_project,
+        "all_users": all_users,
+        "all_accounts": all_accounts,
+        "token_status": token_status,
+        "granted_scopes": granted_scopes,
+    }
+
+    if run_smoke_tests:
+        smoke_tests, smoke_test_errors = run_service_smoke_tests(granted_scopes)
+        res["smoke_tests"] = smoke_tests
+        res["smoke_test_errors"] = smoke_test_errors
+
+    if compare_adc:
+        res["adc"] = get_adc_status()
+
+    if check_gcp:
+        res["gcp"] = get_gcp_status(account=account)
+
+    return res
+
+
+def get_gcp_status(account: Optional[str] = None) -> dict:
+    """Inspect GCP Quota Project configuration and optional Service Usage enablement.
+
+    Returns:
+        Dict containing quota_project, quota_project_status, api_statuses, errors.
+    """
+    from gwsa.admin._helpers import is_gcloud_issued_token
+
+    try:
+        creds, chosen = get_google_account_creds(account=account)
+        quota_project = chosen.quota_project or "(none)"
+        is_gcloud = is_gcloud_issued_token(chosen.token or {})
+    except Exception as exc:
+        return {
+            "quota_project": "(none)",
+            "quota_project_status": f"NO CREDENTIALS ({exc})",
+            "api_statuses": {},
+            "errors": [],
+        }
+
+    if quota_project == "(none)":
+        status_msg = "⚠️ MISSING (Quota project required for gcloud billing)" if is_gcloud else "(none)"
+        return {
+            "quota_project": "(none)",
+            "quota_project_status": status_msg,
+            "api_statuses": {},
+            "errors": [],
+        }
+
+    required_apis = {
+        "Gmail API": "gmail.googleapis.com",
+        "Drive API": "drive.googleapis.com",
+        "Docs API": "docs.googleapis.com",
+        "Sheets API": "sheets.googleapis.com",
+        "Calendar API": "calendar-json.googleapis.com",
+        "Chat API": "chat.googleapis.com",
+    }
+
+    api_statuses = {}
+    errors = []
+
+    def _probe_serviceusage():
+        from googleapiclient.discovery import build
+        service = build("serviceusage", "v1", credentials=creds)
+        resp = service.services().list(
+            parent=f"projects/{quota_project}",
+            filter="state:ENABLED",
+            pageSize=200,
+        ).execute()
+
+        enabled_services = {
+            item.get("config", {}).get("name"): item.get("state")
+            for item in resp.get("services", [])
+        }
+
+        for api_name, api_id in required_apis.items():
+            if enabled_services.get(api_id) == "ENABLED":
+                api_statuses[api_name] = "✅ ENABLED"
+            else:
+                api_statuses[api_name] = f"❌ DISABLED ({api_id})"
+
+        return f"✅ AUTHORIZED (quota project: {quota_project})"
+
+    try:
+        quota_status = _run_with_timeout(_probe_serviceusage, timeout_seconds=PROBE_TIMEOUT_SECONDS)
+    except Exception as exc:
+        quota_status = f"⏭️ SKIPPED ({exc})"
+        for api_name in required_apis:
+            api_statuses[api_name] = "⏭️ UNKNOWN (serviceusage API unavailable)"
+
+    return {
+        "quota_project": quota_project,
+        "quota_project_status": quota_status,
+        "api_statuses": api_statuses,
+        "errors": errors,
+    }
+
+
+def get_adc_status() -> dict:
+    """Inspect local Application Default Credentials (ADC) state and live tokeninfo.
+
+    Returns:
+        Dict containing:
+            - adc_file: str
+            - status: str
+            - email: str
+            - quota_project: str
+            - client_id: str
+            - granted_scopes: list[str]
+    """
+    import json
+    from pathlib import Path
+
+    adc_path_str = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or os.path.expanduser(
+        "~/.config/gcloud/application_default_credentials.json"
+    )
+    adc_path = Path(adc_path_str)
+
+    if not adc_path.exists():
+        return {
+            "adc_file": adc_path_str,
+            "status": "NOT FOUND",
+            "email": "(none)",
+            "quota_project": "(none)",
+            "client_id": "(none)",
+            "granted_scopes": [],
+        }
+
+    try:
+        data = json.loads(adc_path.read_text())
+        client_id = data.get("client_id", "(none)")
+        quota_project = data.get("quota_project_id", "(none)")
+
+        from google.oauth2.credentials import Credentials
+        creds = Credentials.from_authorized_user_info(data)
+
+        if not creds.valid and hasattr(creds, 'refresh_token') and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+
+        token_info = get_token_info(creds)
+        email = token_info.get("email") or "(unknown)"
+        granted_scopes = token_info.get("scopes", [])
+        status = "VALID"
+    except Exception as exc:
+        email = "(unknown)"
+        granted_scopes = []
+        status = f"INVALID ({exc})"
+
+    return {
+        "adc_file": adc_path_str,
+        "status": status,
+        "email": email,
+        "quota_project": quota_project,
+        "client_id": client_id,
+        "granted_scopes": granted_scopes,
+    }
+
+
+PROBE_TIMEOUT_SECONDS = 5.0
+
+
+def _run_with_timeout(fn, timeout_seconds: float = PROBE_TIMEOUT_SECONDS):
+    """Execute a function inside a worker thread with a hard timeout and ContextVar inheritance."""
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
+    ctx = contextvars.copy_context()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(ctx.run, fn)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            raise TimeoutError(f"Probe timed out after {timeout_seconds} seconds")
+
+
+def run_service_smoke_tests(granted_scopes: list) -> Tuple[dict, list]:
+    """Run safe, non-mutating read-only smoke tests across Google Workspace services.
+
+    Args:
+        granted_scopes: List of scope URLs granted to the current token.
+
+    Returns:
+        Tuple of (service_results_dict, error_details_list) where:
+            - service_results_dict maps service names (Gmail, Drive, Docs, Sheets, Calendar, Chat)
+              to dicts with keys "status" and "probe".
+            - error_details_list contains dicts with keys: service, step, error.
+    """
+    from gwsa.sdk import mail as sdk_mail
+    from gwsa.sdk import drive as sdk_drive
+    from gwsa.sdk import docs as sdk_docs
+    from gwsa.sdk import sheets as sdk_sheets
+    from gwsa.sdk import calendar as sdk_calendar
+    from gwsa.sdk import chat as sdk_chat
+
+    feature_status = get_feature_status(set(granted_scopes))
+
+    results = {}
+    errors = []
+
+    tests = [
+        (
+            "Gmail",
+            "mail",
+            'gwsa mail search "label:INBOX" --max-results 1',
+            lambda: sdk_mail.search_messages("label:INBOX", max_results=1),
+        ),
+        (
+            "Drive",
+            "drive",
+            'gwsa drive search "trashed = false" --max-results 1',
+            lambda: sdk_drive.search_drive("trashed = false", max_results=1),
+        ),
+        (
+            "Docs",
+            "docs",
+            "gwsa docs list --limit 1",
+            lambda: sdk_docs.list_documents(max_results=1),
+        ),
+        (
+            "Sheets",
+            "sheets",
+            "gwsa sheets list --limit 1",
+            lambda: sdk_sheets.list_spreadsheets(max_results=1),
+        ),
+        (
+            "Calendar",
+            "calendar",
+            "gwsa calendar list --limit 1",
+            lambda: sdk_calendar.list_calendars(),
+        ),
+        (
+            "Chat",
+            "chat_spaces",
+            "gwsa chat spaces list --limit 1",
+            lambda: sdk_chat.get_chat_service().spaces().list(pageSize=1).execute(),
+        ),
+    ]
+
+    for name, feature_key, step_desc, test_fn in tests:
+        if not feature_status.get(feature_key, False):
+            results[name] = {
+                "status": "⏭️ SKIPPED (missing scope)",
+                "latency_ms": None,
+                "probe": step_desc,
+            }
+            continue
+
+        start_time = time.perf_counter()
+        try:
+            _run_with_timeout(test_fn, timeout_seconds=PROBE_TIMEOUT_SECONDS)
+            duration_ms = round((time.perf_counter() - start_time) * 1000)
+            results[name] = {
+                "status": "✅ PASS",
+                "latency_ms": duration_ms,
+                "probe": step_desc,
+            }
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - start_time) * 1000)
+            results[name] = {
+                "status": "❌ FAIL",
+                "latency_ms": duration_ms,
+                "probe": step_desc,
+            }
+            errors.append({
+                "service": name,
+                "step": step_desc,
+                "latency_ms": duration_ms,
+                "error": str(exc),
+            })
+
+    return results, errors
 
 
 # Feature scope definitions
@@ -365,6 +740,7 @@ FEATURE_SCOPES = {
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar.events",
     },
+    "chat_spaces": {"https://www.googleapis.com/auth/chat.spaces.readonly"},
     "chat": {
         "https://www.googleapis.com/auth/chat.spaces.readonly",
         "https://www.googleapis.com/auth/chat.messages.readonly",
@@ -376,7 +752,9 @@ FEATURE_SCOPES = {
 IDENTITY_SCOPES = {
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    "openid"
+    "openid",
+    "email",
+    "profile",
 }
 
 

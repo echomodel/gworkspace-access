@@ -66,7 +66,26 @@ def _token_file(tmp_path: Path, filename: str = "token.json",
     return path
 
 
-def test_add_first_account_auto_creates_user(connected, tmp_path):
+def test_works_without_explicit_connect_local(runner, tmp_path):
+    """Fresh local installs default to local store without requiring 'connect local'."""
+    token_path = _token_file(tmp_path)
+
+    result = runner.invoke(app.admin_cli, [
+        "accounts", "add", "work",
+        "--email", "alice@example.com",
+        "--token", f"@{token_path}",
+    ])
+
+    assert result.exit_code == 0, result.stderr
+    assert "auto-created user record for local" in result.stdout
+    assert "set as default account" in result.stdout
+
+    list_accounts = runner.invoke(app.admin_cli, ["accounts", "list"])
+    assert list_accounts.exit_code == 0, list_accounts.stderr
+    assert "work (default) — alice@example.com" in list_accounts.stdout
+
+
+def test_add_first_account_auto_creates_local_user(connected, tmp_path):
     token_path = _token_file(tmp_path)
 
     result = connected.invoke(app.admin_cli, [
@@ -76,11 +95,25 @@ def test_add_first_account_auto_creates_user(connected, tmp_path):
     ])
 
     assert result.exit_code == 0, result.stderr
-    assert "auto-created user record for alice@example.com" in result.stdout
+    assert "auto-created user record for local" in result.stdout
     assert "set as default account" in result.stdout
 
     list_users = connected.invoke(app.admin_cli, ["users", "list"])
-    assert "alice@example.com" in list_users.stdout
+    assert "local" in list_users.stdout
+
+
+def test_add_with_explicit_local_user_auto_creates_when_missing(connected, tmp_path):
+    token_path = _token_file(tmp_path)
+
+    result = connected.invoke(app.admin_cli, [
+        "accounts", "add", "work",
+        "--user", "local",
+        "--email", "alice@example.com",
+        "--token", f"@{token_path}",
+    ])
+
+    assert result.exit_code == 0, result.stderr
+    assert "user local" in result.stdout
 
 
 def test_add_second_account_inherits_existing_user(connected, tmp_path):
@@ -252,7 +285,7 @@ def test_get_hides_token_by_default(connected, tmp_path):
     assert "test-refresh" in result.stdout
 
 
-def test_add_with_explicit_user_must_exist(connected, tmp_path):
+def test_add_with_explicit_non_local_user_must_exist(connected, tmp_path):
     token_path = _token_file(tmp_path)
 
     result = connected.invoke(app.admin_cli, [
@@ -273,17 +306,78 @@ def test_read_command_with_no_users_gives_actionable_error(connected):
     assert "gwsa-admin accounts add" in result.stderr
 
 
-def test_duplicate_account_name_rejected(connected, tmp_path):
-    token_path = _token_file(tmp_path)
+def test_re_adding_account_updates_in_place_and_preserves_default(connected, tmp_path):
+    t1 = _token_file(tmp_path, filename="t1.json", refresh_token="old-token", quota_project="old-proj")
+    t2 = _token_file(tmp_path, filename="t2.json", refresh_token="other-token")
+    connected.invoke(app.admin_cli, [
+        "accounts", "add", "work",
+        "--email", "alice@example.com",
+        "--quota-project", "old-proj",
+        "--token", f"@{t1}",
+    ])
     connected.invoke(app.admin_cli, [
         "accounts", "add", "personal",
-        "--email", "alice@example.com", "--token", f"@{token_path}",
+        "--email", "alice-personal@example.com",
+        "--token", f"@{t2}",
     ])
 
+    t1_refreshed = _token_file(tmp_path, filename="t1_new.json", refresh_token="new-token")
     result = connected.invoke(app.admin_cli, [
-        "accounts", "add", "personal",
-        "--email", "alice@example.com", "--token", f"@{token_path}",
+        "accounts", "add", "work",
+        "--email", "alice@example.com",
+        "--quota-project", "new-proj",
+        "--token", f"@{t1_refreshed}",
     ])
 
-    assert result.exit_code != 0
-    assert "already exists" in result.stderr
+    assert result.exit_code == 0, result.stderr
+    assert "Updated account 'work'" in result.stdout
+
+    list_result = connected.invoke(app.admin_cli, ["accounts", "list"])
+    assert "work (default) — alice@example.com quota=new-proj" in list_result.stdout
+    assert "personal — alice-personal@example.com" in list_result.stdout
+
+    get_result = connected.invoke(
+        app.admin_cli, ["accounts", "get", "work", "--show-token"]
+    )
+    assert "new-token" in get_result.stdout
+
+
+def test_local_store_prefers_local_when_extra_users_exist(connected, tmp_path):
+    """If extra user records exist alongside 'local', local commands prefer 'local'."""
+    connected.invoke(app.admin_cli, ["users", "add", "extra@example.com"])
+    connected.invoke(app.admin_cli, ["users", "add", "local"])
+
+    token_path = _token_file(tmp_path)
+    add_res = connected.invoke(app.admin_cli, [
+        "accounts", "add", "work",
+        "--email", "alice@example.com",
+        "--token", f"@{token_path}",
+    ])
+    assert add_res.exit_code == 0, add_res.stderr
+    assert "user local" in add_res.stdout
+
+    list_res = connected.invoke(app.admin_cli, ["accounts", "list"])
+    assert list_res.exit_code == 0, list_res.stderr
+    assert "Accounts for local:" in list_res.stdout
+
+
+def test_cli_bootstrap_user_prefers_local_when_extra_users_exist(connected, tmp_path):
+    """Domain CLI _bootstrap_user(None) prefers 'local' when extra users exist."""
+    from mcp_app.context import current_user
+    from gwsa.cli.__main__ import _bootstrap_user
+
+    connected.invoke(app.admin_cli, ["users", "add", "extra@example.com"])
+    token_path = _token_file(tmp_path)
+    connected.invoke(app.admin_cli, [
+        "accounts", "add", "work",
+        "--user", "local",
+        "--email", "alice@example.com",
+        "--token", f"@{token_path}",
+    ])
+
+    try:
+        _bootstrap_user(None)
+        assert current_user.get().email == "local"
+    finally:
+        current_user.set(None)
+
