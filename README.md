@@ -34,8 +34,10 @@ service (HTTP, JWT-authenticated).
 
 ## Install
 
+To install or upgrade to the latest version on `main`:
+
 ```bash
-pipx install git+https://github.com/echomodel/gworkspace-access.git@v0.32.0
+pipx install git+https://github.com/echomodel/gworkspace-access.git --force --pip-args="--index-url https://pypi.org/simple"
 ```
 
 Installs three commands:
