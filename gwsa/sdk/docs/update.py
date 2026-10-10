@@ -1,15 +1,16 @@
 """Google Docs write operation: guarded ``documents.batchUpdate``.
 
 ``batchUpdate`` is the Docs API's only content-write method, and this is
-gwsa's only Docs write path. Requests are passed to Google unchanged; gwsa
-adds checks around them:
+gwsa's only Docs write path. Each request's Docs API fields are passed to
+Google unchanged; gwsa adds checks around them:
 
 1. **Revision lock** — the caller passes the revision id of the read its
    positions came from. If the document has changed since, nothing is
    written. The batch is then checked and written against one snapshot,
    sent with ``writeControl.requiredRevisionId`` so Google rejects it if the
    document changed in between.
-2. **Expectations** — every request that addresses an index states what is
+2. **Expectations** — every request that addresses an index carries an
+   ``expect`` key (checked, then removed before sending) stating what is
    there: ``{"text": ...}`` for a range, or ``{"element": "paragraph" |
    "table"}`` when the range is exactly one whole element; ``{"before":
    ...}`` / ``{"after": ...}`` for a point. If any expectation does not
@@ -56,10 +57,37 @@ REVISION_REQUIRED = (
 )
 
 
+def split_expectations(items: list) -> tuple[list, list]:
+    """Separate each item's ``expect`` from its Docs API request.
+
+    Returns ``(requests, expectations)``: the requests exactly as Google
+    receives them (``expect`` removed, nothing else touched) and one
+    expectation per request (``None`` where the item has none).
+
+    Raises:
+        ValueError: ``items`` is not a non-empty list of objects, or an item
+            does not hold exactly one request type besides ``expect``.
+    """
+    if not isinstance(items, list) or not items:
+        raise ValueError("requests must be a non-empty list of request objects.")
+    requests, expectations = [], []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("Each request must be an object with exactly one request type.")
+        request = {k: v for k, v in item.items() if k != "expect"}
+        if len(request) != 1:
+            raise ValueError(
+                "Each request must be an object with exactly one request type "
+                "(plus an optional 'expect')."
+            )
+        requests.append(request)
+        expectations.append(item.get("expect"))
+    return requests, expectations
+
+
 def batch_update(
     doc_id: str,
     requests: list,
-    expectations: Optional[list] = None,
     required_revision_id: Optional[str] = None,
     account: Optional[str] = None,
     dry_run: bool = False,
@@ -68,9 +96,9 @@ def batch_update(
 
     Args:
         doc_id: The Google Doc ID.
-        requests: Docs API request objects, sent to Google unchanged.
-        expectations: One entry per request (``None`` for requests that
-            address no index). See module docstring.
+        requests: Docs API request objects, each optionally carrying an
+            ``expect`` key (see :mod:`gwsa.sdk.docs.expect`). ``expect`` is
+            checked and removed; every other key is sent to Google unchanged.
         required_revision_id: Required — the revision the caller's
             positions came from. Refused if the document has changed since.
         account: Optional account selector — name or email.
@@ -92,10 +120,7 @@ def batch_update(
         ExpectationError: An expectation failed or is missing.
     """
     validate_doc_id(doc_id)
-    if not isinstance(requests, list) or not requests:
-        raise ValueError("requests must be a non-empty list of request objects.")
-    if not all(isinstance(r, dict) and len(r) == 1 for r in requests):
-        raise ValueError("Each request must be an object with exactly one request type.")
+    requests, expectations = split_expectations(requests)
     if not required_revision_id:
         raise ValueError(REVISION_REQUIRED)
 

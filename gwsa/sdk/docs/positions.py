@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Optional
 
+from .expect import ELEMENT_KINDS, EXPECTATION_KEYS
+
 #: Placeholder for the second UTF-16 code unit of a supplementary
 #: character (e.g. most emoji). Such characters occupy two indices.
 CONTINUATION = "\x00"
@@ -764,12 +766,6 @@ def _check_one(failures, n, name, target, where, seg, sim, exp) -> bool:
             ok = False
     return ok
 
-
-#: Keys an expectation may use.
-EXPECTATION_KEYS = frozenset({"text", "element", "before", "after", "unchecked"})
-
-#: Values accepted by the ``element`` expectation.
-ELEMENT_KINDS = ("paragraph", "table")
 
 
 def _check_element(sim: "_Sim", start: int, end: int, kind: Any) -> str:

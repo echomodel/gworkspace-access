@@ -208,7 +208,7 @@ safety model has three layers, each for one kind of mistake:
   (`read_doc` / `find_in_doc` return it, and so does every write). A stale
   id is refused with the current id.
 - **Expectations — "my position is wrong."** Every index-based request
-  states what is there: the exact text of a range, or that the range is
+  carries an `expect` stating what is there: the exact text of a range, or that the range is
   exactly one whole paragraph or table (both ends checked against the
   element's boundaries); the text just before/after a point.
 - **`dry_run` — "right place, wrong edit."** Runs every check and returns
@@ -219,7 +219,10 @@ Rules to preserve:
 1. **One write path, native requests only.** Do not add convenience write
    tools (insert, append, replace) alongside `batch_update_doc`, and do not
    add request types of gwsa's own to its `requests` list. Every request is
-   a Docs API request sent to Google unchanged. Express common edits as
+   a Docs API request whose fields are sent to Google unchanged; gwsa's only
+   addition is the `expect` key beside the request type, which it checks
+   and removes before sending (`gwsa.sdk.docs.expect` defines its shape,
+   and the tool publishes it as the parameter schema). Express common edits as
    recipes in the tool description (e.g. a styled append is two native
    calls: append, then style the new paragraph using the range and
    revision id the first call returned).

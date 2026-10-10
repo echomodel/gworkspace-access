@@ -123,9 +123,15 @@ def _one(doc_id, text, **kw):
 
 
 def _write(doc_id, requests, expectations=None, dry_run=False):
-    """batch_update with the revision id of a fresh read, as a caller would."""
+    """batch_update with the revision id of a fresh read, as a caller would.
+
+    ``expectations`` (one per request, ``None`` for none) are attached to the
+    requests as their ``expect`` key.
+    """
     rev = docs.get_document(doc_id)["revisionId"]
-    return docs.batch_update(doc_id, requests, expectations, rev, None, dry_run)
+    items = [dict(r, expect=e) if e is not None else r
+             for r, e in zip(requests, expectations or [None] * len(requests))]
+    return docs.batch_update(doc_id, items, rev, dry_run=dry_run)
 
 
 def _lines(doc_id):
@@ -300,8 +306,8 @@ def test_stale_revision_is_refused(rich_doc):
     m = _one(did, "Plan heading", tab_id="t.0")
     with pytest.raises(docs.DocumentChangedError):
         docs.batch_update(did, [{"deleteContentRange": {"range": {
-            "startIndex": m["start"], "endIndex": m["end"]}}}],
-            [{"text": "Plan heading"}], required_revision_id=old)
+            "startIndex": m["start"], "endIndex": m["end"]}},
+            "expect": {"text": "Plan heading"}}], required_revision_id=old)
 
 
 def _range_of(doc_id, predicate):
@@ -384,14 +390,14 @@ def test_two_call_styled_append_recipe(rich_doc):
     did = rich_doc["id"]
     rev0 = docs.get_document(did)["revisionId"]
     out1 = docs.batch_update(did, [{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"},
-                                                   "text": "\nAppendix heading"}}], None, rev0)
+                                                   "text": "\nAppendix heading"}}], rev0)
     new_line = next(ln for ch in out1["changes"] for ln in ch["after"]
                     if ln.endswith("Appendix heading⏎"))
     s, e = (int(x) for x in new_line.split(" ", 1)[0].split("-"))
     docs.batch_update(did, [{"updateParagraphStyle": {
         "range": {"startIndex": s, "endIndex": e},
-        "paragraphStyle": {"namedStyleType": "HEADING_2"}, "fields": "namedStyleType"}}],
-        [{"element": "paragraph"}], out1["revision_id"])
+        "paragraphStyle": {"namedStyleType": "HEADING_2"}, "fields": "namedStyleType"},
+        "expect": {"element": "paragraph"}}], out1["revision_id"])
     lines = docs.get_document_map(did)["segments"][0]["lines"]
     assert any(ln.endswith("[HEADING_2] Appendix heading⏎") for ln in lines)
     assert any(ln.endswith("After table⏎") and "HEADING" not in ln for ln in lines)

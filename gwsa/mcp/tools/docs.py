@@ -21,6 +21,7 @@ from typing import Any, Optional
 from googleapiclient.errors import HttpError
 
 from gwsa.sdk import docs
+from gwsa.sdk.docs.expect import DocsRequest
 from gwsa.sdk.exceptions import InvalidDocIdError, LocalPathError
 
 logger = logging.getLogger(__name__)
@@ -239,9 +240,8 @@ async def find_in_doc(
 
 async def batch_update_doc(
     doc_id: str,
-    requests: list[dict[str, Any]],
+    requests: list[DocsRequest],
     required_revision_id: str,
-    expectations: Optional[list[Optional[dict[str, Any]]]] = None,
     dry_run: bool = False,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -276,12 +276,14 @@ async def batch_update_doc(
       way to avoid arithmetic: order content changes from the END of the
       document backwards — then positions from your read stay valid.
 
-    EXPECTATIONS (required for every index-based request)
-      ``expectations`` aligns one-to-one with ``requests``; use ``null`` for
-      requests that address no index (``replaceAllText``,
+    EXPECT (required on every index-based request)
+      Give each request that addresses an index an ``expect`` key beside its
+      request type; gwsa checks it and removes it before sending:
+      ``{"deleteContentRange": {...}, "expect": {"text": "Q3 Plan"}}``.
+      Requests that address no index (``replaceAllText``,
       ``replaceNamedRangeContent``, ``endOfSegmentLocation`` inserts, tab
-      and named-range management). For an index-based request, state what
-      is at its position at the moment it runs (after earlier requests in
+      and named-range management) have no ``expect``. State what is at the
+      position at the moment the request runs (after earlier requests in
       the call), using the same units as the map (markers like
       ``⟦person⟧``; a paragraph break is ``"\n"`` — the map's ``⏎`` is
       also accepted and means the same):
@@ -300,12 +302,17 @@ async def batch_update_doc(
           ``location.index``, or table ops via ``tableStartLocation``):
           ``{"before": "<text just before>", "after": "<text just after>"}``
           (either or both; a table start is ``{"after": "⟦table⟧"}``)
+      Every index-based request needs its own ``expect`` — including an
+      insert at the position a delete just emptied: its ``after`` is the
+      text that followed the deleted range (see "Replace a phrase").
       gwsa replays the call's text inserts/deletes, chip/image inserts, and
       ``createParagraphBullets`` (which removes each covered paragraph's
       leading tabs) exactly, checks every expectation, and only then sends
       the batch. If
       any expectation does not match, NOTHING is written and the response
-      states what was expected and what is actually there.
+      states what was expected and what is actually there. Unexpected text
+      there means the position is wrong: take it again from the map or
+      ``find_in_doc`` — do not copy the reported text into ``expect``.
       ``{"unchecked": true}`` skips the check for one request explicitly.
       Requests whose effect on positions gwsa does not replay —
       ``insertTable``, table row/column changes, page/section breaks,
@@ -330,15 +337,15 @@ async def batch_update_doc(
     BUILDING NEW CONTENT (new doc, new section, new list)
       Insert all the text in one request — paragraphs separated by
       ``"\n"``, nested list items prefixed with ``"\t"`` per level —
-      e.g. at the end of a tab with ``endOfSegmentLocation`` (expectation
-      ``null``). Then style it in a second call, using the ranges shown in
+      e.g. at the end of a tab with ``endOfSegmentLocation`` (no
+      ``expect``). Then style it in a second call, using the ranges shown in
       the first call's ``changes`` (no counting). Note that
       ``createParagraphBullets`` removes the leading ``"\t"`` characters,
       so text after it moves back by the number of tabs removed.
 
       Append a styled paragraph (e.g. a heading) — two calls:
         1. ``{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"},
-           "text": "\nNew heading"}}`` -> ``null``. Start the text with
+           "text": "\nNew heading"}}`` (no ``expect``). Start the text with
            ``"\n"``: the insert lands before the body's final paragraph
            break, so without it the new text joins the last paragraph.
         2. From call 1's ``changes``, take the new paragraph's range (e.g.
@@ -346,35 +353,35 @@ async def batch_update_doc(
            ``required_revision_id`` = call 1's returned ``revision_id``:
            ``{"updateParagraphStyle": {"range": {"startIndex": 137,
            "endIndex": 149}, "paragraphStyle": {"namedStyleType":
-           "HEADING_2"}, "fields": "namedStyleType"}}`` ->
-           ``{"element": "paragraph"}``.
+           "HEADING_2"}, "fields": "namedStyleType"},
+           "expect": {"element": "paragraph"}}``.
 
-    RECIPES (one entry in ``requests`` -> its expectation)
-      - Append to the end of a tab's body (no index):
+    RECIPES (each is one entry in ``requests``)
+      - Append to the end of a tab's body (no index, no ``expect``):
         ``{"insertText": {"endOfSegmentLocation": {"tabId": "t.0"},
-        "text": "\nNew paragraph"}}`` -> ``null``
+        "text": "\nNew paragraph"}}``
       - Insert at a point:
-        ``{"insertText": {"location": {"index": 64}, "text": "New line\n"}}``
-        -> ``{"before": "Q3 Plan\n"}``
+        ``{"insertText": {"location": {"index": 64}, "text": "New line\n"},
+        "expect": {"before": "Q3 Plan\n"}}``
       - Replace a phrase inside a paragraph, keeping the paragraph's style:
         delete the range, then insert at the same start. The insert runs
         after the delete, so its ``after`` is whatever followed the deleted
         text (here the paragraph break):
-        ``{"deleteContentRange": {"range": {"startIndex": 54, "endIndex": 61}}}``
-        -> ``{"text": "Q3 Plan"}``, then
-        ``{"insertText": {"location": {"index": 54}, "text": "Q4 Plan"}}``
-        -> ``{"after": "\n"}``.
+        ``{"deleteContentRange": {"range": {"startIndex": 54, "endIndex": 61}},
+        "expect": {"text": "Q3 Plan"}}``, then
+        ``{"insertText": {"location": {"index": 54}, "text": "Q4 Plan"},
+        "expect": {"after": "\n"}}``.
       - Delete a whole table (map lines ``98-99 [table 2x2] ⟦table⟧`` …
         ``124-125 [table end] ⟦table-end⟧``):
         ``{"deleteContentRange": {"range": {"startIndex": 98,
-        "endIndex": 125}}}`` -> ``{"element": "table"}``
+        "endIndex": 125}}, "expect": {"element": "table"}}``
       - Delete a whole paragraph (map line ``84-97 Before table⏎``):
         ``{"deleteContentRange": {"range": {"startIndex": 84,
-        "endIndex": 97}}}`` -> ``{"element": "paragraph"}``
+        "endIndex": 97}}, "expect": {"element": "paragraph"}}``
       - Replace every occurrence (no index):
         ``{"replaceAllText": {"containsText": {"text": "{{DATE}}",
         "matchCase": true}, "replaceText": "Oct 1",
-        "tabsCriteria": {"tabIds": ["t.0"]}}}`` -> ``null``; check
+        "tabsCriteria": {"tabIds": ["t.0"]}}}`` (no ``expect``); check
         ``occurrencesChanged`` in its reply.
       - Heading: ``{"updateParagraphStyle": {"range": {...}, "paragraphStyle":
         {"namedStyleType": "HEADING_2"}, "fields": "namedStyleType"}}``
@@ -393,14 +400,14 @@ async def batch_update_doc(
         an insert with ``updateTextStyle``/``updateParagraphStyle`` on the
         new range to set its style explicitly.
       - Stable anchor for repeated edits: ``createNamedRange`` once, then
-        ``replaceNamedRangeContent`` by name (no index; ``null``).
+        ``replaceNamedRangeContent`` by name (no index, no ``expect``).
 
     Args:
         doc_id: Google Doc ID.
-        requests: Docs API request objects.
+        requests: Docs API request objects, each with an ``expect`` when it
+            addresses an index (see EXPECT).
         required_revision_id: The ``revision_id`` from the read your
             positions came from (or from your previous write). Required.
-        expectations: One per request; see above.
         dry_run: Check and return the predicted ``changes`` without writing.
         account: Optional account selector (name or email).
 
@@ -419,9 +426,9 @@ async def batch_update_doc(
         Nothing written (the batch is atomic).
     """
     try:
-        # Positional: (doc_id, requests, expectations, required revision, account, dry_run).
         result = docs.batch_update(
-            doc_id, requests, expectations, required_revision_id, account, dry_run
+            doc_id, [dict(r) for r in requests], required_revision_id,
+            account=account, dry_run=dry_run,
         )
         return {"success": True, **result}
     except docs.ExpectationError as e:

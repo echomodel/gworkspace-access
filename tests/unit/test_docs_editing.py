@@ -520,10 +520,40 @@ def test_preview_of_failed_check_has_no_changes():
 # ---------------------------------------------------------------------------
 
 
+def x(request, expect):
+    """A request item carrying its ``expect``."""
+    return {**request, "expect": expect}
+
+
+def test_expect_is_removed_before_sending(fakes):
+    d, _ = fakes
+    req = delete(1, 13)
+    docs.batch_update(DOC_ID, [x(req, {"text": "Plan heading"})], REV)
+    assert d.batches[0]["requests"] == [req]
+    assert "expect" not in d.batches[0]["requests"][0]
+
+
+def test_index_request_without_expect_is_refused(fakes):
+    d, _ = fakes
+    for items in ([delete(1, 13)], [{**delete(1, 13), "expect": None}]):
+        with pytest.raises(docs.ExpectationError) as ei:
+            docs.batch_update(DOC_ID, items, REV)
+        assert "has no expectation" in ei.value.failures[0]
+    assert d.batches == []
+
+
+def test_unknown_expect_key_is_refused(fakes):
+    d, _ = fakes
+    with pytest.raises(docs.ExpectationError) as ei:
+        docs.batch_update(DOC_ID, [x(delete(1, 13), {"textInRange": "Plan heading"})], REV)
+    assert "unknown expectation key(s) ['textInRange']" in ei.value.failures[0]
+    assert d.batches == []
+
+
 def test_failed_expectation_writes_nothing(fakes):
     d, _ = fakes
     with pytest.raises(docs.ExpectationError) as ei:
-        docs.batch_update(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}], REV)
+        docs.batch_update(DOC_ID, [x(delete(2, 14), {"text": "Plan heading"})], REV)
     assert d.batches == []
     assert ei.value.revision_id == "rev-1"
     assert "found 'lan heading⏎'" in ei.value.failures[0]
@@ -534,7 +564,8 @@ def test_success_sends_requests_unchanged_with_read_revision(fakes):
     d.states = [copy.deepcopy(FIXTURE),
                 edited(lambda doc: set_run(doc, "Gamma\n", "Delta\n"))]
     reqs = [delete(58, 63), insert(58, "Delta")]
-    out = docs.batch_update(DOC_ID, reqs, [{"text": "Gamma"}, {"after": "\n"}], REV)
+    out = docs.batch_update(DOC_ID, [x(reqs[0], {"text": "Gamma"}),
+                                     x(reqs[1], {"after": "\n"})], REV)
     assert d.batches == [{"requests": reqs,
                           "writeControl": {"requiredRevisionId": "rev-1"}}]
     assert out["previous_revision_id"] == "rev-1"
@@ -549,7 +580,7 @@ def test_success_sends_requests_unchanged_with_read_revision(fakes):
 def test_unchanged_document_reports_no_changes(fakes):
     d, _ = fakes
     out = docs.batch_update(DOC_ID, [{"replaceAllText": {
-        "containsText": {"text": "nomatch", "matchCase": True}, "replaceText": "y"}}], None, REV)
+        "containsText": {"text": "nomatch", "matchCase": True}, "replaceText": "y"}}], REV)
     assert out["changes"] == []
     assert len(d.batches) == 1
 
@@ -557,7 +588,7 @@ def test_unchanged_document_reports_no_changes(fakes):
 def test_stale_required_revision_writes_nothing(fakes):
     d, _ = fakes
     with pytest.raises(docs.DocumentChangedError):
-        docs.batch_update(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}],
+        docs.batch_update(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})],
                           required_revision_id="rev-0")
     assert d.batches == []
 
@@ -566,22 +597,22 @@ def test_stale_required_revision_writes_nothing(fakes):
 def test_missing_required_revision_is_refused(fakes, rev):
     d, _ = fakes
     with pytest.raises(ValueError) as ei:
-        docs.batch_update(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}], rev)
+        docs.batch_update(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], rev)
     assert "required_revision_id is required" in str(ei.value)
     assert d.batches == [] and d.gets == []
 
 
 def test_stale_revision_error_carries_current_id(fakes):
     with pytest.raises(docs.DocumentChangedError) as ei:
-        docs.batch_update(DOC_ID, [delete(1, 13)], [{"text": "Plan heading"}], "rev-0")
+        docs.batch_update(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], "rev-0")
     assert ei.value.current == "rev-1"
     assert "Read it again" in str(ei.value)
 
 
 def test_dry_run_writes_nothing_and_returns_predicted_changes(fakes):
     d, _ = fakes
-    out = docs.batch_update(DOC_ID, [delete(84, 97)], [{"element": "paragraph"}],
-                            REV, None, True)
+    out = docs.batch_update(DOC_ID, [x(delete(84, 97), {"element": "paragraph"})],
+                            REV, dry_run=True)
     assert d.batches == []
     assert out["dry_run"] is True and out["revision_id"] == REV
     assert out["changes"][0]["before"] == ["84-97 Before table⏎"]
@@ -591,16 +622,18 @@ def test_dry_run_writes_nothing_and_returns_predicted_changes(fakes):
 def test_dry_run_with_failed_check_raises(fakes):
     d, _ = fakes
     with pytest.raises(docs.ExpectationError):
-        docs.batch_update(DOC_ID, [delete(2, 14)], [{"text": "Plan heading"}],
-                          REV, None, True)
+        docs.batch_update(DOC_ID, [x(delete(2, 14), {"text": "Plan heading"})],
+                          REV, dry_run=True)
     assert d.batches == []
 
 
-@pytest.mark.parametrize("bad", [[], {}, [{}], [{"a": 1, "b": 2}], ["x"]])
+@pytest.mark.parametrize("bad", [[], {}, [{}], [{"a": 1, "b": 2}], ["x"],
+                                 [{"expect": {"text": "a"}}],
+                                 [{"a": 1, "b": 2, "expect": {"text": "a"}}]])
 def test_malformed_requests_rejected(fakes, bad):
     d, _ = fakes
     with pytest.raises(ValueError):
-        docs.batch_update(DOC_ID, bad, None, REV)
+        docs.batch_update(DOC_ID, bad, REV)
     assert d.batches == []
 
 
@@ -612,7 +645,7 @@ def test_malformed_requests_rejected(fakes, bad):
 @pytest.mark.asyncio
 async def test_tool_failed_check_envelope(fakes):
     d, _ = fakes
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(2, 14)], REV, [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(2, 14), {"text": "Plan heading"})], REV)
     assert out["success"] is False
     assert out["error"] == "Expectation check failed. Nothing was written."
     assert out["failures"] and out["revision_id"] == "rev-1"
@@ -621,7 +654,7 @@ async def test_tool_failed_check_envelope(fakes):
 
 @pytest.mark.asyncio
 async def test_tool_success_envelope(fakes):
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], REV, [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], REV)
     assert out["success"] is True and out["document_id"] == DOC_ID
     assert "changes" in out and "replies" in out
 
@@ -630,30 +663,28 @@ async def test_tool_success_envelope(fakes):
 async def test_tool_google_rejection_envelope(fakes):
     d, _ = fakes
     d.fail_status = 400
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], REV, [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], REV)
     assert out["success"] is False
     assert out["error"] == "Google rejected the batch. Nothing was written."
 
 
 @pytest.mark.asyncio
 async def test_tool_stale_revision_envelope(fakes):
-    out = await docs_tools.batch_update_doc(
-        DOC_ID, [delete(1, 13)], "old", [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], "old")
     assert out["success"] is False and "Nothing was written" in out["error"]
 
 
 @pytest.mark.asyncio
 async def test_tool_dry_run_envelope(fakes):
     d, _ = fakes
-    out = await docs_tools.batch_update_doc(
-        DOC_ID, [delete(98, 125)], REV, [{"element": "table"}], dry_run=True)
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(98, 125), {"element": "table"})], REV, dry_run=True)
     assert out["success"] is True and out["dry_run"] is True
     assert d.batches == []
 
 
 @pytest.mark.asyncio
 async def test_tool_requires_revision_id(fakes):
-    out = await docs_tools.batch_update_doc(DOC_ID, [delete(1, 13)], "", [{"text": "Plan heading"}])
+    out = await docs_tools.batch_update_doc(DOC_ID, [x(delete(1, 13), {"text": "Plan heading"})], "")
     assert out["success"] is False and "required_revision_id is required" in out["error"]
 
 
@@ -728,14 +759,14 @@ def test_cli_read_markdown_default(fakes):
 def test_cli_batch_update_refusal_and_success(fakes):
     d, _ = fakes
     r = CliRunner().invoke(docs_cli, [
-        "batch-update", DOC_ID, "-r", json.dumps([delete(2, 14)]),
-        "-e", json.dumps([{"text": "Plan heading"}]), "--required-revision-id", REV])
+        "batch-update", DOC_ID, "-r", json.dumps([x(delete(2, 14), {"text": "Plan heading"})]),
+        "--required-revision-id", REV])
     assert r.exit_code != 0
     assert "Nothing was written" in r.output and "found 'lan heading⏎'" in r.output
     assert d.batches == []
     r = CliRunner().invoke(docs_cli, [
-        "batch-update", DOC_ID, "-r", json.dumps([delete(1, 13)]),
-        "-e", json.dumps([{"text": "Plan heading"}]), "--required-revision-id", REV])
+        "batch-update", DOC_ID, "-r", json.dumps([x(delete(1, 13), {"text": "Plan heading"})]),
+        "--required-revision-id", REV])
     assert r.exit_code == 0, r.output
     assert len(d.batches) == 1
 
@@ -744,3 +775,20 @@ def test_cli_commands(fakes):
     assert sorted(docs_cli.commands) == ["batch-update", "create", "find", "list", "read"]
     r = CliRunner().invoke(drive_cli, ["copy", "orig-1", "--name", "C"])
     assert r.exit_code == 0 and json.loads(r.output)["id"] == "copy-1"
+
+
+def test_published_schema_lists_the_expect_fields():
+    """Agents see expect's fields in the parameter list, not only in prose."""
+    import asyncio
+    from mcp.server.fastmcp import FastMCP
+    from gwsa.sdk.docs.expect import EXPECTATION_KEYS
+
+    server = FastMCP("t")
+    server.add_tool(docs_tools.batch_update_doc)
+    schema = asyncio.run(server.list_tools())[0].inputSchema
+    assert "expectations" not in schema["properties"]
+    expect = schema["$defs"]["Expect"]
+    assert set(expect["properties"]) == set(EXPECTATION_KEYS)
+    assert expect["additionalProperties"] is False
+    assert all(p.get("description") for p in expect["properties"].values())
+    assert schema["$defs"]["DocsRequest"]["additionalProperties"] is True

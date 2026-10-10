@@ -513,7 +513,7 @@ gwsa docs find DOC_ID "Plan heading"     # exact ranges of every occurrence
 ```
 
 **Writing** goes through one path, the Docs API's `batchUpdate`, with
-requests passed to Google unchanged — so anything the API can author
+each request's Docs API fields passed to Google unchanged — so anything the API can author
 (headings, nested lists, indentation, fonts, colors, links, tables,
 images, chips, named ranges, tabs) is available. gwsa adds checks
 around it:
@@ -522,8 +522,9 @@ around it:
   positions came from (`docs read --format map` and `docs find` print it;
   every write returns the next one). If the document changed since, nothing
   is written.
-- **Expectations.** Every request that addresses a position states what
-  is there: `{"text": "Plan heading"}` for a range, or `{"element":
+- **Expectations.** Every request that addresses a position carries an
+  `expect` key stating what is there (gwsa checks it and removes it before
+  sending): `{"text": "Plan heading"}` for a range, or `{"element":
   "paragraph"}` / `{"element": "table"}` when the range is exactly one
   whole paragraph or table; `{"before": ...}` / `{"after": ...}` for a
   point. Text copied from the map may keep its `⏎`. Requests run in order,
@@ -540,12 +541,13 @@ around it:
 ```bash
 gwsa docs read DOC_ID --format map             # prints "# revision REV" and the ranges
 gwsa docs batch-update DOC_ID --required-revision-id REV \
-  -r '[{"deleteContentRange": {"range": {"startIndex": 58, "endIndex": 63}}},
-       {"insertText": {"location": {"index": 58}, "text": "Gamma ray"}}]' \
-  -e '[{"text": "Gamma"}, {"after": "\n"}]'
+  -r '[{"deleteContentRange": {"range": {"startIndex": 58, "endIndex": 63}},
+        "expect": {"text": "Gamma"}},
+       {"insertText": {"location": {"index": 58}, "text": "Gamma ray"},
+        "expect": {"after": "\n"}}]'
 gwsa docs batch-update DOC_ID --required-revision-id REV --dry-run \
-  -r '[{"deleteContentRange": {"range": {"startIndex": 98, "endIndex": 125}}}]' \
-  -e '[{"element": "table"}]'
+  -r '[{"deleteContentRange": {"range": {"startIndex": 98, "endIndex": 125}},
+        "expect": {"element": "table"}}]'
 ```
 
 To produce a document that differs from an original in specific ways,

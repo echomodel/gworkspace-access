@@ -1,5 +1,33 @@
 # Release Notes
 
+## v0.33.0 — Docs edits: each request carries its own `expect`
+
+- **Changed (breaking):** `batch_update_doc` no longer takes a separate
+  `expectations` list aligned with `requests`. Each request that addresses
+  an index carries an `expect` key beside its request type —
+  `{"deleteContentRange": {...}, "expect": {"text": "Q3 Plan"}}` — which
+  gwsa checks and removes before sending; every Docs API field is still
+  sent to Google unchanged. Requests that address no index have no
+  `expect`. The CLI's `-e/--expectations-json` is gone: `expect` goes
+  inside `-r`.
+- **`expect`'s fields are in the tool's parameter schema** (`text`,
+  `element`, `before`, `after`, `unchecked`, each described), so agents
+  see them up front instead of guessing names from the description.
+- The description now states that an insert at the position a delete just
+  emptied needs its own `expect`, and that unexpected text in a refusal
+  means the position is wrong (take it again; don't copy the reported
+  text).
+- Safety is unchanged: an index-based request without `expect` is still
+  refused, and nothing is written unless every check passes.
+- **New: `gwsa status`** shows the workstation's auth state, default
+  account, quota project, token validity, and granted vs expected OAuth
+  scopes. `--test` runs read-only smoke probes per service, `--adc`
+  compares Application Default Credentials, `--gcp` checks quota-project
+  API enablement, `--all` runs everything (#49).
+- **Simpler local setup:** `gwsa-admin` uses the local user store when
+  nothing is configured (no `connect local` step), and a fresh local install
+  stores accounts under user `local`, matching `gwsa-mcp stdio --user local`.
+
 ## v0.32.0 — Drive tool names match the API calls; content types on every host
 
 - **Renamed (breaking):** `drive_upload` → `drive_create_file`,
