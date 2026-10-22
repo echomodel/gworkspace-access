@@ -929,6 +929,11 @@ caught by the Testing-mode 7-day clock. See
 diagnosis (including how to check the OAuth client's publishing
 status) and the exact recovery sequence.
 
+**Google Chat `403 Permission denied to perform the requested action on the specified resource` (when Gmail, Drive, Docs, Sheets, and Calendar succeed):**
+unlike the other five Workspace APIs (which only require `roles/serviceusage.serviceUsageConsumer` on the quota project), `chat.googleapis.com` binds calls to the project's Google Chat App configuration (`APIs & Services -> Google Chat API -> Configuration`). Two project-level conditions cause this 403 error even when all `chat.*` OAuth scopes are granted:
+1. **Unconfigured Chat App tab:** in the Cloud Console for your quota project, open `APIs & Services -> Google Chat API -> Configuration`, keep interactive features disabled, enter an App name and Description, and save once.
+2. **Shared quota project with an unpublished Chat App:** when multiple users share one GCP quota project whose Chat App is not published to the Workspace Marketplace, `chat.googleapis.com` checks `chat.bots.update` and `resourcemanager.projects.get` on the quota project for non-creator callers. Grant `roles/chat.admin` (contains only `chat.bots.get`, `chat.bots.update`, `resourcemanager.projects.get`, and `resourcemanager.projects.list`) alongside `roles/serviceusage.serviceUsageConsumer`, and wait ~60 seconds for IAM cache propagation before re-running `gwsa status --test`.
+
 **Old `gwsa profiles` / `gwsa client` / `gwsa setup` commands gone:**
 intentional. See [Upgrading from the legacy vault](#upgrading-from-the-legacy-vault).
 
