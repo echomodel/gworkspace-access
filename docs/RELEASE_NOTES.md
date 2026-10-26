@@ -21,6 +21,10 @@
   Gmail scope; creating or deleting with an older token returns an error
   naming the scope and the re-acquire commands. `gwsa status` lists the
   scope and probes `gwsa mail filters list`.
+- **Fix: `acquire-token | accounts add --token=-`.** The OAuth library's
+  "visit this URL" prompt was printed to stdout and reached `accounts add`
+  ahead of the token; it now goes to stderr with the rest of the progress
+  output.
 
 ## v0.33.0 — Docs edits: each request carries its own `expect`
 

@@ -10,6 +10,7 @@ and pass the resulting file to ``accounts add --token=@...``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -67,7 +68,11 @@ def acquire_token(client_secrets_path, scopes, out_path):
 
     try:
         flow = InstalledAppFlow.from_client_secrets_file(str(cs_path), resolved)
-        creds = flow.run_local_server(port=0)
+        # The library prints its "visit this URL" prompt to stdout, which
+        # would land in the pipe ahead of the token. Stdout is the token;
+        # everything the flow says goes to stderr with the rest of the chatter.
+        with contextlib.redirect_stdout(sys.stderr):
+            creds = flow.run_local_server(port=0)
     except Exception as e:
         raise click.ClickException(f"OAuth flow failed: {e}")
 

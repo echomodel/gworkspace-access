@@ -91,6 +91,28 @@ def test_progress_chatter_goes_to_stderr(runner, client_secrets):
     assert "Requesting scopes" in result.stderr
 
 
+def test_browser_flow_prompt_stays_out_of_the_token_pipe(runner, client_secrets):
+    """The OAuth library prints "Please visit this URL ..." to stdout when
+    it opens the browser. In the pipe form that line would reach
+    ``accounts add --token=-`` before the JSON; it must go to stderr."""
+    def _flow_that_prints(self, **kwargs):
+        print("Please visit this URL to authorize this application: https://accounts.example.com/auth")
+        return _fake_credentials(refresh_token="after-prompt")
+
+    with patch(
+        "google_auth_oauthlib.flow.InstalledAppFlow.run_local_server",
+        _flow_that_prints,
+    ):
+        result = runner.invoke(app.admin_cli, [
+            "acquire-token",
+            "--client-secrets", str(client_secrets),
+        ])
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["refresh_token"] == "after-prompt"
+    assert "Please visit this URL" in result.stderr
+
+
 def test_out_flag_writes_file_not_stdout(runner, client_secrets, tmp_path):
     out_path = tmp_path / "token.json"
     with patch(
