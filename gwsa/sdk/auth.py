@@ -46,6 +46,7 @@ SCOPE_ALIASES = {
     "mail-read": "https://www.googleapis.com/auth/gmail.readonly",
     "mail-modify": "https://www.googleapis.com/auth/gmail.modify",
     "mail-labels": "https://www.googleapis.com/auth/gmail.labels",
+    "mail-filters": "https://www.googleapis.com/auth/gmail.settings.basic",
     "mail": "https://www.googleapis.com/auth/gmail.modify",
     "sheets-read": "https://www.googleapis.com/auth/spreadsheets.readonly",
     "sheets": "https://www.googleapis.com/auth/spreadsheets",
@@ -674,7 +675,8 @@ def run_service_smoke_tests(granted_scopes: list) -> Tuple[dict, list]:
 
     Returns:
         Tuple of (service_results_dict, error_details_list) where:
-            - service_results_dict maps service names (Gmail, Drive, Docs, Sheets, Calendar, Chat)
+            - service_results_dict maps service names (Gmail, Gmail filters, Drive, Docs,
+              Sheets, Calendar, Chat)
               to dicts with keys "status" and "probe".
             - error_details_list contains dicts with keys: service, step, error.
     """
@@ -696,6 +698,12 @@ def run_service_smoke_tests(granted_scopes: list) -> Tuple[dict, list]:
             "mail",
             'gwsa mail search "label:INBOX" --max-results 1',
             lambda: sdk_mail.search_messages("label:INBOX", max_results=1),
+        ),
+        (
+            "Gmail filters",
+            "mail_filters",
+            "gwsa mail filters list",
+            lambda: sdk_mail.list_filters(),
         ),
         (
             "Drive",
@@ -767,6 +775,8 @@ def run_service_smoke_tests(granted_scopes: list) -> Tuple[dict, list]:
 # Feature scope definitions
 FEATURE_SCOPES = {
     "mail": {"https://www.googleapis.com/auth/gmail.modify"},
+    # Creating and deleting Gmail filters; listing them needs only "mail".
+    "mail_filters": {"https://www.googleapis.com/auth/gmail.settings.basic"},
     "sheets": {"https://www.googleapis.com/auth/spreadsheets"},
     "docs": {"https://www.googleapis.com/auth/documents"},
     "drive": {"https://www.googleapis.com/auth/drive"},
@@ -822,7 +832,7 @@ def get_all_scopes(workspace: bool = False) -> list[str]:
     scopes = set()
     
     # Standard scopes (available to all users)
-    for feature in ["mail", "sheets", "docs", "drive", "calendar"]:
+    for feature in ["mail", "mail_filters", "sheets", "docs", "drive", "calendar"]:
         scopes.update(FEATURE_SCOPES[feature])
     
     # Workspace-specific scopes

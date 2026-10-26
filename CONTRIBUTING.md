@@ -196,6 +196,49 @@ Rules to preserve if you touch this code:
 3. **Preserve Content-IDs verbatim** (with angle brackets). The HTML
    references `cid:XXX`; the part header must read `Content-ID: <XXX>`.
 
+### Gmail filters follow the Gmail API
+
+`gwsa/sdk/mail/filters.py` wraps `users.settings.filters`. Tool names say
+which call runs: `list_email_filters` is `list`, `create_email_filter` is
+`create`, `delete_email_filter` is `delete`. The API has no update, and
+gwsa adds none: a change is "create the replacement, then delete the old
+one by id", stated in the tool descriptions. Rules to preserve:
+
+1. **Criteria are the API's fields, sent unchanged.** `from_address` /
+   `to_address` are the API's `from` / `to`; the rest keep their names in
+   snake_case. Only set fields are sent. Don't invent criteria the API
+   lacks (there is no "never send to spam" or category action in the
+   filters resource).
+2. **Actions are label names, resolved like `modify_labels`.** A label to
+   add is created if missing; a label to remove must exist — a filter
+   removing a label nobody has would be a silent no-op, so
+   `UnknownLabelError` refuses it before anything is written. Names come
+   back out (`add_labels` / `remove_labels`) with the ids beside them.
+   "Archive", "mark read", "star", "trash", "spam" are the system labels
+   `INBOX`, `UNREAD`, `STARRED`, `TRASH`, `SPAM`; the tool description
+   lists them rather than the tool growing boolean flags.
+3. **Create refuses a duplicate.** `create_filter` lists first and raises
+   `DuplicateFilterError` (carrying the existing filter) when the
+   criteria already exist — regardless of action. Comparison uses
+   `_criteria_key`, which drops the defaults the API echoes
+   (`sizeComparison: "unspecified"`, `hasAttachment: false`).
+4. **Delete takes exactly one id.** No delete-by-criteria, no bulk.
+5. **API rejections are passed through, typed where it helps.** A 403
+   for a missing scope becomes `FilterScopeError`, whose message names
+   `gmail.settings.basic` and the re-acquire commands (listing works with
+   `gmail.modify`; create and delete do not). A 400 on a forward action
+   keeps Gmail's own message and adds that the address must be verified
+   in Gmail settings. Anything else propagates as the `HttpError`.
+6. **A filter only affects new mail.** Every description and the create
+   response say so, so an agent pairs a new filter with
+   `search_emails` + `modify_email_labels` when the current inbox should
+   change too.
+
+The scope lives in `FEATURE_SCOPES["mail_filters"]` (alias
+`mail-filters`), separate from `mail` so an older token still shows
+Gmail as working in `gwsa status` while the filters line reports the
+missing scope.
+
 ### Docs editing: one guarded write path
 
 Docs content changes go through exactly one path —

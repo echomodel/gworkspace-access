@@ -211,6 +211,53 @@ override the account for a single invocation, add `--account
 <name-or-email>` on the top-level command (e.g.
 `gwsa --account work drive upload ...`).
 
+### Gmail filters: keep predictable mail out of the inbox
+
+A Gmail filter is a rule Gmail applies to mail **as it arrives**:
+criteria (sender, recipient, subject, a search query, attachment, size)
+plus an action (labels to add or remove, an address to forward to).
+Where `gwsa mail label` changes the messages you already have, a filter
+makes "always archive X" hold from now on. It never touches mail that
+is already in the mailbox — clean that up with `mail search` + `mail
+label` in the same step.
+
+```bash
+gwsa mail filters list                                        # id, criteria, action, summary
+gwsa mail filters create --from jira@example.com --remove INBOX            # archive
+gwsa mail filters create --query "list:deals" --remove INBOX --remove UNREAD
+gwsa mail filters create --from boss@example.com --add STARRED --add Priority
+gwsa mail filters get FILTER_ID
+gwsa mail filters delete FILTER_ID
+```
+
+- **Actions are label names**, resolved the way `mail label` resolves
+  them: a label to add is created if missing; a label to remove must
+  exist. The common Gmail actions are system labels — archive is
+  `--remove INBOX`, mark read is `--remove UNREAD`, star / important /
+  trash / spam are `--add STARRED` / `IMPORTANT` / `TRASH` / `SPAM`.
+- **Forwarding** (`--forward`) only works to an address already added
+  and verified under Gmail Settings → Forwarding; Gmail rejects anything
+  else and gwsa reports Gmail's error.
+- **No duplicates.** `create` refuses when a filter with exactly the
+  same criteria already exists and shows it.
+- **No update in the Gmail API.** To change a filter, create the
+  replacement, then `delete` the old one by id. Nothing is ever deleted
+  except the one id you name.
+
+MCP tools: `list_email_filters`, `create_email_filter`,
+`delete_email_filter`. Every filter comes back with a one-line
+`summary` (`from:jira@example.com → archive`).
+
+> **Scope — re-authenticate to create or delete.** Listing filters
+> works with the Gmail scope every account has; creating and deleting
+> need `gmail.settings.basic`, which `acquire-token` now requests by
+> default. An account whose token predates it gets an error naming the
+> scope; re-run `acquire-token` and `accounts add <name>` for that
+> account (see [Rotating tokens](#rotating-tokens-when-refresh-fails)).
+> For a gcloud-issued token, add the scope to `gcloud auth
+> application-default login --scopes`. `gwsa status` shows whether a
+> token carries it.
+
 ### Calendar events and Free/Busy
 
 Calendar tools cover listing calendars, listing/searching events, and
@@ -561,8 +608,8 @@ description carries the full working model and recipes for agents.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 61 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (58 over
+`gwsa-mcp` is a stdio MCP server exposing 64 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (61 over
 HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

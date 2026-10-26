@@ -75,15 +75,16 @@ after `pipx install`.
 
 ## Tool inventory
 
-61 tools over stdio (58 over HTTP, which omits the stdio-only
+64 tools over stdio (61 over HTTP, which omits the stdio-only
 host-path tools), one module per Google API plus an account-discovery
 module. mcp-app auto-discovers public async functions from each module:
 
 - **`gwsa.mcp.tools.accounts`** (1): list_google_accounts
-- **`gwsa.mcp.tools.mail`** (11): search_emails, read_email,
+- **`gwsa.mcp.tools.mail`** (14): search_emails, read_email,
   modify_email_labels, list_email_labels, send_email, reply_email,
   forward_email, read_email_structure, create_email_draft,
-  download_email_attachment, get_email_thread
+  download_email_attachment, get_email_thread, list_email_filters,
+  create_email_filter, delete_email_filter
 - **`gwsa.mcp.tools.docs`** (5): list_docs, create_doc, read_doc,
   find_in_doc, batch_update_doc
 - **`gwsa.mcp.tools.drive`** (19): drive_list_folder,

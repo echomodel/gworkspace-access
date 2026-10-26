@@ -614,3 +614,179 @@ async def get_email_thread(
     except Exception as e:
         logger.error(f"Error getting email thread '{thread_id}': {e}")
         return {"error": str(e)}
+
+
+async def list_email_filters(
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """List the account's Gmail filters (Gmail ``settings.filters.list``).
+
+    A Gmail filter is a saved rule Gmail applies to mail as it arrives:
+    ``criteria`` (sender, recipient, subject, search query, …) and an
+    ``action`` (labels added or removed, forwarding). Filters are how
+    "always archive mail from X" stays true without re-triaging; they do
+    not touch mail already in the mailbox.
+
+    Each filter comes back with its ``id`` (needed by
+    ``delete_email_filter``), ``criteria`` (the Gmail API fields that are
+    set: ``from``, ``to``, ``subject``, ``query``, ``negatedQuery``,
+    ``hasAttachment``, ``size``, ``sizeComparison``), ``action`` with
+    label *names* (``add_labels``, ``remove_labels``, ``forward``; the raw
+    ids are in ``add_label_ids`` / ``remove_label_ids``), and a one-line
+    ``summary`` such as ``from:jira@example.com → archive, mark read``.
+
+    Args:
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``filters`` (list, in Gmail's order) and ``count``. On
+        error returns ``{"error": str}``.
+    """
+    try:
+        filters = mail.list_filters(account=account)
+        return {"filters": filters, "count": len(filters)}
+    except Exception as e:
+        logger.error(f"Error listing filters: {e}")
+        return {"error": str(e)}
+
+
+async def create_email_filter(
+    from_address: Optional[str] = None,
+    to_address: Optional[str] = None,
+    subject: Optional[str] = None,
+    query: Optional[str] = None,
+    negated_query: Optional[str] = None,
+    has_attachment: Optional[bool] = None,
+    size: Optional[int] = None,
+    size_comparison: Optional[str] = None,
+    add_labels: Optional[list[str]] = None,
+    remove_labels: Optional[list[str]] = None,
+    forward: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a Gmail filter (Gmail ``settings.filters.create``).
+
+    Use this when the user wants a rule that holds for future mail
+    ("always archive Jira notifications", "star anything from my
+    manager") rather than a one-time change. **A filter applies only to
+    mail that arrives after it exists.** It never changes messages already
+    in the mailbox — to clean up the current inbox as well, use
+    ``search_emails`` + ``modify_email_labels`` in the same step.
+
+    Criteria map one-to-one to the Gmail filter's criteria (at least one
+    is required; all given criteria must match):
+
+    - ``from_address`` / ``to_address``: Gmail's ``from`` / ``to`` —
+      an address, a display name, or a domain (``@example.com``).
+    - ``subject``: case-insensitive phrase in the subject.
+    - ``query`` / ``negated_query``: Gmail search syntax that must /
+      must not match (``list:dev-team``, ``has:attachment older_than:7d``).
+    - ``has_attachment``: ``True`` to match only mail with attachments.
+    - ``size`` + ``size_comparison``: message size in bytes with
+      ``"larger"`` or ``"smaller"``; both or neither.
+
+    Actions take label **names** (as ``modify_email_labels`` does): a
+    label in ``add_labels`` is created if it does not exist; a label in
+    ``remove_labels`` must exist. The common Gmail actions are system
+    labels:
+
+    - archive (skip the inbox): ``remove_labels=["INBOX"]``
+    - mark as read: ``remove_labels=["UNREAD"]``
+    - star: ``add_labels=["STARRED"]``
+    - mark important: ``add_labels=["IMPORTANT"]``
+    - delete (move to trash): ``add_labels=["TRASH"]``
+    - mark as spam: ``add_labels=["SPAM"]``
+    - apply a label: ``add_labels=["Receipts"]``
+    - forward: ``forward="other@example.com"`` — Gmail only forwards to an
+      address already added and verified in that account's Settings →
+      Forwarding; otherwise Gmail rejects the filter and this tool reports
+      the rejection.
+
+    Safety: if the account already has a filter with exactly the same
+    criteria, nothing is created and the existing filter is returned in
+    ``existing_filter``. There is no update in the Gmail API: to change a
+    filter, create the replacement first (with its new criteria or, for
+    the same criteria, after deleting the old one), then
+    ``delete_email_filter`` the old one by its id.
+
+    Args:
+        from_address: Sender to match (address, name, or ``@domain``).
+        to_address: Recipient to match.
+        subject: Subject phrase to match.
+        query: Gmail search query that must match.
+        negated_query: Gmail search query that must not match.
+        has_attachment: Only mail with attachments.
+        size: Message size threshold in bytes (with ``size_comparison``).
+        size_comparison: ``"larger"`` or ``"smaller"`` (with ``size``).
+        add_labels: Label names to add (created if missing).
+        remove_labels: Label names to remove (must exist).
+        forward: Verified address to forward matching mail to.
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``success``, ``filter`` (``id``, ``criteria``, ``action``,
+        ``summary``) and ``message``. On a duplicate: ``success`` false,
+        ``error`` and ``existing_filter``. On any other error: ``success``
+        false and ``error``, which states what the token or Gmail
+        rejected and what to do.
+    """
+    try:
+        created = mail.create_filter(
+            from_address=from_address,
+            to_address=to_address,
+            subject=subject,
+            query=query,
+            negated_query=negated_query,
+            has_attachment=has_attachment,
+            size=size,
+            size_comparison=size_comparison,
+            add_labels=add_labels,
+            remove_labels=remove_labels,
+            forward=forward,
+            account=account,
+        )
+        return {
+            "success": True,
+            "filter": created,
+            "message": (
+                f"Filter created ({created['summary']}). It applies to mail "
+                "arriving from now on; messages already in the mailbox are "
+                "unchanged."
+            ),
+        }
+    except mail.DuplicateFilterError as e:
+        return {"success": False, "error": str(e), "existing_filter": e.existing}
+    except Exception as e:
+        logger.error(f"Error creating filter: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def delete_email_filter(
+    filter_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Delete one Gmail filter by id (Gmail ``settings.filters.delete``).
+
+    Deletes exactly the filter whose ``id`` is given (from
+    ``list_email_filters`` or ``create_email_filter``); there is no
+    delete-by-criteria. Deleting a filter does not undo anything it did
+    to mail that already arrived. To replace a filter, create the new one
+    first, then delete the old one.
+
+    Args:
+        filter_id: The filter's id.
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict with ``success`` and ``id``. On error: ``success`` false and
+        ``error``.
+    """
+    try:
+        result = mail.delete_filter(filter_id, account=account)
+        return {"success": True, "id": result["id"]}
+    except Exception as e:
+        logger.error(f"Error deleting filter: {e}")
+        return {"success": False, "error": str(e)}

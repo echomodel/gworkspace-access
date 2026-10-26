@@ -14,6 +14,9 @@ Example usage:
     # Add and/or remove labels across one or more messages (batch, idempotent)
     mail.modify_labels(["id1", "id2"], add_labels=["MyLabel"], remove_labels=["INBOX"])
 
+    # Keep future mail from a sender out of the inbox (a Gmail filter)
+    mail.create_filter(from_address="noreply@example.com", remove_labels=["INBOX"])
+
     # Send an email
     result = mail.send("test@example.com", "Subject", "Body text")
 """
@@ -30,6 +33,15 @@ from .read import (
 )
 from .label import modify_labels, list_labels
 from .send import send_message, create_draft, reply_message, forward_message
+from .filters import (
+    list_filters,
+    get_filter,
+    create_filter,
+    delete_filter,
+    DuplicateFilterError,
+    FilterScopeError,
+    UnknownLabelError,
+)
 
 __all__ = [
     "get_gmail_service",
@@ -46,6 +58,13 @@ __all__ = [
     "create_draft",
     "reply_message",
     "forward_message",
+    "list_filters",
+    "get_filter",
+    "create_filter",
+    "delete_filter",
+    "DuplicateFilterError",
+    "FilterScopeError",
+    "UnknownLabelError",
 ]
 
 # Convenience aliases

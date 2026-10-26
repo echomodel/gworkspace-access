@@ -1,5 +1,27 @@
 # Release Notes
 
+## v0.34.0 — Gmail filters
+
+- **New: Gmail filters.** `list_email_filters`, `create_email_filter`,
+  `delete_email_filter` (CLI: `gwsa mail filters list|get|create|delete`)
+  wrap Gmail's `users.settings.filters`. Criteria are the API's (`from`,
+  `to`, `subject`, `query`, `negatedQuery`, `hasAttachment`, `size` +
+  `sizeComparison`); actions take label names, resolved as
+  `modify_email_labels` does (archive is `remove_labels=["INBOX"]`, mark
+  read `["UNREAD"]`, star / important / trash / spam are system labels),
+  plus `forward` to an address already verified in Gmail.
+- `create` refuses a duplicate of an existing filter's criteria and
+  returns that filter; `delete` takes exactly one id. There is no update
+  in the Gmail API: create the replacement, then delete the old one.
+- Every filter comes back with its label names and a one-line `summary`
+  (`from:jira@example.com → archive`). Descriptions and the create
+  response state that a filter applies to new mail only.
+- **New scope: `gmail.settings.basic`** (alias `mail-filters`), requested
+  by `acquire-token` by default. Listing filters works with the existing
+  Gmail scope; creating or deleting with an older token returns an error
+  naming the scope and the re-acquire commands. `gwsa status` lists the
+  scope and probes `gwsa mail filters list`.
+
 ## v0.33.0 — Docs edits: each request carries its own `expect`
 
 - **Changed (breaking):** `batch_update_doc` no longer takes a separate
