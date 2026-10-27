@@ -238,6 +238,94 @@ async def send_email(
         return {"success": False, "error": str(e)}
 
 
+async def list_safe_recipients(
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """List approved safe recipient aliases available for send_safe_email.
+
+    Safe recipients are configured via the ``GWSA_SAFE_RECIPIENTS`` environment
+    variable (e.g. ``me=me@example.com,phone=1234567890@sms.example.com``), local
+    configuration file, and the user's active profile accounts. The aliases
+    ``me`` and ``self`` always resolve to the active account's own email.
+
+    Args:
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+
+    Returns:
+        Dict containing:
+            - ``safe_recipients``: Mapping of alias names to email addresses.
+            - ``aliases``: Sorted list of valid alias strings.
+    """
+    try:
+        recipients = mail.get_safe_recipients(account=account)
+        return {
+            "safe_recipients": recipients,
+            "aliases": sorted(list(recipients.keys())),
+        }
+    except Exception as e:
+        logger.error(f"Error listing safe recipients: {e}")
+        return {"error": str(e)}
+
+
+async def send_safe_email(
+    recipient: str,
+    subject: str,
+    body: Optional[str] = None,
+    html_body: Optional[str] = None,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Send an email strictly to a pre-approved safe recipient or alias.
+
+    HARNESS AUTO-APPROVAL COMPLIANT:
+    - Unlike ``send_email`` (which can send to any arbitrary recipient worldwide
+      and should NEVER be auto-approved without user review), ``send_safe_email``
+      is structurally restricted: it can ONLY send to pre-configured safe aliases
+      (e.g., 'me', 'self', 'work', 'phone') or exact email addresses that already
+      exist in the user's safe recipients list.
+    - Omit arbitrary ``to``, ``cc``, and ``bcc`` parameters entirely to eliminate
+      the risk of unintended outbound communications or prompt injection exfiltration.
+    - Designed to be safely placed on 'always allow' / auto-approved lists in agent
+      harnesses (Claude Code, Antigravity, or other client harnesses) for hands-free notifications,
+      digests, and summaries delivered directly to the user.
+
+    Args:
+        recipient: Safe alias (e.g. 'me', 'self', 'work', 'phone') or an exact
+            email address already present in the safe recipients list.
+        subject: Email subject line.
+        body: Optional plain-text body (``text/plain``).
+        html_body: Optional HTML body (``text/html``). Use this whenever the
+            email contains HTML formatting, tables, or links.
+        account: Optional account to send from (name or email). Omit to
+            use the user's default account.
+
+    Returns:
+        Dict with ``success``, ``recipient``, ``resolved_email``, ``message_id``,
+        ``thread_id``, and ``message`` describing the result. On validation or
+        API error returns ``{"success": False, "error": str}``.
+    """
+    try:
+        result = mail.send_safe_message(
+            recipient=recipient,
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            account=account,
+        )
+        resolved_to = result.get("resolved_to", recipient)
+        return {
+            "success": True,
+            "recipient": recipient,
+            "resolved_email": resolved_to,
+            "message_id": result.get("id"),
+            "thread_id": result.get("threadId"),
+            "message": f"Email sent successfully to {resolved_to} (alias: {recipient})",
+        }
+    except Exception as e:
+        logger.error(f"Error sending safe email: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def reply_email(
     message_id: str,
     body: Optional[str] = None,

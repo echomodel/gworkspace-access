@@ -608,8 +608,8 @@ description carries the full working model and recipes for agents.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 64 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (61 over
+`gwsa-mcp` is a stdio MCP server exposing 66 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (63 over
 HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.
@@ -654,6 +654,25 @@ structure behind a message — each part's `mime_type`, `content_id`,
 `disposition` (inline vs attachment), `filename`, `size`, and whether
 the HTML body references it via `cid:` — for callers that need the
 structure rather than the decoded body that `read_email` returns.
+
+#### Unattended safe delivery (`send_safe_email`)
+
+Where `send_email` accepts arbitrary recipient addresses worldwide and
+requires human review, `send_safe_email(recipient, subject, body=None,
+html_body=None, account=None)` is structurally constrained to send only
+to pre-vetted safe recipient aliases (e.g. `me`, `self`, `work`, `phone`)
+or exact emails already listed in the safe recipients mapping. Arbitrary
+`to`, `cc`, and `bcc` parameters are omitted entirely, making it safe to
+configure as **auto-approved** / "always allowed" in agent harnesses
+(Claude Code, Antigravity, or other assistant harnesses) for unattended alerts, digests, and
+session summaries.
+
+Safe recipients are configured via the `GWSA_SAFE_RECIPIENTS` environment
+variable (comma-separated `alias=email` pairs or JSON, e.g.
+`me=me@example.com,phone=1234567890@sms.example.com`), local
+configuration, and profile account names. The aliases `me` and `self`
+automatically resolve to the active account's own email. Discover
+available aliases at runtime using `list_safe_recipients`.
 
 The stdio entry point takes a `--user KEY` selector identifying
 which registered local user it should run as. The key is an opaque

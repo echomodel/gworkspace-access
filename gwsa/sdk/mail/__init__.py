@@ -33,6 +33,12 @@ from .read import (
 )
 from .label import modify_labels, list_labels
 from .send import send_message, create_draft, reply_message, forward_message
+from .safe_recipients import (
+    get_safe_recipients,
+    resolve_safe_recipient,
+    send_safe_message,
+    UnapprovedRecipientError,
+)
 from .filters import (
     list_filters,
     get_filter,
@@ -58,6 +64,10 @@ __all__ = [
     "create_draft",
     "reply_message",
     "forward_message",
+    "get_safe_recipients",
+    "resolve_safe_recipient",
+    "send_safe_message",
+    "UnapprovedRecipientError",
     "list_filters",
     "get_filter",
     "create_filter",
