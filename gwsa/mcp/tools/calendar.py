@@ -92,6 +92,9 @@ async def create_event(
     description: Optional[str] = None,
     all_day: bool = False,
     availability: Optional[str] = None,
+    visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
+    reminders: Optional[dict[str, Any]] = None,
     time_zone: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -110,6 +113,11 @@ async def create_event(
         availability: ``"free"`` or ``"busy"``. Omit to use the default
             — all-day events default to **Free**, timed events to
             **Busy**.
+        visibility: Optional visibility (``"default"``, ``"public"``,
+            ``"private"``, or ``"confidential"``).
+        color_id: Optional calendar color index (e.g. ``"11"`` for red).
+        reminders: Optional reminders dictionary (e.g. ``{"useDefault": False,
+            "overrides": [{"method": "popup", "minutes": 0}]}``).
         time_zone: IANA time zone for timed events (e.g.
             ``"America/Chicago"``).
         account: Optional account selector (name or email).
@@ -127,6 +135,9 @@ async def create_event(
             description=description,
             all_day=all_day,
             availability=availability,
+            visibility=visibility,
+            color_id=color_id,
+            reminders=reminders,
             time_zone=time_zone,
             account=account,
         )
@@ -144,6 +155,9 @@ async def update_event(
     end: Optional[str] = None,
     all_day: bool = False,
     availability: Optional[str] = None,
+    visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
+    reminders: Optional[dict[str, Any]] = None,
     time_zone: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -162,6 +176,10 @@ async def update_event(
         end: New end time, if changing.
         all_day: Whether provided ``start``/``end`` are all-day dates.
         availability: ``"free"`` or ``"busy"`` to change Free/Busy.
+        visibility: Optional new visibility (``"default"``, ``"public"``,
+            ``"private"``, or ``"confidential"``).
+        color_id: Optional new color index (e.g. ``"11"``).
+        reminders: Optional new reminders dictionary.
         time_zone: IANA time zone for timed ``start``/``end``.
         account: Optional account selector (name or email).
 
@@ -179,6 +197,9 @@ async def update_event(
             end=end,
             all_day=all_day,
             availability=availability,
+            visibility=visibility,
+            color_id=color_id,
+            reminders=reminders,
             time_zone=time_zone,
             account=account,
         )

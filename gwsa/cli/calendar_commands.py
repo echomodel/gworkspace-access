@@ -59,14 +59,23 @@ def list_events(calendar_id, time_min, time_max, query, max_results):
     default=None,
     help="Free/Busy. Default: all-day=free, timed=busy.",
 )
+@click.option(
+    "--visibility",
+    type=click.Choice(["default", "public", "private", "confidential"]),
+    default=None,
+    help="Event visibility.",
+)
+@click.option("--color-id", default=None, help="Calendar color index (e.g. 11 for red).")
+@click.option("--reminders-json", default=None, help="JSON string for reminders configuration.")
 @click.option("--time-zone", default=None, help="IANA time zone for timed events.")
 @require_scopes("calendar")
 def create_event(
     summary, start, end, calendar_id, description, all_day,
-    availability, time_zone,
+    availability, visibility, color_id, reminders_json, time_zone,
 ):
     """Create an event (START/END are RFC3339 datetimes or YYYY-MM-DD dates)."""
     try:
+        reminders = json.loads(reminders_json) if reminders_json else None
         result = sdk_calendar.create_event(
             summary,
             start,
@@ -75,6 +84,9 @@ def create_event(
             description=description,
             all_day=all_day,
             availability=availability,
+            visibility=visibility,
+            color_id=color_id,
+            reminders=reminders,
             time_zone=time_zone,
         )
         click.echo(json.dumps(result, indent=2))
@@ -96,14 +108,23 @@ def create_event(
     default=None,
     help="Change Free/Busy. Omit to leave unchanged.",
 )
+@click.option(
+    "--visibility",
+    type=click.Choice(["default", "public", "private", "confidential"]),
+    default=None,
+    help="New event visibility.",
+)
+@click.option("--color-id", default=None, help="New color index.")
+@click.option("--reminders-json", default=None, help="JSON string for reminders configuration.")
 @click.option("--time-zone", default=None, help="IANA time zone for timed start/end.")
 @require_scopes("calendar")
 def update_event(
     event_id, calendar_id, summary, description, start, end,
-    all_day, availability, time_zone,
+    all_day, availability, visibility, color_id, reminders_json, time_zone,
 ):
     """Update fields on a calendar event."""
     try:
+        reminders = json.loads(reminders_json) if reminders_json else None
         result = sdk_calendar.update_event(
             event_id,
             calendar_id=calendar_id,
@@ -113,6 +134,9 @@ def update_event(
             end=end,
             all_day=all_day,
             availability=availability,
+            visibility=visibility,
+            color_id=color_id,
+            reminders=reminders,
             time_zone=time_zone,
         )
         click.echo(json.dumps(result, indent=2))

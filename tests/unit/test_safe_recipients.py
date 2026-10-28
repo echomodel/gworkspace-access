@@ -112,27 +112,26 @@ def active_user():
 
 
 def test_get_safe_recipients_default_active_account(active_user, monkeypatch):
-    """Without env vars, 'me', 'self', and profile account names are available."""
+    """Without env vars, only 'me' and 'self' (active account) are available."""
     monkeypatch.delenv("GWSA_SAFE_RECIPIENTS", raising=False)
     monkeypatch.delenv("SAFE_RECIPIENTS", raising=False)
 
     recipients = get_safe_recipients()
-    assert recipients["me"] == "alice@example.com"
-    assert recipients["self"] == "alice@example.com"
-    assert recipients["personal"] == "alice@example.com"
-    assert recipients["work"] == "alice.corp@example.com"
+    assert recipients == {"me": "alice@example.com", "self": "alice@example.com"}
+    # Other accounts on the profile are not auto-added
+    assert "work" not in recipients
+    assert "personal" not in recipients
 
 
 def test_get_safe_recipients_from_env_comma_separated(active_user, monkeypatch):
     """GWSA_SAFE_RECIPIENTS parses comma-separated key=value pairs."""
-    env_val = "notes=notes@example.org, phone=1234567890@sms.example.org, ME=custom.me@example.com"
+    env_val = "notes=notes@example.org, my-phone=1234567890@sms.example.org, ME=custom.me@example.com"
     monkeypatch.setenv("GWSA_SAFE_RECIPIENTS", env_val)
 
     recipients = get_safe_recipients()
     assert recipients["notes"] == "notes@example.org"
-    assert recipients["phone"] == "1234567890@sms.example.org"
+    assert recipients["my-phone"] == "1234567890@sms.example.org"
     assert recipients["me"] == "custom.me@example.com"
-    assert recipients["work"] == "alice.corp@example.com"
 
 
 def test_get_safe_recipients_from_env_json(active_user, monkeypatch):

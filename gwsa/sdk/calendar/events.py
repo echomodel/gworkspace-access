@@ -27,6 +27,24 @@ _TRANSPARENCY_TO_AVAILABILITY = {
     "transparent": "free",
     "opaque": "busy",
 }
+_ALLOWED_VISIBILITIES = {"default", "public", "private", "confidential"}
+
+
+def _validate_visibility(visibility: Optional[str]) -> Optional[str]:
+    """Validate and normalize event visibility.
+
+    Returns normalized lower-case string or None.
+    Raises ValueError for unsupported visibility values.
+    """
+    if visibility is None:
+        return None
+    val = visibility.strip().lower()
+    if val not in _ALLOWED_VISIBILITIES:
+        raise ValueError(
+            f"visibility must be one of {sorted(_ALLOWED_VISIBILITIES)}, got {visibility!r}"
+        )
+    return val
+
 
 
 def _availability_to_transparency(availability: Optional[str]) -> Optional[str]:
@@ -84,9 +102,11 @@ def _normalize(event: dict) -> dict:
     The Calendar API omits ``transparency`` when it is the default
     ``opaque``. We surface an explicit normalized value plus the
     Free/Busy ``availability`` alias so callers never have to infer it.
+    Optional fields like ``visibility``, ``colorId``, and ``reminders``
+    are preserved when present.
     """
     transparency = event.get("transparency", "opaque")
-    return {
+    res = {
         "id": event.get("id"),
         "summary": event.get("summary"),
         "description": event.get("description"),
@@ -99,6 +119,13 @@ def _normalize(event: dict) -> dict:
             transparency, "busy"
         ),
     }
+    if "visibility" in event:
+        res["visibility"] = event["visibility"]
+    if "colorId" in event:
+        res["color_id"] = event["colorId"]
+    if "reminders" in event:
+        res["reminders"] = event["reminders"]
+    return res
 
 
 def create_event(
@@ -110,6 +137,9 @@ def create_event(
     description: Optional[str] = None,
     all_day: bool = False,
     availability: Optional[str] = None,
+    visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
+    reminders: Optional[dict] = None,
     time_zone: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
@@ -128,6 +158,11 @@ def create_event(
             than ``dateTime``).
         availability: ``"free"`` or ``"busy"``. Omit to use the default:
             all-day events default to Free, timed events to Busy.
+        visibility: Optional event visibility (``"default"``, ``"public"``,
+            ``"private"``, or ``"confidential"``).
+        color_id: Optional calendar color index (e.g. ``"11"`` for red).
+        reminders: Optional reminders dictionary (e.g. ``{"useDefault": False,
+            "overrides": [{"method": "popup", "minutes": 0}]}``).
         time_zone: IANA time zone for timed events (e.g.
             ``"America/Chicago"``). Ignored for all-day events.
         account: Optional account selector (name or email).
@@ -147,6 +182,13 @@ def create_event(
     transparency = _resolve_transparency(availability, all_day)
     if transparency is not None:
         body["transparency"] = transparency
+    norm_vis = _validate_visibility(visibility)
+    if norm_vis is not None:
+        body["visibility"] = norm_vis
+    if color_id is not None:
+        body["colorId"] = str(color_id)
+    if reminders is not None:
+        body["reminders"] = reminders
 
     event = (
         service.events()
@@ -166,6 +208,9 @@ def update_event(
     end: Optional[str] = None,
     all_day: bool = False,
     availability: Optional[str] = None,
+    visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
+    reminders: Optional[dict] = None,
     time_zone: Optional[str] = None,
     account: Optional[str] = None,
 ) -> dict:
@@ -188,6 +233,10 @@ def update_event(
             dates. Only relevant when ``start``/``end`` are passed.
         availability: ``"free"`` or ``"busy"`` to change Free/Busy.
             Omit to leave the event's current transparency unchanged.
+        visibility: Optional new visibility (``"default"``, ``"public"``,
+            ``"private"``, or ``"confidential"``).
+        color_id: Optional new color index (e.g. ``"11"``).
+        reminders: Optional new reminders dictionary.
         time_zone: IANA time zone for timed ``start``/``end``.
         account: Optional account selector (name or email).
 
@@ -211,6 +260,13 @@ def update_event(
     transparency = _availability_to_transparency(availability)
     if transparency is not None:
         body["transparency"] = transparency
+    norm_vis = _validate_visibility(visibility)
+    if norm_vis is not None:
+        body["visibility"] = norm_vis
+    if color_id is not None:
+        body["colorId"] = str(color_id)
+    if reminders is not None:
+        body["reminders"] = reminders
 
     event = (
         service.events()

@@ -106,6 +106,79 @@ def patch_calendar_service(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_event_with_visibility_color_and_reminders(patch_calendar_service):
+    """Test create_event with optional visibility, color_id, and reminders."""
+    store = patch_calendar_service
+    reminders_payload = {
+        "useDefault": False,
+        "overrides": [{"method": "popup", "minutes": 0}],
+    }
+    result = await calendar_tools.create_event(
+        summary="Urgent Alert",
+        start="2026-06-01T12:00:00-05:00",
+        end="2026-06-01T12:15:00-05:00",
+        availability="free",
+        visibility="private",
+        color_id="11",
+        reminders=reminders_payload,
+    )
+    inserted_body = store["inserted"]["body"]
+    assert inserted_body["transparency"] == "transparent"
+    assert inserted_body["visibility"] == "private"
+    assert inserted_body["colorId"] == "11"
+    assert inserted_body["reminders"] == reminders_payload
+    assert result["availability"] == "free"
+    assert result["visibility"] == "private"
+    assert result["color_id"] == "11"
+    assert result["reminders"] == reminders_payload
+
+
+@pytest.mark.asyncio
+async def test_create_event_invalid_visibility_returns_error(patch_calendar_service):
+    result = await calendar_tools.create_event(
+        summary="Alert",
+        start="2026-06-01T12:00:00-05:00",
+        end="2026-06-01T12:15:00-05:00",
+        visibility="invalid_vis",
+    )
+    assert "error" in result
+    assert "visibility must be" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_event_with_visibility_color_and_reminders(patch_calendar_service):
+    store = patch_calendar_service
+    reminders_payload = {
+        "useDefault": False,
+        "overrides": [{"method": "popup", "minutes": 10}],
+    }
+    result = await calendar_tools.update_event(
+        event_id="evt-alert",
+        visibility="confidential",
+        color_id="11",
+        reminders=reminders_payload,
+    )
+    patched_body = store["patched"]["body"]
+    assert patched_body["visibility"] == "confidential"
+    assert patched_body["colorId"] == "11"
+    assert patched_body["reminders"] == reminders_payload
+    assert result["visibility"] == "confidential"
+    assert result["color_id"] == "11"
+    assert result["reminders"] == reminders_payload
+
+
+@pytest.mark.asyncio
+async def test_update_event_invalid_visibility_returns_error(patch_calendar_service):
+    result = await calendar_tools.update_event(
+        event_id="evt-alert",
+        visibility="invalid_vis",
+    )
+    assert "error" in result
+    assert "visibility must be" in result["error"]
+
+
+
+@pytest.mark.asyncio
 async def test_create_event_free_sets_transparent(patch_calendar_service):
     store = patch_calendar_service
     result = await calendar_tools.create_event(

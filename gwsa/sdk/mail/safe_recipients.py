@@ -68,9 +68,10 @@ def get_safe_recipients(account: Optional[str] = None) -> dict[str, str]:
     """Resolve the active dictionary of approved safe recipient aliases.
 
     Resolution order:
-    1. Built-in defaults: Account names on the active profile, plus ``me``
-       and ``self`` mapped to the active account email.
-    2. Local configuration file: ``safe_recipients`` section in config.yaml.
+    1. Built-in defaults: ``me`` and ``self`` strictly mapped to the active
+       account's own email address. Other accounts on the profile are NOT
+       included unless explicitly configured.
+    2. Local configuration file: ``safe_recipients`` mapping in config.yaml.
     3. Environment variables: ``SAFE_RECIPIENTS`` and ``GWSA_SAFE_RECIPIENTS``
        (take highest precedence).
 
@@ -82,23 +83,7 @@ def get_safe_recipients(account: Optional[str] = None) -> dict[str, str]:
     """
     recipients: dict[str, str] = {}
 
-    # 1. Accounts from active user profile if available
-    try:
-        from mcp_app.context import current_user
-        from gwsa import Profile
-
-        user = current_user.get()
-        if user and user.profile:
-            profile = user.profile
-            if isinstance(profile, dict):
-                profile = Profile(**profile)
-            for acc in getattr(profile, "accounts", []):
-                if acc.name and acc.email:
-                    recipients[acc.name.strip().lower()] = acc.email.strip()
-    except Exception:
-        pass
-
-    # Active account email for 'me' and 'self'
+    # 1. Built-in: active account email for 'me' and 'self'
     active_email = _get_active_account_email(account=account)
     if active_email:
         recipients["me"] = active_email.strip()

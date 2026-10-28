@@ -244,9 +244,9 @@ async def list_safe_recipients(
     """List approved safe recipient aliases available for send_safe_email.
 
     Safe recipients are configured via the ``GWSA_SAFE_RECIPIENTS`` environment
-    variable (e.g. ``me=me@example.com,phone=1234567890@sms.example.com``), local
-    configuration file, and the user's active profile accounts. The aliases
-    ``me`` and ``self`` always resolve to the active account's own email.
+    variable (e.g. ``my-phone=1234567890@sms.example.com``) and local configuration
+    file (``safe_recipients:`` mapping). The reserved aliases ``me`` and ``self``
+    always resolve automatically to the active account's own email.
 
     Args:
         account: Optional account selector (name or email). Omit to use
@@ -290,8 +290,10 @@ async def send_safe_email(
       digests, and summaries delivered directly to the user.
 
     Args:
-        recipient: Safe alias (e.g. 'me', 'self', 'work', 'phone') or an exact
-            email address already present in the safe recipients list.
+        recipient: Safe alias. When sending an email to yourself, pass 'me' (or 'self');
+            this automatically resolves to your active account email. To send to another
+            destination (e.g. 'my-phone'), pass an explicitly configured alias matching
+            an entry in your safe recipients configuration.
         subject: Email subject line.
         body: Optional plain-text body (``text/plain``).
         html_body: Optional HTML body (``text/html``). Use this whenever the
