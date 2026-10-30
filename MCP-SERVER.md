@@ -75,7 +75,7 @@ after `pipx install`.
 
 ## Tool inventory
 
-64 tools over stdio (61 over HTTP, which omits the stdio-only
+68 tools over stdio (65 over HTTP, which omits the stdio-only
 host-path tools), one module per Google API plus an account-discovery
 module. mcp-app auto-discovers public async functions from each module:
 
@@ -87,13 +87,14 @@ module. mcp-app auto-discovers public async functions from each module:
   create_email_filter, delete_email_filter
 - **`gwsa.mcp.tools.docs`** (5): list_docs, create_doc, read_doc,
   find_in_doc, batch_update_doc
-- **`gwsa.mcp.tools.drive`** (19): drive_list_folder,
+- **`gwsa.mcp.tools.drive`** (21): drive_list_folder,
   drive_create_folder, drive_create_file, drive_create_file_local (stdio only),
   drive_update_file, drive_update_file_local (stdio only), drive_download,
   drive_download_to_path (stdio only), drive_copy,
   drive_set_properties, drive_delete, drive_search, drive_get_metadata,
   drive_find_folder, drive_search_folders, drive_list_revisions,
-  drive_get_revision, drive_keep_revision, drive_unkeep_revision
+  drive_get_revision, drive_keep_revision, drive_unkeep_revision,
+  drive_list_permissions, drive_set_permission
 - **`gwsa.mcp.tools.chat`** (7): list_chat_spaces, list_chat_members,
   list_chat_messages, search_chat_messages, get_recent_direct_messages,
   get_recent_group_chats, download_chat_attachment
