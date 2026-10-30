@@ -1,7 +1,8 @@
-.PHONY: install test framework-test integration-test clean uninstall help venv
+.PHONY: setup install test framework-test integration-test clean uninstall help
 
-# Auto-create venv on first invocation; idempotent thereafter.
-venv:
+# Bootstrap the dev environment: create .venv and install the package with
+# dev extras. Idempotent: a no-op once .venv exists.
+setup:
 	@if [ ! -d ".venv" ]; then \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && pip install --upgrade pip && pip install -e '.[dev]'; \
@@ -15,16 +16,16 @@ install:
 	@echo "Done. CLIs installed: gwsa, gwsa-mcp, gwsa-admin"
 
 # Default test target — unit + framework only. Fast, offline, no credentials.
-test: venv
+test: setup
 	@. .venv/bin/activate && pytest
 
 # Framework conformance tests only.
-framework-test: venv
+framework-test: setup
 	@. .venv/bin/activate && pytest tests/framework/ -v
 
 # Real-user integration suite — hits live Gmail/Drive. Requires a configured
 # local account (gwsa-admin connect local + gwsa-admin accounts add).
-integration-test: venv
+integration-test: setup
 	@. .venv/bin/activate && pytest tests/integration/real-user/ -v
 
 clean:
@@ -36,8 +37,9 @@ uninstall:
 
 help:
 	@echo "Targets:"
+	@echo "  setup            - Create .venv and install the package with dev extras (idempotent)"
 	@echo "  install          - Install with pipx (gwsa + gwsa-mcp + gwsa-admin)"
-	@echo "  test             - Run unit + framework tests (auto-creates venv)"
+	@echo "  test             - Run unit + framework tests (runs setup first)"
 	@echo "  framework-test   - Run only the mcp-app framework conformance tests"
 	@echo "  integration-test - Run real-user integration tests (requires creds)"
 	@echo "  clean            - Remove venv and build artifacts"
