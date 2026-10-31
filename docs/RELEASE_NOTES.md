@@ -21,6 +21,51 @@
 - No new scope: `permissions` is covered by the `drive` scope every
   account has.
 
+## v0.36.0 — Calendar events: visibility, color, reminders
+
+- **New on `create_event` / `update_event`:** `visibility` (`default`,
+  `public`, `private`, or `confidential`), `color_id` (a Calendar color
+  index, e.g. `"11"`), and `reminders` (the API's `reminders` object,
+  e.g. `{"useDefault": false, "overrides": [{"method": "popup",
+  "minutes": 0}]}`). CLI: `--visibility`, `--color-id`, and
+  `--reminders-json` on `gwsa calendar create` and `gwsa calendar
+  update`.
+- Each field is optional and sent only when passed. `update` leaves an
+  event's visibility, color, and reminders unchanged unless you pass
+  them, as it already does for Free/Busy. A `visibility` outside the
+  four values is refused before any API call.
+- Returned events carry `visibility`, `color_id`, and `reminders` when
+  the API returns them, beside the normalized `transparency` /
+  `availability`.
+- **Changed: `send_safe_email` built-in aliases.** The account names on
+  the user's profile are no longer safe recipients by default; only `me`
+  and `self` (the active account's own address) are built in. Every
+  other destination must be configured explicitly (`safe_recipients:`
+  in `config.yaml` or `GWSA_SAFE_RECIPIENTS`).
+- No new scopes: the existing Calendar scopes cover these fields.
+
+## v0.35.0 — `send_safe_email`: unattended delivery to approved recipients
+
+- **New: `send_safe_email(recipient, subject, body=None, html_body=None,
+  account=None)`.** Sends only to a configured safe-recipient alias, or
+  to an address already in that list. It has no `to`, `cc`, or `bcc`, so
+  an agent harness can mark it auto-approved for alerts, digests, and
+  session summaries without opening a path to arbitrary addresses.
+  `send_email` is unchanged and still warrants review per call.
+- **New: `list_safe_recipients`** returns the alias-to-address mapping
+  and the sorted alias list an agent may pass.
+- Safe recipients come from the `GWSA_SAFE_RECIPIENTS` environment
+  variable (comma-separated `alias=email` pairs or a JSON object, e.g.
+  `phone=1234567890@sms.example.com`), the `safe_recipients` mapping in
+  `~/.config/gworkspace-access/config.yaml`, and the account names on
+  the user's profile; `me` and `self` always resolve to the active
+  account's own address. Later sources override earlier ones, and
+  aliases are matched case-insensitively.
+- A recipient that matches no alias or listed address is refused with
+  the approved aliases named, and nothing is sent. The response carries
+  `resolved_email` beside the alias that was passed.
+- MCP tool count: 66 (63 over HTTP).
+
 ## v0.34.0 — Gmail filters
 
 - **New: Gmail filters.** `list_email_filters`, `create_email_filter`,
