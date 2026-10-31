@@ -420,6 +420,52 @@ cleanly to a hosted MCP tool, since a remote server can't read the
 agent's filesystem and shipping the whole file inline just to hash it
 defeats the purpose.)
 
+### Drive sharing: who has access, and ownership transfer
+
+A file's sharing is its list of permissions. `gwsa drive permissions`
+lists them and changes one grant at a time (`permissions.list`,
+`permissions.create` / `update` / `delete`):
+
+```bash
+gwsa drive permissions list FILE_ID
+gwsa drive permissions set FILE_ID reader --email bob@example.com      # grant, or lower
+gwsa drive permissions set FILE_ID none   --email bob@example.com      # remove
+gwsa drive permissions set FILE_ID reader --type anyone                # link sharing on
+gwsa drive permissions set FILE_ID none   --type anyone                # link sharing off
+gwsa --account old drive permissions set FILE_ID pending_owner --email new@example.com
+gwsa --account new drive permissions set FILE_ID owner                 # accept
+```
+
+- **One `role` argument picks the API call.** `reader` / `commenter` /
+  `writer` update the person's existing grant (lowering as well as
+  raising) or create one; `none` deletes it; `pending_owner` offers
+  ownership; `owner` accepts an offer made to the calling account.
+  `--type group` shares with a Google Group; `--type anyone` turns link
+  sharing on or off.
+- **Ownership transfer between consumer accounts is two steps**, as in
+  [Google's guide](https://developers.google.com/workspace/drive/api/guides/transfer-file):
+  the owner sets `pending_owner` on the new owner (Drive emails an
+  invitation and the grant shows `pendingOwner: true`), then the new
+  owner runs `owner`. With both accounts registered in gwsa, that is two
+  commands with different `--account` values, and the bulk-transfer
+  limits of the Drive UI do not apply. Inside one Workspace domain,
+  `owner --email` transfers directly.
+- **Inherited grants are changed on the folder.** Each permission
+  carries `permissionDetails.inherited` and `inheritedFrom`; Drive
+  refuses to change an inherited grant on the file, and gwsa's error
+  names the folder. Folders pass their grants down, and the tools never
+  recurse: a bulk change over a tree is a loop in the caller.
+- **The owner's grant cannot be removed** (`none` is refused); transfer
+  ownership instead. Every change returns the file's full permission
+  list afterwards, so the result is verified in the same call.
+- No notification email is sent, except the ownership invitation,
+  which Drive requires.
+
+MCP tools: `drive_list_permissions` (read-only) and
+`drive_set_permission`, which changes sharing and should be confirmed
+with the user before it is called. Both use the `drive` scope every
+gwsa account already has.
+
 ### Tag files for discovery (custom properties)
 
 Attach custom key/value metadata to any Drive file or folder so it can
@@ -608,8 +654,8 @@ description carries the full working model and recipes for agents.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 66 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (63 over
+`gwsa-mcp` is a stdio MCP server exposing 68 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (65 over
 HTTP, which omits the three stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.

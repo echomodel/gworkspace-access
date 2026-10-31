@@ -1,5 +1,26 @@
 # Release Notes
 
+## v0.37.0 — Drive sharing and ownership transfer
+
+- **New: `drive_list_permissions` and `drive_set_permission`** (CLI:
+  `gwsa drive permissions list|set`) wrap Drive's `permissions` resource.
+  `list` returns every grant as the API gives it, including
+  `pendingOwner` and `permissionDetails.inherited` / `inheritedFrom`.
+  `set` changes one grant per call; its `role` picks the API call:
+  `reader` / `commenter` / `writer` (update the person's grant, lowering
+  as well as raising, or create one), `none` (delete),
+  `pending_owner` (offer ownership; Drive emails the invitation) and
+  `owner` (the invited account accepts). `type="anyone"` turns link
+  sharing on or off; `type="group"` shares with a Google Group.
+- With two accounts registered in gwsa, a consumer-account ownership
+  transfer is two calls with different `account` values, without the
+  Drive UI's bulk-transfer limits.
+- `none` on the owner's grant is refused; an inherited grant's rejection
+  names the folder it comes from; every change returns the file's full
+  permission list afterwards. The tools never recurse into folders.
+- No new scope: `permissions` is covered by the `drive` scope every
+  account has.
+
 ## v0.36.0 — Calendar events: visibility, color, reminders
 
 - **New on `create_event` / `update_event`:** `visibility` (`default`,

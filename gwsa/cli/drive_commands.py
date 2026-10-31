@@ -372,3 +372,59 @@ def revisions_unkeep(file_id, revision_id):
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
+
+
+@drive_group.group('permissions')
+def permissions_group():
+    """Who has access to a file or folder, and change it.
+
+    A file's sharing is its list of permissions (grants). Grants on a
+    folder pass down to its contents; a grant marked inherited is changed
+    on the folder it comes from, not on the file.
+    """
+    pass
+
+
+@permissions_group.command('list')
+@click.argument('file_id')
+@require_scopes('drive')
+def permissions_list(file_id):
+    """List every grant on FILE_ID, as the Drive API returns them."""
+    try:
+        result = drive.list_permissions(file_id)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@permissions_group.command('set')
+@click.argument('file_id')
+@click.argument('role', type=click.Choice(drive.permissions.ROLES))
+@click.option('--email', default=None,
+              help='User or group address. Required unless --type anyone, '
+                   'or ROLE is owner (the calling account accepts).')
+@click.option('--type', 'type_', default='user',
+              type=click.Choice(drive.permissions.TYPES), show_default=True,
+              help='Principal type. "anyone" turns link sharing on/off.')
+@require_scopes('drive')
+def permissions_set(file_id, role, email, type_):
+    """Change one grant on FILE_ID; ROLE picks the Drive API call.
+
+    \b
+      reader|commenter|writer  give --email that access (lower or raise)
+      none                     remove --email's access (or link sharing)
+      pending_owner            offer ownership to --email (Drive emails them)
+      owner                    accept a transfer offered to this account
+
+    Transfer between two gwsa accounts:
+    gwsa --account old drive permissions set FILE pending_owner --email NEW,
+    then gwsa --account new drive permissions set FILE owner.
+    """
+    try:
+        result = drive.set_permission(
+            file_id, role=role, email=email, type=type_)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
