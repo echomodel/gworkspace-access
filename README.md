@@ -766,8 +766,7 @@ across all clients is in [MCP Server Setup](MCP-SERVER.md).
 
 | Path | Purpose |
 |------|---------|
-| `~/.local/share/gwsa/users/<email>/auth.json`    | Per-user auth record. |
-| `~/.local/share/gwsa/users/<email>/profile.json` | Per-user profile (accounts list). |
+| `~/.local/share/gwsa/users/<key>/user.json`      | Per-user record: auth plus profile (accounts list). `<key>` is the user key (`local` on a fresh install); an email key has `@` written as `~`. |
 | `~/.config/gwsa/setup.json`                      | `connect local` / `connect <url>` config. |
 | `~/.config/gworkspace-access/profiles/<name>/`   | **Legacy** vault (pre-mcp-app). Read-only after `gwsa-admin migrate`; delete manually when satisfied. |
 
