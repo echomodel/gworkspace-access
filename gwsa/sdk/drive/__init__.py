@@ -24,6 +24,13 @@ from .download import (
 )
 from .files import update_metadata, copy_file, delete_file, get_metadata, set_properties
 from .search import search_drive
+from .permissions import (
+    list_permissions,
+    set_permission,
+    PermissionNotFoundError,
+    OwnerRemovalRefusedError,
+    InheritedPermissionError,
+)
 from .revisions import (
     list_revisions,
     download_revision_bytes,
@@ -59,6 +66,11 @@ __all__ = [
     "get_metadata",
     "set_properties",
     "search_drive",
+    "list_permissions",
+    "set_permission",
+    "PermissionNotFoundError",
+    "OwnerRemovalRefusedError",
+    "InheritedPermissionError",
     "list_revisions",
     "download_revision_bytes",
     "download_revision_file",

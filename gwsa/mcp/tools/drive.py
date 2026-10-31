@@ -976,3 +976,120 @@ async def drive_unkeep_revision(
     except Exception as e:
         logger.error(f"Error unpinning revision: {e}")
         return {"error": str(e)}
+
+
+async def drive_list_permissions(
+    file_id: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """List who has access to a Drive file or folder (``permissions.list``).
+
+    Read-only. Each permission is returned as the Drive API gives it:
+    ``id``, ``type`` (``user`` / ``group`` / ``domain`` / ``anyone``),
+    ``role`` (``owner`` / ``writer`` / ``commenter`` / ``reader``),
+    ``emailAddress`` or ``domain``, ``displayName``, ``pendingOwner``
+    (``true`` while an ownership transfer awaits acceptance), and
+    ``permissionDetails`` with ``inherited`` / ``inheritedFrom``. An
+    inherited grant comes from a parent folder and is changed on that
+    folder (``inheritedFrom`` is its id), not on this file. A ``type:
+    anyone`` permission means link sharing is on.
+
+    Args:
+        file_id: Drive file or folder ID.
+        account: Optional account selector (name or email). The list is
+            what this account can see; omit to use the default account.
+
+    Returns:
+        Dict with ``file_id`` and ``permissions`` (all of them).
+    """
+    try:
+        return drive.list_permissions(file_id, account=account)
+    except Exception as e:
+        logger.error(f"Error listing permissions: {e}")
+        return {"error": str(e)}
+
+
+async def drive_set_permission(
+    file_id: str,
+    role: str,
+    email: Optional[str] = None,
+    type: str = "user",
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Change one person's access to a Drive file or folder, turn link sharing
+    on or off, or transfer ownership. **Changes sharing: confirm with the
+    user before calling.**
+
+    One grant on one file per call. ``role`` chooses the Drive API call:
+
+    - ``reader`` / ``commenter`` / ``writer`` — give ``email`` that access.
+      Updates their existing grant (this **lowers** access as well as
+      raising it) or creates one. No notification email is sent.
+    - ``none`` — remove ``email``'s access (``permissions.delete``).
+      Refused on the owner's grant; transfer ownership instead.
+    - ``pending_owner`` — offer ownership to ``email`` (``role=writer,
+      pendingOwner=true``). Drive emails them an invitation; the file stays
+      the caller's until they accept. This is the first step of a transfer
+      between consumer accounts.
+    - ``owner`` — accept a transfer offered to the calling account: with no
+      ``email``, updates the caller's own grant with ``role=owner,
+      transferOwnership=true``. Call it with ``account=`` set to the
+      invited account. With an ``email``, transfers directly to that user,
+      which Drive allows only inside one Workspace domain.
+
+    ``type="anyone"`` controls link sharing: ``role="reader"`` (or
+    ``commenter`` / ``writer``) turns it on, ``role="none"`` turns it off;
+    pass no ``email``. ``type="group"`` shares with a Google Group's
+    address.
+
+    A grant inherited from a parent folder cannot be changed on the file;
+    the error names the folder. Folders pass their grants down to their
+    contents, so to change access to a tree change the folder; this tool
+    never recurses.
+
+    Transfer between two accounts registered in gwsa, in two calls:
+    ``drive_set_permission(FILE, "pending_owner", email=NEW_OWNER,
+    account=OLD)`` then ``drive_set_permission(FILE, "owner",
+    account=NEW)``.
+
+    Args:
+        file_id: Drive file or folder ID.
+        role: ``reader``, ``commenter``, ``writer``, ``none``,
+            ``pending_owner`` or ``owner``.
+        email: The user or group address. Required unless ``type`` is
+            ``anyone`` or ``role`` is ``owner`` (the caller's own grant).
+        type: ``user`` (default), ``group`` or ``anyone``.
+        account: Optional account selector (name or email). The change is
+            made as this account; omit to use the default account.
+
+    Returns:
+        Dict with ``file_id``, ``action`` (``created`` / ``updated`` /
+        ``deleted``), ``permission`` (the resulting grant, ``null`` after a
+        delete) and ``permissions`` (the file's full list afterwards, so the
+        result can be verified without another call).
+    """
+    try:
+        return drive.set_permission(
+            file_id, role=role, email=email, type=type, account=account,
+        )
+    except ValueError as e:
+        # Includes PermissionNotFoundError, OwnerRemovalRefusedError and
+        # InheritedPermissionError, which state the facts themselves.
+        return {"error": str(e)}
+    except HttpError as e:
+        logger.error(f"Drive rejected the sharing change: {e}")
+        reason = getattr(e, "reason", None) or str(e)
+        return {
+            "error": f"Drive rejected the sharing change: {reason}",
+            "details": str(e),
+            "hint": (
+                "Only an owner, or a writer the owner allows to share, can "
+                "change sharing; an ownership transfer needs the current "
+                "owner (pending_owner) and then the invited account "
+                "(owner). Try a different 'account' (see "
+                "'list_google_accounts') or check drive_list_permissions."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Error changing permission: {e}")
+        return {"error": str(e)}

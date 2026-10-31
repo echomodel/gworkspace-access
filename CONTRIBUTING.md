@@ -345,6 +345,49 @@ preserve if you touch this code:
    raw `HttpError`. The integration test asserts this behavior; don't
    "fix" it to expect symmetric toggling.
 
+### Drive sharing follows the `permissions` resource
+
+`gwsa/sdk/drive/permissions.py` wraps Drive's `permissions` resource in
+two functions. `list_permissions` is `permissions.list`, returned as the
+API gives it (camelCase, every page), because callers reason about the
+API's own fields: `pendingOwner`, `permissionDetails.inherited` /
+`inheritedFrom`. `set_permission` changes one grant on one file, and its
+`role` argument picks the call: `reader` / `commenter` / `writer` update
+the principal's existing grant or create one, `none` deletes it,
+`pending_owner` sets `role=writer, pendingOwner=true`, `owner` sets
+`role=owner, transferOwnership=true` (on the caller's own grant when no
+email is given, which accepts a pending transfer). Rules to preserve:
+
+1. **One tool for every sharing change, one grant per call.** Don't add
+   share / unshare / transfer tools beside `drive_set_permission`, and
+   don't add recursion: folders pass their grants down, and a walk over
+   a tree belongs to the caller or a skill, where it can be paced and
+   reviewed.
+2. **The principal is looked up first, then updated or created.** The
+   list read before the write is what lets one call lower a role as well
+   as raise it, and what the owner refusal checks. The response carries
+   the list read after the write, so a caller verifies in one round trip.
+3. **`none` on the owner's grant is refused** (`OwnerRemovalRefusedError`,
+   naming `pending_owner`) before any API call. Drive cannot remove an
+   owner; the only way out is a transfer.
+4. **Drive's `cannotModifyInheritedPermission` becomes
+   `InheritedPermissionError`**, naming the `inheritedFrom` folder from
+   the grant that was read. Other `HttpError`s propagate unchanged and the
+   tool layer envelopes them with Drive's reason and a hint about which
+   account can make the change.
+5. **No notification email, except where Drive requires one.**
+   `sendNotificationEmail=false` on every create, except the
+   `pending_owner` invitation and a direct `owner` transfer.
+6. **The tool description says "confirm with the user".** mcp-app
+   registers tools without MCP annotations, so `drive_set_permission`
+   cannot carry `destructiveHint`; the first line of its description
+   states that it changes sharing and should be confirmed, and the
+   read-only listing is a separate tool so clients can allow it alone.
+   Set `destructiveHint` on it once the framework passes annotations.
+
+The full `drive` scope every account has covers `permissions`; no new
+scope.
+
 ### Calendar event availability (Free/Busy)
 
 Calendar event create/update map an `availability` value (`free`/`busy`)
