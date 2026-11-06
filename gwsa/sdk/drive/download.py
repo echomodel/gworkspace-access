@@ -1,4 +1,13 @@
-"""Google Drive download operations."""
+"""Google Drive download operations — uploaded (non-native) files only.
+
+Download returns a file's stored bytes (``files.get?alt=media``). Native
+Google files (Docs, Sheets, Slides, Drawings) have none: Drive answers a
+download of one with HTTP 403 ``fileNotDownloadable``. :func:`download_file`
+and :func:`download_bytes` check the file's ``mimeType`` first and raise
+:class:`~gwsa.sdk.drive.formats.NativeFileDownloadError`, which names the
+export command and the formats available. Export lives in
+:mod:`gwsa.sdk.drive.export`.
+"""
 
 import io
 import os
@@ -6,6 +15,7 @@ from typing import Iterator, Optional
 
 from googleapiclient.http import MediaIoBaseDownload
 
+from .formats import NativeFileDownloadError, is_native
 from .service import get_drive_service
 
 DEFAULT_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
@@ -15,6 +25,13 @@ Bounds peak memory per in-flight request on the HTTP data plane: the
 server holds at most ~one chunk at a time rather than the whole file.
 Large enough to keep per-chunk API overhead low, small enough that many
 concurrent transfers don't blow the container's memory."""
+
+
+def _refuse_native(file_id: str, file_metadata: dict) -> None:
+    """Raise :class:`NativeFileDownloadError` for a native Google file."""
+    mime_type = file_metadata.get("mimeType")
+    if is_native(mime_type):
+        raise NativeFileDownloadError(file_id, mime_type, file_metadata.get("name"))
 
 
 def _fetch_bytes(service, file_id: str) -> tuple[bytes, dict]:
@@ -28,6 +45,7 @@ def _fetch_bytes(service, file_id: str) -> tuple[bytes, dict]:
         fileId=file_id,
         fields="name, mimeType, size",
     ).execute()
+    _refuse_native(file_id, file_metadata)
 
     request = service.files().get_media(fileId=file_id)
     buffer = io.BytesIO()
@@ -61,6 +79,10 @@ def download_file(
 
     Returns:
         Dict with success status, file path, and size in bytes.
+
+    Raises:
+        NativeFileDownloadError: The file is a native Google file; use
+            :func:`gwsa.sdk.drive.export.export_file` instead.
     """
     service = get_drive_service(account=account)
 
@@ -68,6 +90,7 @@ def download_file(
         fileId=file_id,
         fields="name, mimeType, size"
     ).execute()
+    _refuse_native(file_id, file_metadata)
 
     request = service.files().get_media(fileId=file_id)
 
@@ -193,6 +216,10 @@ def download_bytes(
     Returns:
         Dict with ``data`` (bytes), ``name``, ``mime_type``, and
         ``size_bytes``.
+
+    Raises:
+        NativeFileDownloadError: The file is a native Google file; use
+            :func:`gwsa.sdk.drive.export.export_bytes` instead.
     """
     service = get_drive_service(account=account)
     data, file_metadata = _fetch_bytes(service, file_id)

@@ -94,13 +94,43 @@ def update_file(file_id, local_path, name, folder_id, content_type, keep):
 @click.argument('save_path')
 @require_scopes('drive')
 def download_file(file_id, save_path):
-    """Download a file from Google Drive.
+    """Download an uploaded file from Google Drive, as stored.
 
     FILE_ID: The Drive file ID to download
     SAVE_PATH: Local path where the file should be saved
+
+    Native Google files (Docs, Sheets, Slides) have no stored bytes:
+    use `gwsa drive export` for them.
     """
     try:
         result = drive.download_file(file_id=file_id, save_path=save_path)
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@drive_group.command('export')
+@click.argument('file_id')
+@click.argument('save_path')
+@click.option('--format', 'fmt', required=True, metavar='FMT',
+              help='Export format. ' + drive.formats.formats_summary())
+@require_scopes('drive')
+def export_file(file_id, save_path, fmt):
+    """Export a native Google file (Doc, Sheet, Slides) to a local file.
+
+    FILE_ID: The Drive file ID of a native Google file
+    SAVE_PATH: Local path where the export should be saved
+
+    \b
+    For a multi-tab Sheet use xlsx or ods: csv and tsv export only the
+    first tab and drop cell hyperlinks. In xlsx, cells using functions
+    only Google Sheets has come out as
+    =IFERROR(__xludf.DUMMYFUNCTION("<formula>"),"<last value>").
+    Uploaded files are not exported: use `gwsa drive download`.
+    """
+    try:
+        result = drive.export_file(file_id=file_id, save_path=save_path, fmt=fmt)
         click.echo(json.dumps(result, indent=2))
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

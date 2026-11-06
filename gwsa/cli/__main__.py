@@ -4,10 +4,10 @@ Profile, account, token, and OAuth-client management live exclusively
 in ``gwsa-admin`` (see docs/CLOUD-MULTI-USER.md §6.3). This CLI only
 talks to Google APIs; credentials are resolved by the SDK from the
 mcp-app ``current_user`` ContextVar, which this entry point sets
-once at startup from the local user store (see ``_bootstrap_user``).
+once at startup from the local user store via
+``gwsa.sdk.auth.use_local_user`` (see ``_bootstrap_user``).
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -16,7 +16,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from gwsa import __version__, app
+from gwsa import __version__
 from gwsa.sdk import mail as sdk_mail
 
 from .chat import chat as chat_module
@@ -39,49 +39,19 @@ logger = logging.getLogger(__name__)
 
 
 def _bootstrap_user(user_email: str | None) -> None:
-    """Load a user record from the local store and pin ``current_user``.
+    """Select the gwsa user for this invocation (``--user``, or the sole user).
 
     The gwsa CLI is single-user-at-a-time — every command runs in
-    exactly one user's identity. mcp-app's HTTP middleware does this
-    for hosted requests; for the CLI we do it once here, before any
-    Click subcommand runs.
-
-    Args:
-        user_email: Explicit ``--user`` selector. If ``None``, the
-            store's sole user is used; if the store has multiple
-            users with no selector, exit with a clear error.
+    exactly one user's identity. The selection itself is the SDK's
+    :func:`gwsa.sdk.auth.use_local_user`; this only turns its errors into
+    a Click error.
     """
-    from mcp_app.bridge import DataStoreAuthAdapter
-    from mcp_app.context import current_user, hydrate_profile
+    from gwsa.sdk.auth import LocalUserError, use_local_user
 
-    store = app._build_store()
-    adapter = DataStoreAuthAdapter(store)
-
-    if user_email is None:
-        users = store.list_users()
-        if not users:
-            raise click.ClickException(
-                "No users in the local store. Register one with: "
-                "gwsa-admin accounts add <name> --email <you@example.com> --token=..."
-            )
-        if len(users) == 1:
-            user_email = users[0]
-        elif "local" in users:
-            user_email = "local"
-        else:
-            raise click.ClickException(
-                f"Multiple users in store ({', '.join(users)}). "
-                f"Disambiguate with: gwsa --user <email> ..."
-            )
-
-    user_record = asyncio.run(adapter.get_full(user_email))
-    if user_record is None:
-        raise click.ClickException(
-            f"User '{user_email}' not found in local store. "
-            f"Register with: gwsa-admin accounts add ..."
-        )
-    user_record.profile = hydrate_profile(user_record.profile)
-    current_user.set(user_record)
+    try:
+        use_local_user(user_email)
+    except LocalUserError as e:
+        raise click.ClickException(str(e))
 
 
 @click.group()

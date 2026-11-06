@@ -18,11 +18,13 @@ from googleapiclient.errors import HttpError
 
 from .service import get_docs_service
 from .validators import validate_doc_id
+from ..drive import formats as drive_formats
 from ..drive.service import get_drive_service
 from . import positions
 
-_DOC_MIME = "application/vnd.google-apps.document"
-_EXPORT_MIME = {"markdown": "text/markdown", "text": "text/plain"}
+_DOC_MIME = drive_formats.DOCUMENT
+#: The string-returning reads; other formats are files (drive export).
+_TEXT_FORMATS = ("markdown", "text")
 
 
 def _assert_google_doc(doc_id: str, account: Optional[str]) -> None:
@@ -80,13 +82,19 @@ def get_document(
 
 
 def export_document(doc_id: str, fmt: str, account: Optional[str] = None) -> str:
-    """Google's own export of the document: ``"markdown"`` or ``"text"``."""
-    if fmt not in _EXPORT_MIME:
-        raise ValueError(f"fmt must be one of {sorted(_EXPORT_MIME)}, got {fmt!r}")
+    """Google's own export of the document as a string: ``"markdown"`` or ``"text"``.
+
+    The export MIME type comes from the shared Drive format mapping
+    (:mod:`gwsa.sdk.drive.formats`). For a Doc as a file in any other
+    format (DOCX, PDF, ODT, …) use :func:`gwsa.sdk.drive.export.export_file`.
+    """
+    if fmt not in _TEXT_FORMATS:
+        raise ValueError(f"fmt must be one of {sorted(_TEXT_FORMATS)}, got {fmt!r}")
+    _fmt, export_mime = drive_formats.resolve_export_mime(_DOC_MIME, fmt)
     validate_doc_id(doc_id)
     _assert_google_doc(doc_id, account)
     data = get_drive_service(account=account).files().export(
-        fileId=doc_id, mimeType=_EXPORT_MIME[fmt]
+        fileId=doc_id, mimeType=export_mime
     ).execute()
     text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
     return text.lstrip("﻿")
