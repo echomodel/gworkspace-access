@@ -1,5 +1,30 @@
 # Release Notes
 
+## v0.38.0 — Export native Docs, Sheets, and Slides
+
+- **New: `gwsa drive export FILE_ID SAVE_PATH --format FMT`** and the MCP
+  tools `drive_export` / `drive_export_to_path` (stdio only) export a
+  native Google file to a format: `xlsx`, `ods`, `csv`, `tsv`, `pdf`,
+  `zip` for Sheets; `docx`, `odt`, `pdf`, `md`, `txt`, `html`, `rtf`,
+  `epub`, `zip` for Docs; `pptx`, `odp`, `pdf`, `txt` for Slides; `pdf`,
+  `png`, `jpg`, `svg` for Drawings. SDK: `gwsa.sdk.drive.export_file` /
+  `export_bytes`.
+- `drive_export` returns small exports inline (text formats as text) and
+  the file's export link otherwise, like `drive_download`.
+- Above Google's 10 MB `files.export` limit, the export streams the
+  file's export link instead. Rate limits (429) and server errors are
+  retried with backoff.
+- **Changed: download of a native file** (`gwsa drive download`,
+  `drive_download`, `drive_download_to_path`) is refused before Drive's
+  raw 403, with a message naming `drive export` and the file's formats;
+  the MCP tools return `native_file: true` and `export_formats`.
+- **New: `gwsa.sdk.auth.use_local_user()`** selects the local gwsa user
+  for scripts using the SDK directly, which no longer need a CLI-internal
+  function. The `gwsa` CLI selects its user through the same call.
+- One format mapping (`gwsa.sdk.drive.formats`) serves Drive export and
+  the Docs Markdown/text reads.
+- No new scope: export uses the `drive` scope every account has.
+
 ## v0.37.0 — Drive sharing and ownership transfer
 
 - **New: `drive_list_permissions` and `drive_set_permission`** (CLI:

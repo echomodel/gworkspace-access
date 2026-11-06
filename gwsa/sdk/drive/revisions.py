@@ -34,9 +34,8 @@ from typing import Optional
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
+from .formats import is_native as _is_native
 from .service import get_drive_service
-
-_NATIVE_MIME_PREFIX = "application/vnd.google-apps."
 
 _REVISION_LIST_FIELDS = (
     "revisions(id, modifiedTime, keepForever, size, md5Checksum, "
@@ -97,10 +96,6 @@ class KeepForeverUnsetError(Exception):
             "cannot be un-pinned through the API. Pin older milestones "
             "deliberately."
         )
-
-
-def _is_native(mime_type: Optional[str]) -> bool:
-    return bool(mime_type) and mime_type.startswith(_NATIVE_MIME_PREFIX)
 
 
 def _normalize_revision(rev: dict) -> dict:

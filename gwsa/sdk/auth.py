@@ -33,6 +33,91 @@ def set_cli_account(account: Optional[str]) -> None:
     """
     _cli_account_override.set(account)
 
+
+class LocalUserError(LookupError):
+    """The local user store has no user to select, or the selection is
+    ambiguous or unknown. The message says which, and what to run."""
+
+
+def use_local_user(user: Optional[str] = None) -> str:
+    """Select which local gwsa user the SDK runs as. Call once, first.
+
+    Every SDK call resolves credentials from mcp-app's ``current_user``
+    context. The MCP server sets it per request, and the ``gwsa`` CLI sets
+    it at startup by calling this function. A Python script or notebook
+    that uses the SDK directly calls it too::
+
+        from gwsa.sdk.auth import use_local_user
+        from gwsa.sdk import drive
+
+        use_local_user()                     # the store's only user
+        drive.export_file(FILE_ID, "out.xlsx", "xlsx", account="work")
+
+    The Google account within that user is still picked per call
+    (``account=``) or by the user's ``default_account``.
+
+    Args:
+        user: The user key in the local store (``gwsa-admin users list``;
+            ``local`` for a store set up by ``gwsa-admin accounts add``).
+            Omit to use the store's only user, or the user ``local`` when
+            the store holds several.
+
+    Returns:
+        The selected user key.
+
+    Raises:
+        LocalUserError: The store is empty, holds several users with no
+            ``local`` among them and no ``user`` given, or has no user
+            ``user``.
+    """
+    from mcp_app.bridge import DataStoreAuthAdapter
+    from mcp_app.context import current_user, hydrate_profile
+
+    from gwsa import app
+
+    store = app._build_store()
+    if user is None:
+        users = store.list_users()
+        if not users:
+            raise LocalUserError(
+                "No users in the local store. Register one with: "
+                "gwsa-admin accounts add <name> --email <you@example.com> --token=..."
+            )
+        if len(users) == 1:
+            user = users[0]
+        elif "local" in users:
+            user = "local"
+        else:
+            raise LocalUserError(
+                f"Multiple users in store ({', '.join(users)}). "
+                f"Select one: use_local_user('<user>') in Python, "
+                f"gwsa --user <user> ... on the command line."
+            )
+
+    record = _run_coroutine(DataStoreAuthAdapter(store).get_full(user))
+    if record is None:
+        raise LocalUserError(
+            f"User '{user}' not found in local store. "
+            f"Register with: gwsa-admin accounts add ..."
+        )
+    record.profile = hydrate_profile(record.profile)
+    current_user.set(record)
+    return user
+
+
+def _run_coroutine(coro):
+    """Run ``coro`` to completion, also when called from a running event
+    loop (a notebook, an async script), by running it on a worker thread."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
 # Scopes required for full GWSA functionality
 REQUIRED_SCOPES = {
     "https://www.googleapis.com/auth/gmail.modify",
@@ -152,9 +237,9 @@ def get_credentials(account: Optional[str] = None) -> Tuple[Any, str]:
         Tuple of (credentials object, source description).
 
     Raises:
-        LookupError: No user is set on the ContextVar. Caller is
-            invoking the SDK outside any request context — a
-            programmer error.
+        LookupError: No user is set on the ContextVar: the SDK is used
+            outside the CLI and MCP server and
+            :func:`use_local_user` was not called first.
         NoAccountsConfiguredError: User exists but has no Google
             accounts. Direct the operator to ``gwsa-admin accounts add``.
         AmbiguousAccountError: User has multiple accounts and no
@@ -164,8 +249,8 @@ def get_credentials(account: Optional[str] = None) -> Tuple[Any, str]:
     """
     from mcp_app.context import current_user
 
-    user = current_user.get()
     creds, chosen = get_google_account_creds(account=account)
+    user = current_user.get()
     return creds, f"mcp-app user {user.email} / account '{chosen.name}'"
 
 
@@ -214,10 +299,9 @@ def get_google_account_creds(account: Optional[str] = None):
         without re-reading the profile.
 
     Raises:
-        LookupError: No user is set on the current_user ContextVar.
-            Means the caller is invoking the SDK outside any request
-            (no HTTP middleware ran, stdio didn't pass --user). This
-            is a programmer error, not a user error.
+        LookupError: No user is set on the current_user ContextVar:
+            no HTTP middleware ran, stdio didn't pass --user, or a
+            script didn't call :func:`use_local_user` first.
         NoAccountsConfiguredError: User exists but profile is empty —
             an operator registered the user but didn't add any Google
             accounts yet. Direct the user to ``gwsa-admin accounts add``.
@@ -231,9 +315,13 @@ def get_google_account_creds(account: Optional[str] = None):
 
     from gwsa import Profile
 
-    user = current_user.get()  # LookupError if not set or None
+    user = current_user.get(None)
     if user is None:
-        raise LookupError("No active mcp-app user in request context.")
+        raise LookupError(
+            "No gwsa user is selected for this call. Outside the gwsa CLI "
+            "and MCP server, call gwsa.sdk.auth.use_local_user() once "
+            "before using the SDK."
+        )
     profile = user.profile
 
     if isinstance(profile, dict):

@@ -41,6 +41,13 @@ output. If you find yourself writing logic in `gwsa/cli/` or
 `gwsa-admin`.** The user-facing `gwsa` CLI is Google Workspace
 domain operations only.
 
+**The SDK runs as one selected user.** Credentials resolve from
+mcp-app's `current_user` context: the MCP server sets it per request,
+and the `gwsa` CLI sets it by calling the SDK's public
+`gwsa.sdk.auth.use_local_user()` — the same call a script makes before
+using the SDK. Don't add another way to set it, and don't make SDK
+callers import from `gwsa.cli`.
+
 **MCP tool surface lives in `gwsa/mcp/tools.py`.** Plain async
 functions, no decorators — name becomes tool name, docstring becomes
 schema description, type hints drive parameter schemas. mcp-app
@@ -83,7 +90,8 @@ agent and server share nothing). The design uses **no gwsa HTTP routes
 and no custom auth**.
 
 **Host-path tools are stdio-only.** `drive_create_file_local`,
-`drive_update_file_local`, and `drive_download_to_path` read or write a
+`drive_update_file_local`, `drive_download_to_path` and
+`drive_export_to_path` read or write a
 caller-named local path, so they are registered only over stdio
 (`@mcp_transport("stdio")`), where the server runs as the local user. Over
 HTTP they don't exist: a server-side read or write of a caller-named path
@@ -138,6 +146,53 @@ would be an arbitrary server-file read/write.
    bytes stay out of the JSON-RPC messages. Once that lands and clients
    support it, move uploads (and large downloads) to it — that also
    reaches clients without a shell.
+
+### Native files are exported, uploaded files are downloaded
+
+A native Google file (`application/vnd.google-apps.*`: Docs, Sheets,
+Slides, Drawings) has no stored bytes; Drive answers `files.get?alt=media`
+on one with 403 `fileNotDownloadable`. Its content comes from **export**
+(`files.export`, or an authorized GET of an `exportLinks` URL). An
+uploaded file is the reverse: downloaded as stored, never exported.
+
+- **Download** (`gwsa.sdk.drive.download`, `drive download`,
+  `drive_download` / `drive_download_to_path`) checks the `mimeType` it
+  already reads and raises `NativeFileDownloadError` before calling
+  `get_media`. Its message names the export command and the file's
+  formats; the MCP tools return it as an envelope with `native_file:
+  true` and `export_formats`.
+- **Export** (`gwsa.sdk.drive.export`: `export_file`, `export_bytes`;
+  `drive export`; `drive_export` / `drive_export_to_path`) validates the
+  format for the file's type before exporting. An uploaded file raises
+  `NotNativeFileError`, which points to download.
+- **One format mapping.** Format names (`xlsx`, `docx`, `md`, …) and
+  their export MIME types per native type live only in
+  `gwsa/sdk/drive/formats.py` (`EXPORT_FORMATS`, `FORMAT_ALIASES`,
+  `resolve_export_mime`, `formats_in_export_links`). Everything that
+  exports resolves formats there — the Drive export, the Docs
+  Markdown/text reads (`gwsa.sdk.docs.read.export_document`), and
+  revision export through a revision's `exportLinks`. Add a format in
+  that file and nowhere else; the CLI help is generated from it, and a
+  unit test checks the `drive_export` description lists every format.
+- **Google's export limit.** `files.export` refuses more than 10 MB of
+  exported content with 403 `exportSizeLimitExceeded`. The export then
+  streams the file's `exportLinks[<mime>]` instead, or raises
+  `ExportLimitExceededError` when there is no link for the format. When
+  the caller set a `max_bytes` (the MCP inline cap), an over-limit export
+  goes straight to `ExportTooLargeError`, without fetching the link.
+- **Retries.** 429 and 5xx are retried with backoff: `num_retries` on
+  the API client calls, a backoff loop (honouring `Retry-After`) on the
+  export-link GET.
+- **MCP routing follows download**: inline up to the inline cap (text
+  formats as text), else the file's export link (`mode: "link"`), and a
+  stdio-only `drive_export_to_path`. `export_bytes(max_bytes=...)` stops
+  the stream past the cap, so the hosted server never holds a large
+  export in memory.
+- **Export caveats are stated where they are used**: the `export.py`
+  module docstring, the `drive_export` description and the CLI help say
+  that CSV/TSV cover only the first tab, that XLSX carries
+  `__xludf.DUMMYFUNCTION` formulas and two hyperlink shapes, and the
+  10 MB limit. Keep them in step.
 
 ### Email attachments: the `destination` parameter
 

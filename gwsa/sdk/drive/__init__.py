@@ -22,6 +22,23 @@ from .download import (
     get_download_metadata,
     iter_download_chunks,
 )
+from . import formats
+from .formats import (
+    export_formats,
+    is_native,
+    NativeFileDownloadError,
+    NotNativeFileError,
+    NoExportFormatsError,
+    UnsupportedExportFormatError,
+)
+from .export import (
+    export_file,
+    export_bytes,
+    get_export_metadata,
+    ExportLimitExceededError,
+    ExportTooLargeError,
+    EXPORT_SIZE_LIMIT_BYTES,
+)
 from .files import update_metadata, copy_file, delete_file, get_metadata, set_properties
 from .search import search_drive
 from .permissions import (
@@ -60,6 +77,19 @@ __all__ = [
     "download_bytes",
     "get_download_metadata",
     "iter_download_chunks",
+    "formats",
+    "export_formats",
+    "is_native",
+    "NativeFileDownloadError",
+    "NotNativeFileError",
+    "NoExportFormatsError",
+    "UnsupportedExportFormatError",
+    "export_file",
+    "export_bytes",
+    "get_export_metadata",
+    "ExportLimitExceededError",
+    "ExportTooLargeError",
+    "EXPORT_SIZE_LIMIT_BYTES",
     "update_metadata",
     "copy_file",
     "delete_file",

@@ -301,7 +301,7 @@ existing event.
 > [Rotating tokens](#rotating-tokens-when-refresh-fails)) so your
 > stored token carries the Calendar scopes.
 
-### Drive files: upload, convert, rename, move, download
+### Drive files: upload, convert, rename, move, download, export
 
 Drive tools follow the Drive API: `drive_create_file` is `files.create`,
 `drive_update_file` is `files.update` (CLI: `gwsa drive upload` /
@@ -342,14 +342,76 @@ server's filesystem; reading or writing a local path lives in
   account). No size cap, no server proxy, no extra credentials.
 - **Local stdio server** (shares your filesystem): use the stdio-only tools
   `drive_create_file_local` / `drive_update_file_local` (pass `local_path=`) and
-  `drive_download_to_path` (pass `save_to=`) — read/written straight to
-  disk, any size.
+  `drive_download_to_path` / `drive_export_to_path` (pass `save_to=`) —
+  read/written straight to disk, any size.
 
 The host-path tools are **stdio-only by design** (`@mcp_transport("stdio")`):
 over HTTP the server is multi-tenant, so reading or writing a caller-named
 server path would be an arbitrary server-file read/write. They are never
 registered — nor advertised — on the HTTP surface. There are no extra HTTP
 endpoints and no separate auth.
+
+### Drive export: native Docs, Sheets, and Slides as files
+
+A native Google file (Doc, Sheet, Slides, Drawing) has no stored bytes,
+so `drive download` refuses it — and says which formats to export it to
+instead. **Native files are exported; uploaded files are downloaded.**
+
+```bash
+gwsa drive download FILE_ID report.pdf                       # uploaded file, as stored
+gwsa drive export SHEET_ID budget.xlsx --format xlsx         # every tab
+gwsa drive export SHEET_ID first-tab.csv --format csv        # first tab only
+gwsa drive export DOC_ID plan.docx --format docx
+gwsa drive export DOC_ID plan.md --format md                 # all tabs of the Doc
+gwsa drive export DECK_ID deck.pptx --format pptx
+```
+
+| File type | `--format` |
+|-----------|------------|
+| Sheets    | `xlsx`, `ods`, `csv`, `tsv`, `pdf`, `zip` |
+| Docs      | `docx`, `odt`, `pdf`, `md`, `txt`, `html`, `rtf`, `epub`, `zip` |
+| Slides    | `pptx`, `odp`, `pdf`, `txt` |
+| Drawings  | `pdf`, `png`, `jpg`, `svg` |
+
+What an export contains:
+
+- **Only `xlsx` and `ods` carry every tab** of a Sheet. `csv` and `tsv`
+  export the first tab only and drop cell hyperlinks.
+- **Google-only functions in XLSX.** A cell using a function only Google
+  Sheets has (or whose result Google did not save) is exported as
+  `=IFERROR(__xludf.DUMMYFUNCTION("<formula>"),"<last value>")`. Read
+  the cached value (openpyxl: `data_only=True`), not the formula; some
+  such cells have no saved value.
+- **Hyperlinks in XLSX come two ways**: `=HYPERLINK("url","label")`
+  formulas stay formulas, and links set in the editor become cell
+  hyperlinks. Check both to recover every URL.
+- **Size.** Google caps `files.export` at 10 MB. Above that, gwsa fetches
+  the file's export link instead, so large exports still work. Rate
+  limits (HTTP 429) are retried with backoff.
+
+MCP tools: `drive_export` (inline up to ~60 KB — text formats such as
+`md` and `csv` as readable text — otherwise the file's export link, to
+open in a browser signed in to the account) and `drive_export_to_path`
+(stdio only, `save_to=`), routed like `drive_download` /
+`drive_download_to_path`. Both use the `drive` scope every account
+already has.
+
+### Using the SDK from Python
+
+The SDK runs as one local gwsa user, which the CLI and the MCP server
+select for you. A script selects it once with `use_local_user`, then
+calls the SDK as usual:
+
+```python
+from gwsa.sdk import drive
+from gwsa.sdk.auth import use_local_user
+
+use_local_user()            # the store's only user (or "local"); pass a key to choose
+drive.export_file("SHEET_ID", "budget.xlsx", "xlsx", account="work")
+```
+
+`account=` picks the Google account within that user, as `--account`
+does on the CLI; omit it for the default account.
 
 ### Drive revisions as a version store
 
@@ -654,9 +716,9 @@ description carries the full working model and recipes for agents.
 
 ### MCP server (AI assistants)
 
-`gwsa-mcp` is a stdio MCP server exposing 68 tools across mail,
-docs, drive, sheets, chat, calendar, and account discovery (65 over
-HTTP, which omits the three stdio-only host-path Drive tools).
+`gwsa-mcp` is a stdio MCP server exposing 70 tools across mail,
+docs, drive, sheets, chat, calendar, and account discovery (66 over
+HTTP, which omits the four stdio-only host-path Drive tools).
 Tools are discovered by mcp-app from
 `gwsa.mcp.tools.{accounts,mail,docs,drive,sheets,chat,calendar}`.
 

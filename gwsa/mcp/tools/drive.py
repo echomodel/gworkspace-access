@@ -422,6 +422,11 @@ async def drive_download(
     ``drive_download_to_path`` (stdio only) — writing to a caller-named path
     on the server over HTTP would be an arbitrary server-file write.
 
+    **Native Google files (Docs, Sheets, Slides) are not downloaded** — they
+    have no stored bytes. For one, this returns an error with
+    ``native_file: true`` and the ``export_formats`` to pass to
+    ``drive_export``.
+
     Args:
         file_id: Drive file ID to fetch.
         account: Optional account selector (name or email). Omit to use
@@ -429,6 +434,9 @@ async def drive_download(
     """
     try:
         meta = drive.get_download_metadata(file_id, account=account)
+        if drive.is_native(meta.get("mime_type")):
+            return _native_download_error(drive.NativeFileDownloadError(
+                file_id, meta.get("mime_type"), meta.get("name")))
         raw_size = meta.get("size")
         size = int(raw_size) if raw_size not in (None, "") else None
         name = meta.get("name") or f"drive-{file_id[:8]}"
@@ -503,8 +511,167 @@ async def drive_download_to_path(
             "size_bytes": result.get("size"),
             "name": result.get("name"),
         }
+    except drive.NativeFileDownloadError as e:
+        return _native_download_error(e)
     except Exception as e:
         logger.error(f"Error downloading file to path: {e}")
+        return {"error": str(e)}
+
+
+def _native_download_error(e: "drive.NativeFileDownloadError") -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": str(e),
+        "native_file": True,
+        "mime_type": e.mime_type,
+        "export_formats": e.available,
+    }
+
+
+def _export_error(e: Exception) -> Optional[dict[str, Any]]:
+    """Error envelope for the export errors an agent can act on, else None."""
+    if isinstance(e, drive.NotNativeFileError):
+        return {"success": False, "error": str(e), "native_file": False,
+                "mime_type": e.mime_type}
+    if isinstance(e, drive.UnsupportedExportFormatError):
+        return {"success": False, "error": str(e), "native_file": True,
+                "mime_type": e.mime_type, "export_formats": e.available}
+    if isinstance(e, (drive.NoExportFormatsError, drive.ExportLimitExceededError)):
+        return {"success": False, "error": str(e)}
+    return None
+
+
+async def drive_export(
+    file_id: str,
+    format: str,
+    account: Optional[str] = None,
+) -> Any:
+    """Export a native Google file (Doc, Sheet, Slides, Drawing) to a format.
+
+    Native Google files have no stored bytes, so ``drive_download`` refuses
+    them; this is how to get one as a file. Uploaded files (PDF, DOCX,
+    images, …) are not exported — use ``drive_download``.
+
+    ``format`` by file type:
+
+    - **Sheets**: ``xlsx``, ``ods``, ``csv``, ``tsv``, ``pdf``, ``zip``
+    - **Docs**: ``docx``, ``odt``, ``pdf``, ``md``, ``txt``, ``html``,
+      ``rtf``, ``epub``, ``zip``
+    - **Slides**: ``pptx``, ``odp``, ``pdf``, ``txt``
+    - **Drawings**: ``pdf``, ``png``, ``jpg``, ``svg``
+    - **Apps Script**: ``json``
+
+    Results are routed like ``drive_download``:
+
+    - **Small exports** (≤ ~60 KB) → returned **inline** as
+      ``[TextContent summary, EmbeddedResource]``; text formats (``md``,
+      ``csv``, ``txt``, ``html``, …) as readable text, others base64.
+    - **Larger exports** → the file's **export link** (``mode: "link"``).
+      Opening it in a browser signed in to this Google account downloads
+      the export. On a stdio server, ``drive_export_to_path`` writes it to
+      disk instead.
+
+    What the content holds:
+
+    - Only ``xlsx`` and ``ods`` carry every tab of a Sheet. ``csv`` and
+      ``tsv`` export the **first tab only** and drop cell hyperlinks.
+    - In ``xlsx``, cells using functions only Google Sheets has come out as
+      ``=IFERROR(__xludf.DUMMYFUNCTION("<formula>"),"<last value>")``; read
+      the cached value, not the formula. ``=HYPERLINK("url","label")``
+      cells stay formulas, while links set in the editor are cell
+      hyperlinks — check both to recover every URL.
+    - Google caps ``files.export`` at 10 MB; larger exports are fetched
+      through the file's export link instead.
+
+    An unknown ``format`` returns an error listing ``export_formats`` for
+    the file; an uploaded file returns ``native_file: false``.
+
+    Args:
+        file_id: Drive file ID of a native Google file.
+        format: Export format for the file's type (see above).
+        account: Optional account selector (name or email). Omit to use
+            the user's default account.
+    """
+    try:
+        try:
+            fetched = drive.export_bytes(
+                file_id, format, account=account,
+                max_bytes=DEFAULT_INLINE_SIZE_CAP_BYTES,
+            )
+            result = materialize(
+                fetched["data"],
+                name=fetched["name"],
+                mime_type=fetched["mime_type"],
+                destination=InlineDestination(),
+                account=account,
+            )
+            assert isinstance(result, InlinePayload)
+            return inline_payload_to_blocks(result)
+        except (drive.ExportTooLargeError, InlineTooLargeError):
+            pass
+
+        meta = drive.get_export_metadata(file_id, format, account=account)
+        return {
+            "mode": "link",
+            "url": meta.get("export_link") or meta.get("web_view_link"),
+            "name": meta.get("file_name"),
+            "format": meta.get("format"),
+            "mime_type": meta.get("mime_type"),
+            "size_bytes": None,
+            "note": (
+                "Too large to return inline. Open this link in a browser "
+                "signed in to this Google account to download the export. On "
+                "a stdio server, use drive_export_to_path to write it straight "
+                "to disk instead."
+            ),
+        }
+    except Exception as e:
+        envelope = _export_error(e)
+        if envelope is not None:
+            return envelope
+        logger.error(f"Error exporting file: {e}")
+        return {"error": str(e)}
+
+
+@mcp_transport("stdio")
+async def drive_export_to_path(
+    file_id: str,
+    format: str,
+    save_to: str,
+    account: Optional[str] = None,
+) -> dict[str, Any]:
+    """Export a native Google file straight to a local path — **stdio only**.
+
+    The local-path form of ``drive_export`` (same formats, same content
+    notes): any size, no base64. Stdio-only, like
+    ``drive_download_to_path``: over HTTP a caller-named server path would
+    be an arbitrary server-file write.
+
+    Args:
+        file_id: Drive file ID of a native Google file.
+        format: Export format, e.g. ``xlsx`` for a Sheet (every tab),
+            ``docx`` or ``md`` for a Doc, ``pptx`` for Slides.
+        save_to: Local path to write the export to.
+        account: Optional account selector (name or email).
+    """
+    try:
+        parent = os.path.dirname(os.path.abspath(save_to))
+        if not os.path.isdir(parent):
+            return {"error": f"Directory does not exist: {parent}"}
+        result = drive.export_file(file_id, save_to, format, account=account)
+        return {
+            "mode": "saved",
+            "path": result["file_path"],
+            "size_bytes": result.get("size"),
+            "name": result.get("name"),
+            "format": result.get("format"),
+            "mime_type": result.get("mime_type"),
+        }
+    except Exception as e:
+        envelope = _export_error(e)
+        if envelope is not None:
+            return envelope
+        logger.error(f"Error exporting file to path: {e}")
         return {"error": str(e)}
 
 
