@@ -1,8 +1,5 @@
 name: gworkspace-access
 
-service:
-  entrypoint: gwsa:app
-
 public: true
 
 # `domain:` is intentionally not set here. Operators who deploy a
